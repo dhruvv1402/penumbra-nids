@@ -159,28 +159,58 @@ def audit(
 @app.command()
 def train(
     dataset: DatasetName = "unsw",
+    model: Annotated[str, typer.Option("--model", "-m", help="logreg | rf | xgb")] = "xgb",
     drop_artifacts: Annotated[
         bool, typer.Option("--drop-artifacts", help="Exclude features the audit quarantined.")
     ] = False,
 ) -> None:
-    """Train the known-threat head. (Phase 1)"""
-    _ = dataset, drop_artifacts
-    console.print("[yellow]Not implemented yet - Phase 1.[/yellow]")
-    raise typer.Exit(1)
+    """Train one known-threat model and print its honest metrics."""
+    seed_everything()
+    from penumbra.eval import runner
+
+    ds = _load(dataset, drop_artifacts=drop_artifacts)
+    console.print(f"[dim]training {model} on {ds.name} ({len(ds.X_train):,} rows)...[/dim]")
+    result = runner.train_and_score(model, ds)
+    console.print(f"\n[bold]{model}[/bold]  fit in {result.train_seconds:.1f}s")
+    console.print(result.metrics.summary())
+    console.print(f"\n  ROC-AUC 95% CI  {result.roc_auc_ci}")
+    console.print(f"  recall  95% CI  {result.recall_ci}")
 
 
 @app.command("eval")
 def eval_cmd(
     dataset: DatasetName = "unsw",
-    report: Annotated[bool, typer.Option("--report", help="Regenerate docs/EVALUATION.md.")] = False,
-    unseen_only: Annotated[
-        bool, typer.Option("--unseen-only", help="Score only NSL-KDD's 17 naturally unseen types.")
-    ] = False,
+    models: Annotated[str, typer.Option("--models", help="Comma-separated.")] = "logreg,rf,xgb",
+    boot: Annotated[int, typer.Option("--boot", help="Bootstrap resamples for CIs.")] = 500,
+    per_family: Annotated[bool, typer.Option("--per-family/--no-per-family")] = True,
+    save: Annotated[bool, typer.Option("--save/--no-save")] = True,
 ) -> None:
-    """Evaluate, honestly. (Phase 1)"""
-    _ = dataset, report, unseen_only
-    console.print("[yellow]Not implemented yet - Phase 1.[/yellow]")
-    raise typer.Exit(1)
+    """Full honest evaluation: every model, with and without quarantined features.
+
+    Reports the prevalence-invariant pair (TPR/FPR) as primary, annotates PR-AUC with the
+    prevalence it was computed at, attaches stratified bootstrap CIs, and projects the measured
+    rates onto realistic deployment base rates.
+    """
+    seed_everything()
+    from penumbra.eval import runner
+
+    names = tuple(m.strip() for m in models.split(",") if m.strip())
+    result = runner.evaluate_dataset(
+        dataset,
+        models=names,
+        n_boot=boot,
+        on_progress=lambda msg: console.print(f"[dim]  {msg}[/dim]"),
+    )
+    console.print(runner.format_result(result))
+
+    ds = _load(dataset)
+    console.print(runner.compare_models(result, ds.y_test.to_numpy()))
+    if per_family:
+        console.print(runner.per_family_report(ds))
+
+    if save:
+        out = runner.save(result)
+        console.print(f"\n[dim]written to {out}[/dim]")
 
 
 @app.command()
