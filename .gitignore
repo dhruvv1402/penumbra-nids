@@ -1,8 +1,10 @@
 # Data lives on G: (C: has ~23 GB free; the CICIDS2017 improved release alone is ~2-3 GB
 # uncompressed). data/ is a junction to G:\penumbra-data. The manifest is checked in; the bytes
 # are not.
-data/
-!data/manifest.json
+# Anchored to the repository root: an unanchored `data/` also matches
+# src/penumbra/data/, which silently excludes the loaders from every commit.
+/data/
+!/data/manifest.json
 artifacts/
 !artifacts/.gitkeep
 *.joblib
