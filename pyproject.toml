@@ -1,0 +1,113 @@
+[project]
+name = "penumbra-nids"
+version = "0.1.0"
+description = "ML-native network detection and response: a supervised known-threat head plus a benign-only novelty head, evaluated honestly, alerting a SOC rather than blocking traffic."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+
+# numpy is pinned at the floor river demands (>=2.2.5). That floor is the reason alibi-detect is
+# absent from this file: it pins numpy<2, the two cannot resolve together, and everything we would
+# have used it for (MMD, KS, chi-square drift) is a dozen lines of scipy.
+dependencies = [
+    "numpy>=2.2.5,<3",
+    "pandas>=2.2",
+    "scikit-learn>=1.6",
+    "scipy>=1.14",
+    "xgboost>=3.0",
+    "joblib>=1.4",
+    "typer>=0.15",
+    "rich>=13.9",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "orjson>=3.10",
+    "platformdirs>=4.3",
+]
+
+[project.optional-dependencies]
+# Evaluation and explanation. Kept separate so `uv sync` for a data-only task stays small.
+eval = [
+    "matplotlib>=3.9",
+    "seaborn>=0.13",
+    "shap>=0.46",
+    "imbalanced-learn>=0.13",
+    "mapie>=0.9",
+]
+# Drift. scipy carries the statistics; river carries the streaming detectors; evidently renders
+# the HTML report that becomes a slide.
+drift = [
+    "river>=0.22",
+    "evidently>=0.5",
+]
+api = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "websockets>=14.1",
+    "pyjwt>=2.10",
+    "passlib[bcrypt]>=1.7.4",
+    "python-multipart>=0.0.20",
+    "prometheus-client>=0.21",
+    "slowapi>=0.1.9",
+    "httpx>=0.28",
+]
+# BM25 over pre-extracted ATT&CK text. No embedding model, no download, no hallucination.
+rag = ["rank-bm25>=0.2.2"]
+# Only the sequence head needs Keras, and the sequence head is Phase 7. Installing ~600 MB of
+# TensorFlow before Phase 1 runs would be paying for a model we have not earned yet.
+dl = ["tensorflow>=2.18"]
+# Read-only pcap parsing. This package never transmits a packet; see docs/ETHICS_SCOPE.md.
+pcap = ["scapy>=2.6", "dpkt>=1.9.8"]
+
+[project.scripts]
+penumbra = "penumbra.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/penumbra"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+# B008 is Typer's documented API: options are declared as call expressions in argument defaults.
+ignore = ["E501", "B008"]
+
+[tool.mypy]
+python_version = "3.12"
+packages = ["penumbra"]
+mypy_path = "src"
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+# The scientific stack ships partial or absent stubs. We type our own code, not theirs.
+[[tool.mypy.overrides]]
+module = ["sklearn.*", "xgboost.*", "shap.*", "imblearn.*", "river.*", "evidently.*", "mapie.*", "scipy.*", "seaborn.*", "matplotlib.*", "rank_bm25.*", "scapy.*", "dpkt.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+# Import the source next to these tests rather than whichever copy an editable install points at.
+pythonpath = ["src"]
+markers = [
+    "slow: needs a trained model or a full dataset pass",
+    "needs_data: requires the datasets to have been fetched",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.9",
+    "mypy>=1.14",
+    "hypothesis>=6.123",
+    "bandit>=1.8",
+    "pip-audit>=2.7",
+]

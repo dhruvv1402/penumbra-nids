@@ -1,0 +1,33 @@
+# Data lives on G: (C: has ~23 GB free; the CICIDS2017 improved release alone is ~2-3 GB
+# uncompressed). data/ is a junction to G:\penumbra-data. The manifest is checked in; the bytes
+# are not.
+data/
+!data/manifest.json
+artifacts/
+!artifacts/.gitkeep
+*.joblib
+*.pkl
+*.onnx
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Node
+console/node_modules/
+console/.next/
+console/out/
+
+# Local
+.env
+.env.local
+*.log
