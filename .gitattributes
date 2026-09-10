@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.zip binary
+*.joblib binary
+*.onnx binary
+uv.lock -diff
