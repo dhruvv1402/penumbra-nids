@@ -1,0 +1,162 @@
+# What has to be true before a change is believed.
+#
+# Five jobs, in roughly the order they are worth knowing:
+#
+#   check      ruff, mypy and the suite. Fails most often, costs the least.
+#   invariant  the architectural claims that a README cannot enforce: no blocking code path
+#              anywhere in the tree (ADR-0001), and no resampler fitted outside a CV fold. Both
+#              are decisions that decay silently over a codebase's life unless a build breaks.
+#   security   bandit and semgrep over our code, pip-audit over the locked dependencies, and a
+#              secret scan over the WHOLE HISTORY rather than the diff -- a key committed and then
+#              deleted is still published. pip-audit also runs weekly, because a dependency does
+#              not have to change in order to become vulnerable, and a check that only runs on
+#              push never finds that.
+#   model      the ML regression gate. Model quality is a merge blocker here, like a failing test.
+#              Skipped until Phase 2 commits a baseline to compare against.
+#   image      docker build. Nobody on the team can run this locally -- the development machine is
+#              short on disk -- so this is the only place that claim gets tested.
+#
+# Concurrency is per-branch so a quick second push cancels the first rather than queueing.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Mondays 06:00 UTC, for `security`, which is the job that finds things without a change.
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: lint, types, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Python and locked dependencies
+        run: |
+          uv python install 3.12
+          uv sync --frozen --extra eval --extra api --extra rag
+
+      - name: Ruff
+        run: uv run ruff check src tests scripts
+
+      - name: Ruff format
+        run: uv run ruff format --check src tests scripts
+
+      - name: Mypy
+        run: uv run mypy
+
+      - name: Tests
+        # The suite never reaches the network: datasets are not fetched here, and anything needing
+        # them is marked `needs_data` and deselected. If that stops being true, this step is where
+        # it shows.
+        run: uv run pytest -m "not needs_data"
+
+  invariant:
+    name: architectural invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No blocking code path
+        # ADR-0001: Penumbra alerts, it never blocks. The decision is only real if the build
+        # breaks when someone adds an enforcement call. Comments and docs are excluded -- we
+        # discuss blocking at length, we just never do it.
+        run: |
+          if grep -rInE '(iptables|nftables|netsh +advfirewall|pf\.conf|ufw |firewalld|\bdrop_packet\b|\bblock_ip\b|\bquarantine_host\b|NetworkSecurityGroup.*create|revoke_session)' \
+               --include='*.py' --include='*.ts' --include='*.tsx' src console 2>/dev/null; then
+            echo "::error::Blocking/enforcement call found. Penumbra alerts; it does not block. See docs/adr/0001-alert-not-block.md"
+            exit 1
+          fi
+          echo "No enforcement path. ADR-0001 holds."
+
+      - name: Import boundaries
+        # models/ and eval/ must run headless. If the science imports the web layer, it can no
+        # longer be reproduced without one.
+        run: |
+          if grep -rInE '^\s*(from|import)\s+penumbra\.(api|alerts|storage)' \
+               src/penumbra/models src/penumbra/eval 2>/dev/null; then
+            echo "::error::models/ and eval/ must not import api/, alerts/ or storage/. See ARCHITECTURE.md."
+            exit 1
+          fi
+          echo "Import boundaries hold."
+
+  security:
+    name: SAST, dependency audit, secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks needs the whole history, not the diff
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: |
+          uv python install 3.12
+          uv sync --frozen --extra eval --extra api --extra rag
+
+      - name: Bandit
+        run: uv run bandit -q -r src -c pyproject.toml || uv run bandit -q -r src
+
+      - name: Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: p/python p/security-audit
+        continue-on-error: true  # advisory until the ruleset is tuned; not a merge blocker yet
+
+      - name: pip-audit
+        run: uv run pip-audit --strict --desc
+
+      - name: Secret scan over full history
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  model:
+    name: ML regression gate
+    runs-on: ubuntu-latest
+    # Enabled once Phase 2 commits a baseline. Until then there is nothing to regress against, and
+    # a gate that always passes teaches people to ignore it.
+    if: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: |
+          uv python install 3.12
+          uv sync --frozen --extra eval
+      - name: Model quality must not regress
+        # Fails the build if PR-AUC falls below the committed floor. Model quality is a merge
+        # blocker, not a dashboard.
+        run: uv run penumbra eval --dataset unsw --gate artifacts/baseline_metrics.json
+
+  image:
+    name: the image builds
+    runs-on: ubuntu-latest
+    if: hashFiles('Dockerfile') != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
