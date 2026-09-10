@@ -1,0 +1,205 @@
+"""Command line entry point.
+
+Deliberately the only entry point. There is no Makefile: this machine has no `make`, and a Typer
+app declared in `[project.scripts]` works identically on every platform the team uses.
+
+Every number that appears in the report or the slide deck is produced by a command here, so that
+"regenerate everything" is one invocation rather than a remembered sequence of notebook cells.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Annotated
+
+import typer
+from rich.console import Console
+from rich.table import Table
+
+from penumbra import __version__
+from penumbra.config import settings
+from penumbra.seeds import seed_everything
+
+app = typer.Typer(
+    name="penumbra",
+    help="ML-native network detection and response. Alerts a SOC; never blocks traffic.",
+    no_args_is_help=True,
+    add_completion=False,
+)
+data_app = typer.Typer(name="data", help="Fetch and inspect datasets.", no_args_is_help=True)
+app.add_typer(data_app)
+
+console = Console()
+
+DatasetName = Annotated[str, typer.Option("--dataset", "-d", help="unsw | nslkdd | cicids | attack")]
+
+
+def _load(dataset: str, *, drop_artifacts: bool = False):
+    """Resolve a dataset name to a loaded Dataset."""
+    key = dataset.lower().replace("-", "").replace("_", "")
+    if key in {"unsw", "unswnb15"}:
+        from penumbra.data.loaders import unsw
+
+        return unsw.load(drop_artifacts=drop_artifacts)
+    if key in {"nslkdd", "nsl", "kdd"}:
+        from penumbra.data.loaders import nsl_kdd
+
+        return nsl_kdd.load(drop_artifacts=drop_artifacts)
+    raise typer.BadParameter(f"unknown dataset {dataset!r}; expected unsw or nslkdd")
+
+
+@app.command()
+def version() -> None:
+    """Print version and resolved paths."""
+    s = settings()
+    console.print(f"[bold]penumbra[/bold] {__version__}")
+    console.print(f"  data      {s.data_root}")
+    console.print(f"  artifacts {s.artifact_root}")
+    console.print(f"  seed      {s.seed}")
+
+
+# =================================================================================================
+# data
+# =================================================================================================
+
+
+@data_app.command("fetch")
+def data_fetch(
+    dataset: Annotated[
+        str, typer.Option("--dataset", "-d", help="unsw | nslkdd | cicids | attack | all")
+    ] = "all",
+    force: Annotated[bool, typer.Option("--force", help="Re-download even if cached.")] = False,
+) -> None:
+    """Download datasets and verify them against data/manifest.json.
+
+    Size is checked on download and SHA256 is pinned after the first fetch, because the failure
+    mode that matters here is silent: CICIDS2017's official URL answers 200 and serves an HTML
+    landing page, and one popular UNSW mirror has train and test swapped.
+    """
+    from penumbra.data import download, manifest
+
+    if dataset == "all":
+        specs = manifest.ALL_FILES
+    else:
+        specs = manifest.BY_DATASET.get(dataset.lower(), [])
+        if not specs:
+            raise typer.BadParameter(
+                f"unknown dataset {dataset!r}; expected one of {sorted(manifest.BY_DATASET)} or 'all'"
+            )
+
+    def report(result: download.FetchResult) -> None:
+        colour = {"downloaded": "green", "cached": "dim", "repaired": "yellow", "failed": "red"}[
+            result.status
+        ]
+        console.print(f"[{colour}]{result.status:<11}[/{colour}] {result.spec.filename:<40} {result.detail}")
+
+    results = download.fetch_all(specs, force=force, on_result=report)
+    failed = [r for r in results if not r.ok]
+    if failed:
+        console.print(f"\n[red]{len(failed)} file(s) failed.[/red]")
+        raise typer.Exit(1)
+    console.print(f"\n[green]{len(results)} file(s) verified.[/green]")
+
+
+@data_app.command("info")
+def data_info(dataset: DatasetName = "unsw") -> None:
+    """Show shape, prevalence and class balance for a dataset."""
+    ds = _load(dataset)
+    console.print(ds.describe())
+
+    table = Table(title=f"{ds.name} - class balance", show_edge=False)
+    table.add_column("family")
+    table.add_column("train", justify="right")
+    table.add_column("test", justify="right")
+    tr, te = ds.family_counts("train"), ds.family_counts("test")
+    for fam in tr.index:
+        table.add_row(str(fam), f"{tr.get(fam, 0):,}", f"{te.get(fam, 0):,}")
+    console.print(table)
+
+
+# =================================================================================================
+# audit
+# =================================================================================================
+
+
+@app.command()
+def audit(
+    dataset: DatasetName = "unsw",
+    save: Annotated[bool, typer.Option("--save/--no-save", help="Write JSON to artifacts/reports/.")] = True,
+) -> None:
+    """Audit a dataset for leakage before any model is trained.
+
+    Four checks: single-feature AUC, leaky values, train/test overlap, and negative controls.
+
+    This runs first, and deliberately so - it constrains what we are allowed to claim afterwards.
+    A model reporting 0.98 AUC on a dataset where one feature value fingerprints 22% of the benign
+    class has not learned what its author thinks it has.
+    """
+    seed_everything()
+    from penumbra.data import audit as audit_mod
+
+    ds = _load(dataset)
+    console.print(f"[dim]auditing {ds.name} ({len(ds.X_train):,} train rows)...[/dim]\n")
+    report = audit_mod.run_audit(ds)
+    console.print(report.summary())
+
+    if save:
+        settings().ensure_dirs()
+        out = settings().report_dir / f"audit_{dataset.lower()}.json"
+        out.write_text(json.dumps(report.to_dict(), indent=2, default=str), encoding="utf-8")
+        console.print(f"\n[dim]written to {out}[/dim]")
+
+
+# =================================================================================================
+# placeholders - implemented in later phases, declared here so `--help` shows the intended shape
+# =================================================================================================
+
+
+@app.command()
+def train(
+    dataset: DatasetName = "unsw",
+    drop_artifacts: Annotated[
+        bool, typer.Option("--drop-artifacts", help="Exclude features the audit quarantined.")
+    ] = False,
+) -> None:
+    """Train the known-threat head. (Phase 1)"""
+    _ = dataset, drop_artifacts
+    console.print("[yellow]Not implemented yet - Phase 1.[/yellow]")
+    raise typer.Exit(1)
+
+
+@app.command("eval")
+def eval_cmd(
+    dataset: DatasetName = "unsw",
+    report: Annotated[bool, typer.Option("--report", help="Regenerate docs/EVALUATION.md.")] = False,
+    unseen_only: Annotated[
+        bool, typer.Option("--unseen-only", help="Score only NSL-KDD's 17 naturally unseen types.")
+    ] = False,
+) -> None:
+    """Evaluate, honestly. (Phase 1)"""
+    _ = dataset, report, unseen_only
+    console.print("[yellow]Not implemented yet - Phase 1.[/yellow]")
+    raise typer.Exit(1)
+
+
+@app.command()
+def loafo(dataset: DatasetName = "unsw") -> None:
+    """Leave-One-Attack-Family-Out at a matched alert budget. (Phase 2)"""
+    _ = dataset
+    console.print("[yellow]Not implemented yet - Phase 2.[/yellow]")
+    raise typer.Exit(1)
+
+
+@app.command("reproduce-all")
+def reproduce_all(
+    out: Annotated[Path | None, typer.Option("--out", help="Directory for regenerated reports.")] = None,
+) -> None:
+    """Regenerate every number in the report from scratch."""
+    _ = out
+    console.print("[yellow]Not implemented yet - lands with Phase 1.[/yellow]")
+    raise typer.Exit(1)
+
+
+if __name__ == "__main__":
+    app()
