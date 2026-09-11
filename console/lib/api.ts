@@ -211,6 +211,91 @@ export interface AuditEntry {
   entry_hash: string;
 }
 
+/**
+ * Evaluation reports.
+ *
+ * Every number the evaluation page renders comes from one of these, and each one was written by a
+ * CLI command whose name travels with it. Nothing on that page is hardcoded, so the console cannot
+ * quietly disagree with the measurements.
+ */
+export interface ReportEntry {
+  name: string;
+  title: string;
+  description: string;
+  /** The command that produces this file. Shown in the UI so a number can always be traced. */
+  command: string;
+  available: boolean;
+  generated_at: number | null;
+  bytes: number;
+}
+
+export interface ReportPayload<T = unknown> {
+  name: string;
+  title: string;
+  description: string;
+  command: string;
+  generated_at: number;
+  data: T;
+}
+
+export const getReports = (token: string) =>
+  request<{ reports: ReportEntry[] }>("/reports", token);
+
+export const getReport = <T = unknown>(token: string, name: string) =>
+  request<ReportPayload<T>>(`/reports/${name}`, token);
+
+/** Shapes of the reports the evaluation page reads. Partial on purpose - the page renders what is
+ *  present and says so when something is not, rather than throwing on an older report file. */
+export interface SequenceReport {
+  fpr_budget: number;
+  n_train: number;
+  n_test: number;
+  window_length: number;
+  arms: {
+    name: string;
+    roc_auc: number;
+    recall_at_budget: number;
+    realised_fpr: number;
+    n_alerts: number;
+    notes: string;
+  }[];
+  training?: { epochs_run: number; best_val_auc: number; collapsed_epochs?: number };
+  per_family: Record<string, Record<string, number>>;
+}
+
+export interface MinedRulesReport {
+  quarantined: string[];
+  n_holdout: number;
+  n_test: number;
+  with_artifacts: RuleArm;
+  without_artifacts: RuleArm;
+}
+
+export interface RuleArm {
+  n_candidates: number;
+  n_artifact_excluded: number;
+  n_survivors: number;
+  min_precision: number;
+  holdout_coverage: { recall: number; precision: number; n_matched: number };
+  test_coverage: { recall: number; precision: number; n_matched: number };
+}
+
+export interface EvasionReport {
+  n_attacks: number;
+  threshold: number;
+  results: {
+    name: string;
+    constrained: boolean;
+    points: {
+      effort: number;
+      detection_rate: number;
+      n_evaded: number;
+      mean_duration_multiple: number;
+    }[];
+  }[];
+  per_family: Record<string, { baseline: number; attacked: number; delta: number; n: number }>;
+}
+
 /** Live alert stream. The token goes in the query string because a browser cannot set headers on a
  *  WebSocket handshake; the server still verifies it and refuses without one. */
 export function openStream(token: string, onMessage: (msg: StreamMessage) => void): WebSocket {
