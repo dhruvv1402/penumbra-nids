@@ -804,6 +804,20 @@ def reproduce_all(
             ),
         ),
         (
+            "loadtest unsw",
+            lambda: loadtest("unsw"),
+            False,
+            lambda: (
+                None
+                if have("unsw") and fitted("unsw")
+                else (
+                    "unsw not fetched"
+                    if not have("unsw")
+                    else "no fitted detector - run `penumbra fit -d unsw`"
+                )
+            ),
+        ),
+        (
             "sequence cicids",
             lambda: sequence(),
             True,
