@@ -1,0 +1,22 @@
+# Everything the image does not need. Keeping the build context small matters here: data/ is a
+# junction to G: holding ~3 GB of CSVs, and sending that to the daemon would dominate build time.
+.git/
+.github/
+data/
+artifacts/
+console/
+notebooks/
+docs/
+sentinel/
+tests/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+CONTEXT.md
+requirements-audit.txt
+*.joblib
+*.db
+*.jsonl
