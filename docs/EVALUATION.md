@@ -354,6 +354,54 @@ At the per-type level the picture is equally uneven. `mscan`, `apache2`, `proces
 `httptunnel` are recovered substantially; `snmpgetattack` and `worm` stay at zero regardless of
 threshold. The types it misses are as informative as the ones it catches.
 
+### 10.3b LOAFO on UNSW-NB15 — a negative result about the *experiment*, not the method
+
+The same protocol on UNSW-NB15, holding out each of the nine attack families in turn, matched at 2%
+FPR:
+
+| held-out family | train rows removed | test n | supervised | + novelty | Δ | attribution |
+|---|---|---|---|---|---|---|
+| Backdoor | 1,746 | 583 | **1.0000** | 1.0000 | +0.0000 | 0.0000 |
+| Worms | 130 | 44 | **1.0000** | 1.0000 | +0.0000 | 0.0000 |
+| DoS | 12,264 | 4,089 | 0.9985 | 0.9985 | +0.0000 | 0.0000 |
+| Generic | 40,000 | 18,871 | 0.9999 | 0.9998 | −0.0001 | 0.0000 |
+| Analysis | 2,000 | 677 | 0.9970 | 0.9882 | −0.0089 | 0.0000 |
+| Reconnaissance | 10,491 | 3,496 | 0.9928 | 0.9857 | −0.0072 | 0.0000 |
+| Exploits | 33,393 | 11,132 | 0.9874 | 0.9788 | −0.0086 | 0.0000 |
+| Shellcode | 1,133 | 378 | 0.9947 | 0.9894 | −0.0053 | 0.0000 |
+| Fuzzers | 18,184 | 6,062 | 0.6485 | 0.5826 | −0.0658 | 0.0000 |
+
+**mean Δ −0.0107 — the novelty head adds nothing.** But read the `supervised` column first.
+
+**Delete every `Backdoor` row from training and the model still detects 100% of Backdoor flows at
+test time.** Same for `Worms`. Eight of nine families sit above 0.98.
+
+That is not a model succeeding at zero-day detection. It means **the held-out families were never
+novel.** UNSW-NB15's categories overlap so heavily in feature space that a flow labelled `Backdoor`
+is still recognisable as *an attack* from what `Exploits`, `DoS` and `Generic` taught the model. The
+label was removed; the behaviour was still represented.
+
+So: **leave-one-class-out does not simulate a zero-day when the classes overlap.** It simulates
+removing a *name*, not a *mechanism*. A novelty head cannot add recall on top of 1.0000, and its
+small negative deltas are just the OR-cost being charged for coverage that was not needed.
+
+This is why NSL-KDD's natural split (§10.3) is the load-bearing experiment and UNSW's LOAFO matrix is
+reported as a control. The contrast is the evidence:
+
+| | supervised recall on held-out attacks |
+|---|---|
+| UNSW-NB15, synthetic family holdout | **0.99–1.00** — not actually unseen |
+| NSL-KDD, 17 genuinely unseen types | **0.05** — actually unseen |
+
+An experiment where the baseline already scores 1.0000 cannot measure an improvement. Had we run
+only the UNSW matrix, the honest conclusion would have been "novelty detection does not help" — and
+it would have been an artifact of a holdout that held nothing out.
+
+The `attribution` column is 0.0000 for every family, exactly as pre-registered: the model cannot
+name a class it has never seen, even while detecting it perfectly. *"We detected it, we could not
+name it"* is the finding, and it is why binary recall rather than multiclass recall is E1's primary
+metric.
+
 ### 10.4 Three methodological corrections, recorded because each changed the answer
 
 These are in the results section rather than hidden in a commit log because two of them produced
