@@ -155,24 +155,54 @@ src/penumbra/
   imbalance/    strategies · ablation
   drift/        psi · tests · streaming · monitor · injector
   explain/      shap · narrative · attack_map (hand-curated)
-  rules/        leaf extraction · kql_emit · sigma_emit · validate
+  rules/        mining (leaf extraction) · emit (KQL/Sigma) · runner (validate + compare)
   rag/          corpus · index · retrieve · generate
   alerts/       scoring · correlate · suppression · queue · feedback
   integrations/ siem/{base,mock,sentinel}
   api/          app · security/{auth,rbac,pii,audit} · routers · ws
   storage/      repository (Protocol) · sqlite · postgres
   replay/       engine · drift_injector
+  adversarial/  evasion (problem-space constrained; the strawman runs alongside it)
   pcap/         assemble  (read-only; never transmits)
 ```
 
 Enforced by an import-linter rule in CI:
 
-- `models/` and `eval/` never import `api/`, `alerts/` or `storage/`. The science must run headless.
+- `models/`, `eval/` and `rules/` never import `api/`, `alerts/` or `storage/`. The science must
+  run headless, and a mined rule pack has to be reproducible without the product layer.
 - `api/` depends on `storage.repository.Repository`, the Protocol — never on a concrete backend.
 - Everything SIEM-facing goes through `integrations.siem.base.SiemConnector`. `LocalMockSiem` is the
   default binding; `AzureSentinelSiem` raises `NotConfigured` until credentials exist.
 - `explain/attack_map.py` is a hand-written constant table with a justification per entry. A wrong
   ATT&CK technique ID in front of a security judge is fatal, so that mapping is never RAG output.
+
+## Causality, and the leak it prevents
+
+Three modules compute a row's features from that row's *past*: `features/entity_graph`,
+`features/windows`, and the `ct_*` counters in `pcap/assemble`. All three read before they write —
+the current flow is measured against its history and only then joins it.
+
+This is the easiest place in the whole system to fake a result. A window centred on the current
+flow, or a fan-out count that includes the flow doing the fanning, scores better and cannot be
+deployed, because at inference time the future has not happened yet. Nothing crashes when it goes
+wrong; the number just improves.
+
+So it is asserted rather than documented: appending future traffic must leave every earlier row's
+features bit-identical (`tests/unit/test_sequence.py`, `tests/unit/test_pcap.py`).
+
+## Feature scaling in the sequence head
+
+Median and IQR, clipped to 10 robust deviations — not mean and standard deviation.
+
+CICIDS2017's flow features reach 7.2e9, and several columns have a maximum more than 200 standard
+deviations from their own mean. Z-scaling leaves a handful of rows at +200 and everything else
+squashed against zero, and +200 through two convolutions into a GRU saturates the network. The
+first run of the sequence experiment did exactly that: validation ROC-AUC 0.9999 in epoch one, then
+exactly 0.500 for every epoch after. Early stopping restored the epoch-one weights and the run
+exited cleanly with a number attached, which is the dangerous form of the failure.
+
+`TrainingHistory.collapsed` now flags a constant-output run so it cannot be reported as an
+architecture result.
 
 ## Storage and deployment
 

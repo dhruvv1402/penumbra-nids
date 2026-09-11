@@ -72,6 +72,32 @@ Consequences we accept:
 
 ---
 
+## Packet capture
+
+`penumbra pcap <capture>` reads a capture file and assembles flows from it. Three properties of
+that code are scope commitments, not implementation details:
+
+**It is read-only.** The package parses capture files. It opens no socket, sends no packet, and
+has no code path that could. `scapy` is a declared dependency for its packet *structures*; its
+send/sniff functions are never called.
+
+**It does not read payloads.** The assembler uses IP, TCP and UDP header fields plus arrival times.
+Six UNSW-NB15 features — `service`, `trans_depth`, `response_body_len`, `is_ftp_login`,
+`ct_ftp_cmd`, `ct_flw_http_mthd` — cannot be computed without reading the application layer, so
+they are emitted as zero and listed in the tool's own output rather than approximated. That is a
+measurable cost to accuracy, accepted deliberately: a converter that quietly guessed `service` from
+the destination port would produce rows that look like UNSW rows and are not.
+
+**Captures must come from a network you own.** The hackathon brief's rule is explicit and it is
+this project's rule too: only ever test systems you own or a safe practice app, never a real
+website or system you do not have permission to test. The demonstration capture is taken on a
+private host-only lab network between virtual machines the team owns, scanning a box the team owns.
+Nothing leaves that network, and no third-party host is contacted, scanned or probed at any point.
+
+If you are reproducing this work: generate your own capture on your own lab, or use the public
+CICIDS2017 release, which was captured by its authors on their own testbed for exactly this
+purpose.
+
 ## Responsible disclosure
 
 If work on this project incidentally reveals a vulnerability in third-party software, we report it to
