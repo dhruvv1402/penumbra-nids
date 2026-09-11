@@ -771,15 +771,73 @@ The x-axis is **attacker effort in units of slowdown**, not a dimensionless epsi
 here has a price: a ten-times slower scan takes ten times as long to finish. "Detection falls from
 0.97 to 0.61 when the attacker accepts a 10× slowdown" is a sentence a defender can act on.
 
-Run it with `penumbra adversarial --dataset unsw`; results land in
-`artifacts/reports/adversarial_unsw.json` and on the console's evaluation page. **Not yet measured
-at the time of writing** — the module, its constraint tests and the CLI are in place; the numbers
-are not, and no figure appears here until they are.
+#### Result: slow-rate mimicry does not evade this detector, and we do not claim robustness from that
 
-One note on the strawman, because it is a trap we fell into: written as symmetric Gaussian noise it
-barely moved detection at all, which would have made the *unconstrained* attack look weaker than the
-realisable one and inverted the entire finding. It interpolates toward the benign centroid now. An
-unconstrained attack has to actually be an attack for the comparison to mean anything.
+20,000 UNSW attack flows, detector threshold 0.5359 (fitted on held-out benign, never on these rows).
+
+| effort | × slower | detection, realisable | detection, unconstrained | × slower, unconstrained |
+|---:|---:|---:|---:|---:|
+| 0.0 | 1.00 | 0.9797 | 0.9797 | 1.00 |
+| 1.0 | 2.00 | 0.9852 | 0.9957 | 0.99 |
+| 4.0 | 5.02 | 0.9937 | 0.9976 | 0.95 |
+| 9.0 | 10.03 | **0.9943** | **0.3186** | **0.88** |
+
+**Neither curve decays.** Under the realisable attack detection *rises* at all five steps; under the
+unconstrained attack it rises at four of five and then collapses at the last.
+
+That is not robustness and the tool refuses to report it as such. A perturbation that increases
+detection much more likely means the perturbed rows have left the region the model was fitted on,
+and a tree ensemble's prediction in an extrapolation region is whichever leaf the path happens to
+reach — not a judgment about the traffic. The summary prints that caveat whenever the curve is
+non-monotone, which here is always.
+
+The honest claim is therefore narrow: **slow-rate mimicry, as implemented within the problem-space
+constraints, does not evade this model on this dataset.** We cannot claim the model is robust,
+because we cannot show the perturbed rows are still rows the model reasons about meaningfully.
+
+#### The two effort axes are not a common currency
+
+Look at the last column. The unconstrained attack's flows come out at **0.88× their original
+duration — faster**, which no amount of padding or added delay can achieve. It is not paying a price
+at all.
+
+So "at equal effort" is a sentence this table cannot support, and an earlier draft of the summary
+said it. Realisable effort is a slowdown the attacker actually suffers. Unconstrained effort is a
+fraction of the distance to the benign centroid; at effort 9 that fraction is 0.9.
+
+Which gives a stronger finding than "constrained attacks are weaker":
+
+> The unconstrained attack's evasion is bought by moving the row **90% of the way to the benign
+> mean**. A row that is mostly benign has not evaded detection — it has stopped being the attack.
+
+That is what a reported "68% evasion rate" can mean, and it is why an evasion number without a
+constraint model is not a security measurement.
+
+#### Per-family, and the one genuinely interesting row
+
+| family | baseline | attacked | Δ | n |
+|---|---:|---:|---:|---:|
+| Fuzzers | 0.6538 | 0.9110 | **+0.2572** | 1,011 |
+| Exploits | 0.9909 | 1.0000 | +0.0091 | 5,723 |
+| Reconnaissance | 0.9994 | 0.9873 | **−0.0121** | 1,737 |
+| DoS · Analysis · Backdoor · Worms | 1.0000 | 1.0000 | 0.0000 | 3,142 |
+
+`Reconnaissance` is the only family the realisable attack helps at all, and it buys 1.2 points for a
+tenfold slowdown — a terrible trade for an attacker whose scan now takes ten times as long.
+
+`Fuzzers` moves the other way by 26 points. Fuzzers are the family the model is *worst* at (0.65
+baseline, consistent with §10.2), and stretching them apparently pushes them out of whatever region
+made them ambiguous. Again: that is extrapolation behaviour, not evidence of anything defensive.
+
+#### A trap we fell into first
+
+The strawman, written as symmetric Gaussian noise, barely moved detection at all — which would have
+made the *unconstrained* attack look weaker than the realisable one and inverted the entire finding.
+It interpolates toward the benign centroid now. An unconstrained attack has to actually be an attack
+for the comparison to mean anything.
+
+Reproduce: `penumbra fit -d unsw && penumbra adversarial -d unsw`. Output:
+`artifacts/reports/adversarial_unsw.json`, and the console's evaluation page.
 
 ---
 

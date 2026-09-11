@@ -41,6 +41,17 @@ statement a defender can act on. "95% evasion" is not.
 
 Both attacks are run: the constrained one, and the unconstrained feature-space strawman. The gap
 between them is the finding.
+
+**The two effort axes are not a common currency, and the report says so.** Realisable effort is a
+slowdown the attacker actually suffers. Unconstrained effort is a fraction of the distance to the
+benign centroid, which costs nothing, because it is not a thing that can be done to a flow. Reading
+them as comparable would be its own version of the error this module exists to avoid.
+
+**Detection that RISES under perturbation is flagged, not celebrated.** It is tempting to read it as
+robustness. It much more likely means the perturbed rows have left the region the model was fitted
+on, and a tree ensemble's prediction in an extrapolation region is whichever leaf the path reaches
+— not a judgment about the traffic. The summary prints that caveat whenever the curve is
+non-monotone.
 """
 
 from __future__ import annotations
@@ -293,20 +304,47 @@ class EvasionReport:
         constrained = next((r for r in self.results if r.constrained), None)
         strawman = next((r for r in self.results if not r.constrained), None)
         if constrained and strawman and constrained.points:
-            effort = constrained.points[-1].effort
-            real = constrained.detection_at(effort)
-            fake = strawman.detection_at(effort)
+            real = constrained.points[-1].detection_rate
+            fake = strawman.points[-1].detection_rate
+            slower = constrained.points[-1].mean_duration_multiple
+            faster = strawman.points[-1].mean_duration_multiple
             lines += [
-                "  The gap between those two tables is the whole point:",
+                "  READING THIS TABLE",
                 "",
-                f"    at equal effort, the unconstrained attack leaves detection at {fake:.4f}",
-                f"    and the realisable attack leaves it at {real:.4f}.",
+                f"  At the strongest setting the realisable attack leaves detection at {real:.4f}",
+                f"  while accepting a {slower:.1f}x slower flow. The unconstrained attack leaves it at",
+                f"  {fake:.4f} - and its flows come out {faster:.2f}x the original duration, i.e. FASTER,",
+                "  which no amount of padding or delay can do. It is not paying a price at all.",
                 "",
-                "  The first number is the one most papers report. It describes perturbations that",
-                "  include fractional packet counts and throughputs inconsistent with their own byte",
-                "  counts - rows no network can carry. Detections it 'evades' were never defended.",
+                "  So the two `effort` columns are NOT a common currency and must not be read as one.",
+                "  Realisable effort is a slowdown an attacker actually suffers. Unconstrained effort",
+                "  is a fraction of the distance to the benign centroid, which costs nothing because",
+                "  it is not a thing that can be done to a flow.",
+                "",
+                "  That is the finding, and it is stronger than 'constrained attacks are weaker':",
+                "  the unconstrained attack's evasion is bought by making the row mostly benign. A",
+                "  row 90% of the way to the benign mean has not evaded detection - it has stopped",
+                "  being the attack. Detections it 'beats' were never defending anything.",
                 "",
             ]
+
+        # Non-monotonicity is not noise here and must not be presented as a clean decay curve.
+        for result in self.results:
+            points = result.points
+            rising = [
+                p for i, p in enumerate(points[1:], 1) if p.detection_rate > points[i - 1].detection_rate
+            ]
+            if rising:
+                label = "realisable" if result.constrained else "unconstrained"
+                lines += [
+                    f"  CAVEAT: under the {label} attack, detection RISES at "
+                    f"{len(rising)} of {len(points) - 1} steps.",
+                    "  A perturbation that increases detection is not evidence of robustness. It",
+                    "  more likely means the perturbed rows have left the region the model was",
+                    "  fitted on, and a tree ensemble's output in an extrapolation region is",
+                    "  whichever leaf the path happens to reach - not a judgment about the traffic.",
+                    "",
+                ]
 
         if self.per_family:
             lines += ["  Detection under the realisable attack, per family:", ""]
