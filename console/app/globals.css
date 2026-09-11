@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+/* Dark analyst console. A SOC runs these on wall displays in dim rooms; a light theme is the
+   wrong default for the context, so this one commits to dark rather than tracking the OS. */
+@theme {
+  --color-bg: #0a0e14;
+  --color-panel: #111720;
+  --color-panel-2: #161d29;
+  --color-border: #222c3a;
+  --color-ink: #dbe3ef;
+  --color-ink-dim: #8895ab;
+  --color-ink-faint: #5a6678;
+
+  --color-sev-high: #ff5f56;
+  --color-sev-medium: #ffb454;
+  --color-sev-low: #59c2ff;
+  --color-sev-info: #6b7a90;
+  --color-novel: #c792ea;
+  --color-ok: #4ec9a5;
+}
+
+html, body { background: var(--color-bg); color: var(--color-ink); }
+
+body {
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--color-bg); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #2e3a4d; }
+
+@keyframes pulse-dot { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+.live-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+
+@keyframes slide-in { from { opacity: 0; transform: translateY(-4px) } to { opacity: 1; transform: none } }
+.slide-in { animation: slide-in .18s ease-out; }
