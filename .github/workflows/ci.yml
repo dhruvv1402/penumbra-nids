@@ -52,11 +52,15 @@ jobs:
           uv python install 3.12
           uv sync --frozen --extra eval --extra api --extra rag --extra drift
 
+      # Only paths that exist in a fresh checkout. `scripts/` was in this list while being an
+      # empty, untracked directory - git does not store empty directories, so it existed on the
+      # developer's machine and not on the runner, and ruff failed on a missing path. A local
+      # simulation cannot catch that by construction.
       - name: Ruff
-        run: uv run ruff check src tests scripts
+        run: uv run ruff check src tests
 
       - name: Ruff format
-        run: uv run ruff format --check src tests scripts
+        run: uv run ruff format --check src tests
 
       - name: Mypy
         run: uv run mypy
