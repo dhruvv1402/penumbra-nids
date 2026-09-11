@@ -10,6 +10,24 @@ known-bad signature, not looking like known-good either.
 
 ---
 
+## The result
+
+NSL-KDD's test set contains 17 attack types that never appear in its training set — 3,750 rows the
+model has genuinely never seen. At a matched false-positive cost:
+
+| realised FPR | supervised alone | + novelty head | delta |
+|---|---|---|---|
+| 1.0% | 0.053 | 0.346 | **+0.29** |
+| 2.0% | 0.085 | 0.541 | **+0.46** |
+| 10.0% | 0.864 | 0.769 | **-0.09** |
+
+A supervised classifier recalls **5%** of attacks it has never seen. The novelty head recovers a
+large part of that — but only in a band, and at 10% FPR it makes things *worse*. A novelty head is a
+trade, not a free addition.
+
+Full curve, plus the three methodological corrections that got us there (two of which produced
+flattering numbers that were wrong): [`docs/EVALUATION.md`](docs/EVALUATION.md).
+
 ## The thesis
 
 A supervised classifier does not catch novel attacks. Trained on known families, it labels an unseen family
