@@ -118,7 +118,13 @@ class SqliteRepository:
 
     @staticmethod
     def _segment_clause(principal: Principal, table: str) -> tuple[str, list[Any]]:
-        """Row-level filter. Empty segment set means unrestricted."""
+        """Row-level filter. Empty segment set means unrestricted.
+
+        Returns a clause containing only `?` placeholders plus the values to bind. No caller-supplied
+        string is ever interpolated into SQL - the f-strings below splice this fixed clause, and
+        every value travels as a bound parameter. Bandit flags the f-string construction (B608) and
+        cannot see that distinction, hence the nosec markers with this as their justification.
+        """
         if not principal.segments:
             return "", []
         placeholders = ",".join("?" for _ in principal.segments)
@@ -156,7 +162,8 @@ class SqliteRepository:
     def get_alert(self, alert_id: str, principal: Principal) -> Alert | None:
         clause, params = self._segment_clause(principal, "alerts")
         row = self._conn.execute(
-            f"SELECT payload FROM alerts WHERE alert_id = ?{clause}", [alert_id, *params]
+            f"SELECT payload FROM alerts WHERE alert_id = ?{clause}",  # nosec B608 - placeholders only
+            [alert_id, *params],
         ).fetchone()
         return Alert.model_validate_json(row["payload"]) if row else None
 

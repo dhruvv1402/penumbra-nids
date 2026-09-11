@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import shutil
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from collections.abc import Callable, Iterable
@@ -20,6 +21,23 @@ from penumbra.data.manifest import Manifest, RemoteFile
 
 _UA = "penumbra-nids/0.1 (academic; hackathon project)"
 _CHUNK = 1 << 20
+_ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+
+class UnsupportedScheme(ValueError):
+    """Raised for any URL scheme other than http(s).
+
+    urlopen honours `file://` and custom schemes. Manifest entries are data, and a downloader that
+    opens whatever scheme its input names will happily read a local file when handed one.
+    """
+
+    def __init__(self, url: str) -> None:
+        super().__init__(f"refusing to fetch {url!r}: only http and https are allowed")
+
+
+def _check_scheme(url: str) -> None:
+    if urllib.parse.urlparse(url).scheme.lower() not in _ALLOWED_SCHEMES:
+        raise UnsupportedScheme(url)
 
 
 @dataclass
@@ -36,12 +54,13 @@ class FetchResult:
 
 def _download(url: str, dest: Path, on_progress: Callable[[int, int], None] | None = None) -> int:
     """Stream a URL to dest. Returns bytes written. Raises on transport failure."""
+    _check_scheme(url)
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_suffix(dest.suffix + ".part")
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
     written = 0
     # HuggingFace `resolve/main` answers 302 to a CDN URL; urlopen follows redirects by default.
-    with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310 - fixed allowlist of URLs
+    with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310 - scheme checked above
         total = int(resp.headers.get("Content-Length") or 0)
         with part.open("wb") as fh:
             while chunk := resp.read(_CHUNK):
@@ -74,6 +93,8 @@ def fetch_one(
 
     try:
         written = _download(spec.url, dest, on_progress)
+    except UnsupportedScheme:
+        raise
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
         return FetchResult(spec, dest, "failed", f"{type(exc).__name__}: {exc}")
 

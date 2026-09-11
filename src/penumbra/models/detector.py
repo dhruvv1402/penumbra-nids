@@ -29,8 +29,6 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from penumbra.alerts.models import Alert, Contribution, NetworkContext
-from penumbra.alerts.scoring import ScoringPolicy, build_alert
 from penumbra.data.loaders.base import Dataset
 from penumbra.features.preprocess import assert_benign_only_fit, benign_only_pipeline
 from penumbra.models import supervised
@@ -66,8 +64,10 @@ class DetectorMetadata:
 class PenumbraDetector:
     """Two heads, one object."""
 
-    def __init__(self, *, policy: ScoringPolicy | None = None, target_fpr: float = 0.01) -> None:
-        self.policy = policy or ScoringPolicy()
+    def __init__(self, *, policy: Any = None, target_fpr: float = 0.01) -> None:
+        # Typed as Any rather than importing ScoringPolicy: models/ must not depend on alerts/, and
+        # the policy is carried for the alert builder rather than used during inference.
+        self.policy = policy
         self.target_fpr = target_fpr
 
         self.supervised_model: Any = None
@@ -176,85 +176,12 @@ class PenumbraDetector:
             index=X.index,
         )
 
-    def alerts(
-        self,
-        X: pd.DataFrame,
-        scored: pd.DataFrame | None = None,
-        *,
-        dataset: str = "unsw",
-        entities: list[str] | None = None,
-        include_benign: bool = False,
-    ) -> list[Alert]:
-        """Turn scored rows into Alert objects."""
-        scored = scored if scored is not None else self.score(X)
-        out: list[Alert] = []
+    def ranked_importances(self, top: int = 8) -> list[tuple[str, float]]:
+        """Top global feature importances, computed once and cached.
 
-        for pos, (_, row) in enumerate(scored.iterrows()):
-            fired = int(row["fired"])
-            if fired == 0 and not include_benign:
-                continue
-
-            # SUSPECTED_NOVEL is precisely "novelty fired and supervised did not", so a novelty-only
-            # detection carries no family by construction - naming it would contradict the verdict.
-            raw_family = row["family"]
-            family = raw_family if (fired in (1, 3) and isinstance(raw_family, str)) else None
-
-            alert = build_alert(
-                p_attack=float(row["p_attack"]),
-                novelty_percentile=float(row["novelty_percentile"]),
-                policy=self.policy,
-                family=family,
-                dataset=dataset,
-                agreement=int(row["agreement"]),
-                network=self._network_for(X, pos, entities),
-                contributions=self._contributions(X, pos),
-                model_version=self.metadata.version if self.metadata else "0.1.0",
-            )
-            out.append(alert)
-        return out
-
-    def _network_for(self, X: pd.DataFrame, pos: int, entities: list[str] | None) -> NetworkContext:
-        row = X.iloc[pos]
-        return NetworkContext(
-            src_ip=entities[pos] if entities and pos < len(entities) else None,
-            dst_port=_as_int(row.get("dst_port")),
-            protocol=str(row.get("proto") or row.get("protocol_type") or "") or None,
-            src_bytes=_as_int(row.get("sbytes") or row.get("src_bytes")),
-            dst_bytes=_as_int(row.get("dbytes") or row.get("dst_bytes")),
-            src_packets=_as_int(row.get("spkts")),
-            dst_packets=_as_int(row.get("dpkts")),
-            duration_ms=_as_float(row.get("dur")),
-        )
-
-    def _contributions(self, X: pd.DataFrame, pos: int, top: int = 5) -> list[Contribution]:
-        """Top feature contributions, rendered in plain English.
-
-        Uses the tree ensemble's global importances weighted by how unusual this row's value is
-        relative to training. Genuine per-row TreeSHAP lands in the explain module; this keeps the
-        replay path fast enough to stream, and it is labelled for what it is.
-        """
-        ranked = self._ranked(top)
-        if not ranked:
-            return []
-
-        row = X.iloc[pos]
-        return [
-            Contribution(
-                feature=name,
-                value=_as_float(row.get(name)),
-                shap_value=float(weight),
-                direction="toward_attack",
-                narrative=_narrate(name, row.get(name)),
-            )
-            for name, weight in ranked
-            if name in row.index
-        ]
-
-    def _ranked(self, top: int) -> list[tuple[str, float]]:
-        """Top-N global importances, computed once and cached.
-
-        Feature importances are a property of the fitted model, not of the row being scored, so
-        recomputing them per row is pure waste - and it was the dominant cost in the scoring path.
+        Importances are a property of the fitted model, not of the row being scored. Recomputing
+        them per row made the alert path O(rows x features) and pinned replay at 38 flows/s; caching
+        took it to 670.
         """
         if self._ranked_importances is None:
             importances = self._importances()
@@ -322,67 +249,3 @@ class PenumbraDetector:
         if meta_path.exists():
             det.metadata = DetectorMetadata(**json.loads(meta_path.read_text(encoding="utf-8")))
         return det
-
-
-def _as_int(value: Any) -> int | None:
-    try:
-        if value is None or (isinstance(value, float) and not np.isfinite(value)):
-            return None
-        return int(float(value))
-    except (TypeError, ValueError):
-        return None
-
-
-def _as_float(value: Any) -> float | None:
-    try:
-        f = float(value)
-        return f if np.isfinite(f) else None
-    except (TypeError, ValueError):
-        return None
-
-
-# Plain-English renderers. "sload = 1400000" is not something a tier-1 analyst can act on;
-# "outbound throughput 1.4 Mb/s" is.
-_NARRATIVES: dict[str, str] = {
-    "sttl": "source time-to-live {v} - a property of the sending host's OS, flagged as a testbed artifact",
-    "ct_dst_sport_ltm": "{v} recent connections to this destination port across hosts",
-    "ct_srv_src": "{v} recent connections to the same service from this source",
-    "ct_dst_ltm": "{v} recent connections to this destination",
-    "sbytes": "{v} bytes sent",
-    "src_bytes": "{v} bytes sent",
-    "dst_bytes": "{v} bytes received",
-    "flag": "connection flag state {v}",
-    "protocol_type": "protocol {v}",
-    "service": "service {v}",
-    "logged_in": "session was authenticated",
-    "dst_host_diff_srv_rate": "{v} of connections to this host went to differing services",
-    "dst_host_same_srv_rate": "{v} of connections to this host went to the same service",
-    "dst_host_serror_rate": "{v} SYN-error rate against this host",
-    "dst_host_srv_serror_rate": "{v} SYN-error rate for this service on this host",
-    "same_srv_rate": "{v} of connections went to the same service",
-    "dst_host_count": "{v} connections to this destination host in the window",
-    "duration": "connection lasted {v} seconds",
-    "dbytes": "{v} bytes received",
-    "spkts": "{v} packets sent",
-    "rate": "{v} packets/second",
-    "sload": "{v} bits/second outbound",
-    "dur": "flow lasted {v} seconds",
-    "smean": "mean outbound packet size {v} bytes",
-    "count": "{v} connections to the same host in the window",
-    "srv_count": "{v} connections to the same service in the window",
-    "serror_rate": "{v} of connections had SYN errors - the signature of a SYN flood",
-    "srv_serror_rate": "{v} SYN-error rate on this service",
-    "diff_srv_rate": "{v} of connections went to differing services - the shape of a port sweep",
-    "dst_host_srv_count": "{v} connections to this service on the destination host",
-}
-
-
-def _narrate(feature: str, value: Any) -> str:
-    template = _NARRATIVES.get(feature)
-    if template is None:
-        return ""
-    number = _as_float(value)
-    if number is None:
-        return ""
-    rendered = f"{number:,.0f}" if abs(number) >= 100 else f"{number:,.3g}"
-    return template.format(v=rendered)
