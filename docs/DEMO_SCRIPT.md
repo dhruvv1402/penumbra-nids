@@ -225,10 +225,31 @@ uv run penumbra replay -d nslkdd --ingest --inject-drift abrupt
 > the suspected artifact features removed.
 
 **"Did you try deep learning?"**
-> The novelty head is a neural autoencoder. We deliberately didn't ship a transformer: on 175k rows
-> of tabular data, gradient-boosted trees win (Grinsztajn et al. 2022), and on eight CPU cores we
-> couldn't afford the search to make one competitive. We'd have shipped an undertuned model that
-> loses to XGBoost and proves nothing.
+> Twice, and we measured both. The novelty head is a neural autoencoder. We also built a 1D-CNN into
+> a bidirectional GRU over per-host causal flow windows, pre-registered the hypothesis, and ran it
+> against a per-flow forest and against nine cheap entity-graph features on identical rows at a
+> matched false-positive budget.
+>
+> It lost. 0.61 recall at 1% FPR against the forest's 0.996, and the nine graph features beat it by
+> 0.38. Not because it failed to train — validation AUC 0.9968, clean early stop — but because it
+> learned Wednesday's temporal shapes and the test days are Thursday and Friday. It detects `DDoS`
+> perfectly, the one family whose shape crosses that boundary, and largely misses Portscan, Botnet
+> and the web attacks.
+>
+> That is the interesting part: **a model that learns temporal shape overfits the temporal shapes in
+> its training window, and a per-flow model has no temporal shape to overfit.** A random split would
+> have hidden it — Wednesday's sequences would be on both sides and the arm would look excellent.
+>
+> We deliberately didn't ship a transformer either: on 175k rows of tabular data, gradient-boosted
+> trees win (Grinsztajn et al. 2022), and on eight CPU cores we couldn't afford the search to make
+> one competitive.
+
+**"Your deep model lost — isn't that a failure?"**
+> It is a measurement. The failure would have been shipping it without one, or running it on a
+> random split where it would have looked good. We also caught it reporting a number from a run that
+> had silently collapsed — validation AUC pinned at exactly 0.500 while early stopping restored the
+> best weights and exited cleanly. Nothing crashed. That is the failure mode worth being frightened
+> of, and there is now a flag for it.
 
 **"Would this work on a real network?"**
 > Unknown, and we say so in the model card. These datasets are 10 and 28 years old and synthetic.

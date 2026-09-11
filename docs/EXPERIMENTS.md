@@ -259,6 +259,94 @@ depends on the comparison being fair, and the fairness is in the matched rows an
 
 ---
 
+### RESULT — H6 refuted, H6b confirmed
+
+Recorded after the run. The predictions above were committed first and are not edited.
+
+| arm | ROC-AUC | recall @ 1% FPR | Δ vs per-flow | alerts |
+|---|---:|---:|---:|---:|
+| per-flow | 0.9976 | **0.9959** | — | 112,440 |
+| per-flow + graph | **0.9989** | 0.9867 | −0.0092 | 111,422 |
+| sequence (CNN+BiGRU) | 0.9582 | 0.6084 | **−0.3874** | 69,443 |
+
+297,586 train / 303,211 test windows, identical rows, realised FPR 0.0100 on all three arms.
+
+**H6 is refuted.** Neither context arm clears per-flow by more than 0.01 recall at the matched
+budget. Adding per-host temporal context did not buy recall on this dataset; it cost some.
+
+**H6b is confirmed, and by a wider margin than predicted.** The graph arm beats the sequence arm by
+**0.378 recall** at the same budget. Nine causal aggregate features — fan-out, fan-in, port entropy,
+pair count, inter-arrival — are not merely competitive with the deep model here, they dominate it.
+
+**Prediction 1 was wrong.** We predicted the graph arm would clear per-flow by +0.01 to +0.05,
+concentrated in `PortScan`. It came in at −0.0092. Recording it: a small predicted gain became a
+small measured loss.
+
+**Prediction 3 was right, and it is most of the explanation.** CICIDS2017's per-flow features leave
+almost no headroom — 0.9959 recall at 1% FPR before any context is added. There was nothing for the
+extra features to win.
+
+#### The dissociation worth noticing
+
+The graph arm has the **highest ROC-AUC of the three (0.9989 vs 0.9976)** and slightly **lower**
+recall at the operating point. Those are not in conflict: AUC averages ranking quality over every
+threshold, and recall at 1% FPR is one threshold. A model can rank better overall and be worse at
+the single point you actually deploy. This is the concrete version of the argument in §1 for
+reporting recall at a fixed FPR rather than AUC alone.
+
+#### Why the sequence head loses, and it is not the architecture
+
+It trained cleanly: validation ROC-AUC **0.9968**, no collapse, early-stopped at 4 epochs. Then it
+scored **0.9582** on test. The per-flow forest scored 0.9976 on the same rows.
+
+That gap is a temporal generalisation failure, and the per-family table says where:
+
+| family | per-flow | + graph | sequence | n |
+|---|---:|---:|---:|---:|
+| Portscan | 0.9998 | 1.0000 | **0.4237** | 53,002 |
+| DDoS | 1.0000 | 1.0000 | 1.0000 | 31,717 |
+| Infiltration – Portscan | 0.9920 | 0.9482 | 0.5518 | 23,955 |
+| Botnet | 0.8436 | 0.8548 | **0.0555** | 1,605 |
+| Web Attack – Brute Force | 0.9977 | 1.0000 | **0.0655** | 443 |
+| Web Attack – XSS | 1.0000 | 1.0000 | **0.0317** | 221 |
+| Infiltration | 0.9600 | 1.0000 | 0.0400 | 25 |
+
+Training is Mon–Wed, which is dominated by `DoS Hulk`. Test is Thu–Fri: Portscan, Botnet, Web
+attacks. The sequence head learned Wednesday's *sequence shapes* and they did not transfer;
+`DDoS` — the one family whose temporal signature is shared across the boundary — it detects
+perfectly.
+
+So the honest conclusion is narrower than "deep learning does not work here":
+
+> **A model that learns temporal shape overfits the temporal shapes present in training, and a
+> per-flow model does not have that failure mode because it has no temporal shape to overfit.**
+
+That is a real cost of sequence modelling and the kind of thing a random split would have hidden
+entirely — on a shuffled split, Wednesday's sequences appear in both train and test, and this arm
+would have looked excellent.
+
+#### Process note: three runs, two of them broken
+
+Only the third run is reported. The first two are recorded here because the failures were silent.
+
+1. **Run one** matched the FPR budget with a quantile. Forest probabilities put thousands of rows
+   at exactly 0.0, so the quantile landed inside the tied block: one arm realised 0.2% FPR while
+   another realised 1.0%, both printed as "1%". Fixed with rank selection
+   (`budget.flags_at_benign_budget`). Realised FPR is now printed beside the budget so the match is
+   checkable by eye.
+2. **Run two** trained a sequence head that had collapsed. Validation AUC 0.9999 in epoch one, then
+   exactly 0.500 for every epoch after; early stopping restored the epoch-one weights and the run
+   exited cleanly with a number attached. The first diagnosis — exploding feature values — was
+   wrong. The actual cause: **the last 15% of Mon–Wed in time order has an attack rate of 0.0001**,
+   four attacks in 44,638 windows, because Wednesday evening is quiet after the DoS traffic stops.
+   Keras reports ROC-AUC 0.5 on a single-class validation set and early stopping monitored exactly
+   that. The temporal tail is now widened until the rarer class clears 500 rows, and which rule was
+   used is recorded on every run.
+
+Neither failure raised an exception. Both produced a plausible table.
+
+---
+
 ## Standing rules for all experiments
 
 - **Prevalence is stated with every precision-family number.** UNSW-NB15's test set is ~55% attack;

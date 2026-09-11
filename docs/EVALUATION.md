@@ -681,6 +681,108 @@ Reproduce: `uv run penumbra rules --dataset unsw`. Outputs:
 
 ---
 
+### 10.7c Sequence context — the deep model, and why it loses (E6)
+
+Pre-registered in `docs/EXPERIMENTS.md` §E6 and committed before the run. Three arms on **identical
+rows** at a **matched benign-flag budget**, on CICIDS2017 — the only dataset here with source
+addresses and timestamps.
+
+| arm | ROC-AUC | recall @ 1% FPR | Δ | realised FPR |
+|---|---:|---:|---:|---:|
+| per-flow (RF) | 0.9976 | **0.9959** | — | 0.0100 |
+| per-flow + entity graph | **0.9989** | 0.9867 | −0.0092 | 0.0100 |
+| sequence (1D-CNN → BiGRU) | 0.9582 | 0.6084 | −0.3874 | 0.0100 |
+
+297,586 train / 303,211 test windows, K=16. **H6 refuted, H6b confirmed.** Neither context arm
+clears per-flow. The nine cheap graph features beat the deep model by **0.378 recall** at the same
+budget.
+
+Most of the explanation is that there was nothing to win: CICIDS2017's per-flow features already
+reach 0.9959 recall at 1% FPR. We predicted that in advance, and we also predicted a small gain for
+the graph arm that turned out to be a small loss.
+
+#### AUC and the operating point disagree, and both are right
+
+The graph arm has the **highest ROC-AUC** and **lower recall at the threshold we would deploy**.
+ROC-AUC averages ranking quality over every threshold; recall at 1% FPR is one threshold. A model
+can rank better overall and be worse at the point you actually use.
+
+This is §1's argument made concrete. If we reported AUC alone, the graph arm wins. If we report
+recall at a fixed FPR — the number a SOC actually buys on — it does not.
+
+#### The sequence head trained fine and generalised badly
+
+Validation ROC-AUC **0.9968**, no collapse, early-stopped at 4 epochs. Test ROC-AUC **0.9582**.
+
+| family | per-flow | + graph | sequence | n |
+|---|---:|---:|---:|---:|
+| Portscan | 0.9998 | 1.0000 | **0.4237** | 53,002 |
+| DDoS | 1.0000 | 1.0000 | 1.0000 | 31,717 |
+| Infiltration – Portscan | 0.9920 | 0.9482 | 0.5518 | 23,955 |
+| Botnet | 0.8436 | 0.8548 | **0.0555** | 1,605 |
+| Web Attack – Brute Force | 0.9977 | 1.0000 | **0.0655** | 443 |
+| Web Attack – XSS | 1.0000 | 1.0000 | **0.0317** | 221 |
+
+Training is Mon–Wed (dominated by `DoS Hulk`); test is Thu–Fri (Portscan, Botnet, Web attacks). The
+sequence head learned Wednesday's temporal shapes. `DDoS` — the one family whose shape carries
+across the boundary — it detects perfectly. Everything else it largely misses.
+
+> **A model that learns temporal shape overfits the temporal shapes in its training window. A
+> per-flow model has no temporal shape to overfit, so it does not have that failure mode.**
+
+A random split would have hidden this completely: Wednesday's sequences would appear on both sides
+and this arm would look excellent. It is the same argument as §4's temporal-split rule, arriving
+from a different direction.
+
+#### Two silent failures on the way here
+
+Recorded because neither raised an exception and both produced a plausible table.
+
+**A quantile does not deliver a matched budget.** Forest probabilities put thousands of rows at
+exactly 0.0, so the quantile lands inside the tied block. Run one matched a 1% budget and realised
+**0.2% on one arm and 1.0% on another**, reporting both as 1%. Rank selection
+(`eval.budget.flags_at_benign_budget`) is exact; realised FPR is now printed beside the budget in
+every table above so the match is checkable.
+
+**A collapsed training run reported a number.** Run two hit validation AUC 0.9999 in epoch one then
+exactly 0.500 for every epoch after — a constant output. Early stopping restored the epoch-one
+weights and the run exited cleanly. The first diagnosis was exploding feature values (CICIDS reaches
+7.2e9, with maxima over 200σ from their own mean), and that fix — median/IQR scaling clipped to 10
+robust deviations, plus gradient clipping — was worth making but was **not the cause**.
+
+The cause: **the last 15% of Mon–Wed in time order has an attack rate of 0.0001** — four attacks in
+44,638 windows, because Wednesday evening is quiet once the DoS traffic stops. Keras reports
+ROC-AUC 0.5 on an effectively single-class validation set, and early stopping was monitoring exactly
+that. The temporal tail is now widened until the rarer class clears 500 rows, falling back to a
+stratified shuffle only if nothing up to half the data works, and **which rule was used is recorded
+on every run** — a random split answers a weaker question and must not be substituted silently.
+
+---
+
+### 10.7d Constrained adversarial evasion
+
+`adversarial/evasion.py` measures detection decay under perturbations an attacker could actually
+transmit: pad bytes up, stretch duration, widen inter-packet gaps, never un-send a packet, keep
+counts integral, and recompute every derived feature from its primitives (Pierazzi et al., IEEE S&P
+2020). The unconstrained feature-space attack runs on the same rows so the gap is measured rather
+than asserted.
+
+The x-axis is **attacker effort in units of slowdown**, not a dimensionless epsilon, because effort
+here has a price: a ten-times slower scan takes ten times as long to finish. "Detection falls from
+0.97 to 0.61 when the attacker accepts a 10× slowdown" is a sentence a defender can act on.
+
+Run it with `penumbra adversarial --dataset unsw`; results land in
+`artifacts/reports/adversarial_unsw.json` and on the console's evaluation page. **Not yet measured
+at the time of writing** — the module, its constraint tests and the CLI are in place; the numbers
+are not, and no figure appears here until they are.
+
+One note on the strawman, because it is a trap we fell into: written as symmetric Gaussian noise it
+barely moved detection at all, which would have made the *unconstrained* attack look weaker than the
+realisable one and inverted the entire finding. It interpolates toward the benign centroid now. An
+unconstrained attack has to actually be an attack for the comparison to mean anything.
+
+---
+
 ### 10.8 Reproduction
 
 ```bash
@@ -688,6 +790,8 @@ uv run penumbra audit --dataset unsw        # artifact + leak audit
 uv run penumbra eval  --dataset unsw        # binary + per-family, with/without artifacts
 uv run penumbra loafo --dataset nslkdd      # the unseen-17 experiment
 uv run penumbra rules --dataset unsw        # mine + validate KQL/Sigma rules
+uv run penumbra sequence                    # E6: does sequence context buy recall?
+uv run penumbra reproduce-all               # everything, with reasons for what it skips
 ```
 
 Raw outputs: `artifacts/reports/{audit,eval}_{unsw,nslkdd}.json`,
