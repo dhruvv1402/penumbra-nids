@@ -1,0 +1,79 @@
+// ASimNetworkSessionPenumbra
+//
+// Parameter-less ASIM normalizing parser for Penumbra alerts, following Microsoft's documented
+// naming convention (ASimNetworkSession<Vendor><Product>). Once this and its vim* counterpart are
+// deployed, the _Im_NetworkSession unifying parser picks Penumbra's data up automatically and
+// every Microsoft-authored ASIM analytics rule works against it without us writing any of them.
+//
+// Source table: PenumbraAlerts_CL, populated through the Logs Ingestion API via a "kind": "Direct"
+// data collection rule.
+//
+// Schema: NetworkSession 0.2.7. EventType is "IDS", which ASIM's own documentation defines as
+// "a network session reported as suspicious" - exactly what this emits.
+//
+// Note the DvcAction assignment below. It is always "Allow": Penumbra observed and did not act,
+// even at high ThreatConfidence. That field combination is ADR-0001 stated in the SIEM's own
+// vocabulary rather than in prose.
+//
+// Caveat, stated rather than hidden: EventVendor/EventProduct are drawn from a closed Microsoft
+// allow-list that Penumbra is not on. Production deployment would require Microsoft to allocate a
+// designator; these values are our own.
+
+let PenumbraNetworkSession = view () {
+    PenumbraAlerts_CL
+    | extend
+        // --- mandatory ASIM fields
+        EventCount          = toint(1),
+        EventStartTime      = todatetime(TimeGenerated),
+        EventEndTime        = todatetime(TimeGenerated),
+        EventType           = "IDS",
+        EventResult         = "Success",
+        EventProduct        = "Penumbra NIDS",
+        EventVendor         = "Penumbra",
+        EventSchema         = "NetworkSession",
+        EventSchemaVersion  = "0.2.7",
+        Dvc                 = tostring(column_ifexists("Dvc", "penumbra-sensor-01")),
+        // --- recommended
+        EventSeverity       = tostring(column_ifexists("EventSeverity", "Medium")),
+        EventUid            = tostring(column_ifexists("EventUid", "")),
+        DvcHostname         = tostring(column_ifexists("DvcHostname", "penumbra-sensor-01")),
+        // Penumbra alerts; it does not block. This is not configurable.
+        DvcAction           = "Allow",
+        EventMessage        = tostring(column_ifexists("EventMessage", "")),
+        // --- inspection fields: the model verdict
+        ThreatId            = tostring(column_ifexists("ThreatId", "")),
+        ThreatName          = tostring(column_ifexists("ThreatName", "")),
+        ThreatCategory      = tostring(column_ifexists("ThreatCategory", "")),
+        // ThreatConfidence carries the CALIBRATED probability x 100, never the priority sort key.
+        ThreatConfidence    = toint(column_ifexists("ThreatConfidence", 0)),
+        ThreatRiskLevel     = toint(column_ifexists("ThreatRiskLevel", 0)),
+        ThreatIsActive      = tobool(column_ifexists("ThreatIsActive", true)),
+        NetworkRuleName     = tostring(column_ifexists("NetworkRuleName", "")),
+        // --- network
+        SrcIpAddr           = tostring(column_ifexists("SrcIpAddr", "")),
+        DstIpAddr           = tostring(column_ifexists("DstIpAddr", "")),
+        SrcPortNumber       = toint(column_ifexists("SrcPortNumber", 0)),
+        DstPortNumber       = toint(column_ifexists("DstPortNumber", 0)),
+        NetworkProtocol     = toupper(tostring(column_ifexists("NetworkProtocol", ""))),
+        NetworkDuration     = toint(column_ifexists("NetworkDuration", 0)),
+        SrcBytes            = tolong(column_ifexists("SrcBytes", 0)),
+        DstBytes            = tolong(column_ifexists("DstBytes", 0)),
+        SrcPackets          = tolong(column_ifexists("SrcPackets", 0)),
+        DstPackets          = tolong(column_ifexists("DstPackets", 0))
+    | extend
+        NetworkBytes        = SrcBytes + DstBytes,
+        // ThreatField is CONDITIONAL in ASIM: required whenever ThreatIpAddr is populated.
+        // Omitting it is the single easiest way to fail schema validation.
+        ThreatIpAddr        = iff(isnotempty(SrcIpAddr), SrcIpAddr, ""),
+        ThreatField         = iff(isnotempty(SrcIpAddr), "SrcIpAddr", "")
+    | extend
+        // ASIM aliases
+        Dst                 = DstIpAddr,
+        Src                 = SrcIpAddr,
+        Duration            = NetworkDuration,
+        IpAddr              = SrcIpAddr,
+        Rule                = NetworkRuleName
+    | project-away
+        *_s, *_d, *_b, *_g, *_t
+};
+PenumbraNetworkSession

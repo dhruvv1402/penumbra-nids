@@ -1,0 +1,80 @@
+id: 4f8a2c91-6d3b-4e17-9c25-8b1e0a7d3f42
+name: Anomalous network session with no known attack family
+description: |
+  Identifies network sessions that Penumbra's benign-only novelty detector flagged as statistically
+  unlike normal traffic while the supervised classifier did not recognise them as any known attack
+  family. These are the sessions a signature-based detector and a trained classifier both miss.
+  Alerts are raised for analyst triage only; no traffic is blocked automatically.
+severity: Medium
+status: Available
+requiredDataConnectors:
+  - connectorId: PenumbraNIDS
+    dataTypes:
+      - PenumbraAlerts_CL
+queryFrequency: 15m
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - Discovery
+relevantTechniques:
+  - T1046
+query: |
+  ASimNetworkSessionPenumbra
+  | where EventType == "IDS"
+  | where ThreatCategory == "Anomaly"
+  | extend NoveltyPercentile = todouble(AdditionalFields.NoveltyPercentile)
+  | extend DetectorAgreement = toint(AdditionalFields.DetectorAgreement)
+  | where NoveltyPercentile >= 0.99
+  | where DetectorAgreement >= 2
+  | summarize
+      StartTime          = min(TimeGenerated),
+      EndTime            = max(TimeGenerated),
+      SessionCount       = count(),
+      DistinctDest       = dcount(DstIpAddr),
+      DistinctPorts      = dcount(DstPortNumber),
+      MaxNovelty         = max(NoveltyPercentile),
+      MaxConfidence      = max(ThreatConfidence),
+      ModelVersion       = any(tostring(AdditionalFields.ModelVersion))
+    by SrcIpAddr, DvcHostname
+  | where SessionCount >= 5
+  | extend DynamicSeverity = iff(DistinctDest > 20 or DistinctPorts > 50, "High", "Medium")
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+customDetails:
+  NoveltyPercentile: MaxNovelty
+  SessionCount: SessionCount
+  DistinctDest: DistinctDest
+  ModelVersion: ModelVersion
+alertDetailsOverride:
+  alertDisplayNameFormat: Unrecognised network behaviour from {{SrcIpAddr}}
+  alertDescriptionFormat: |
+    Penumbra flagged {{SessionCount}} sessions from {{SrcIpAddr}} as statistically unlike the benign
+    baseline, reaching the {{MaxNovelty}} percentile, across {{DistinctDest}} destinations and
+    {{DistinctPorts}} ports. No known attack family matched. This may be a new legitimate service
+    rather than an attack; confirm with the asset owner before escalating.
+  alertSeverityColumnName: DynamicSeverity
+entityMappings:
+  - entityType: IP
+    fieldMappings:
+      - identifier: Address
+        columnName: SrcIpAddr
+  - entityType: Host
+    fieldMappings:
+      - identifier: HostName
+        columnName: DvcHostname
+incidentConfiguration:
+  createIncident: true
+  groupingConfiguration:
+    enabled: true
+    reopenClosedIncident: false
+    lookbackDuration: PT5H
+    matchingMethod: Selected
+    groupByEntities:
+      - IP
+    groupByAlertDetails:
+      - DisplayName
+suppressionEnabled: false
+suppressionDuration: PT1H
+version: 1.0.0
+kind: Scheduled

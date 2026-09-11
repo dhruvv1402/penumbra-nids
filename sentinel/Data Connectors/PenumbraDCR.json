@@ -1,0 +1,66 @@
+{
+  "_comment": "Data collection rule for Penumbra alerts. kind=Direct means no DCE is required - since March 2024 the DCR exposes its own logsIngestion endpoint. Grant the ingesting app registration 'Monitoring Metrics Publisher' on this resource.",
+  "location": "eastus",
+  "kind": "Direct",
+  "properties": {
+    "streamDeclarations": {
+      "Custom-PenumbraAlerts": {
+        "columns": [
+          { "name": "TimeGenerated", "type": "datetime" },
+          { "name": "EventCount", "type": "int" },
+          { "name": "EventStartTime", "type": "datetime" },
+          { "name": "EventEndTime", "type": "datetime" },
+          { "name": "EventType", "type": "string" },
+          { "name": "EventResult", "type": "string" },
+          { "name": "EventProduct", "type": "string" },
+          { "name": "EventVendor", "type": "string" },
+          { "name": "EventSchema", "type": "string" },
+          { "name": "EventSchemaVersion", "type": "string" },
+          { "name": "EventSeverity", "type": "string" },
+          { "name": "EventUid", "type": "string" },
+          { "name": "EventMessage", "type": "string" },
+          { "name": "Dvc", "type": "string" },
+          { "name": "DvcHostname", "type": "string" },
+          { "name": "DvcAction", "type": "string" },
+          { "name": "ThreatId", "type": "string" },
+          { "name": "ThreatName", "type": "string" },
+          { "name": "ThreatCategory", "type": "string" },
+          { "name": "ThreatConfidence", "type": "int" },
+          { "name": "ThreatRiskLevel", "type": "int" },
+          { "name": "ThreatIsActive", "type": "boolean" },
+          { "name": "ThreatIpAddr", "type": "string" },
+          { "name": "ThreatField", "type": "string" },
+          { "name": "NetworkRuleName", "type": "string" },
+          { "name": "SrcIpAddr", "type": "string" },
+          { "name": "DstIpAddr", "type": "string" },
+          { "name": "SrcPortNumber", "type": "int" },
+          { "name": "DstPortNumber", "type": "int" },
+          { "name": "NetworkProtocol", "type": "string" },
+          { "name": "NetworkDuration", "type": "int" },
+          { "name": "SrcBytes", "type": "long" },
+          { "name": "DstBytes", "type": "long" },
+          { "name": "SrcPackets", "type": "long" },
+          { "name": "DstPackets", "type": "long" },
+          { "name": "NetworkBytes", "type": "long" },
+          { "name": "AdditionalFields", "type": "dynamic" }
+        ]
+      }
+    },
+    "destinations": {
+      "logAnalytics": [
+        {
+          "workspaceResourceId": "<workspace-resource-id>",
+          "name": "PenumbraDestination"
+        }
+      ]
+    },
+    "dataFlows": [
+      {
+        "streams": ["Custom-PenumbraAlerts"],
+        "destinations": ["PenumbraDestination"],
+        "transformKql": "source",
+        "outputStream": "Custom-PenumbraAlerts_CL"
+      }
+    ]
+  }
+}
