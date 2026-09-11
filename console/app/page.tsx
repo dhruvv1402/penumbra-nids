@@ -15,6 +15,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   ApiError,
   type Alert,
@@ -188,6 +189,20 @@ function Header({
         <span className="text-[10px] text-[var(--color-ink-faint)] hidden md:inline">
           alerts a SOC · never blocks traffic
         </span>
+        <nav className="flex items-center gap-3 ml-3">
+          <Link
+            href="/evaluation"
+            className="text-[11px] tracking-[0.14em] uppercase text-[var(--color-ink-dim)] hover:text-[var(--color-ink)]"
+          >
+            evaluation
+          </Link>
+          <Link
+            href="/governance"
+            className="text-[11px] tracking-[0.14em] uppercase text-[var(--color-ink-dim)] hover:text-[var(--color-ink)]"
+          >
+            governance
+          </Link>
+        </nav>
       </div>
 
       <div className="flex items-stretch">

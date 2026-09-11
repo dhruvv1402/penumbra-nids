@@ -289,6 +289,45 @@ class TestSequenceDetector:
         assert collapsed.collapsed
         assert "diverged to a constant output" in collapsed.summary()
 
+    def test_a_single_class_temporal_tail_is_widened(self) -> None:
+        """The bug that actually broke the CICIDS run, and it was not the one I first blamed.
+
+        The last 15% of Mon-Wed in time order has an attack rate of 0.0001 - four attacks in 44,638
+        windows, because Wednesday evening is quiet after the DoS traffic stops. Keras reports
+        ROC-AUC 0.5 on an effectively single-class validation set, EarlyStopping monitors exactly
+        that, and the model trains with no stopping signal. The run exits cleanly reporting
+        `val_auc 0.500`, which reads like divergence and is a broken split.
+        """
+        from penumbra.models.sequence import SequenceConfig, SequenceDetector
+
+        detector = SequenceDetector(SequenceConfig(validation_fraction=0.15))
+        # Attacks live only in the first 60%; the natural tail is pure benign, like Wednesday.
+        y = np.zeros(20_000, dtype=np.int8)
+        y[:12_000] = (np.arange(12_000) % 3 == 0).astype(np.int8)
+
+        cut, kind = detector._validation_cut(y)
+        assert kind != "temporal", "the 15% tail here has no attacks at all"
+        tail = y[cut:]
+        assert min(int((tail == 1).sum()), int((tail == 0).sum())) >= 500
+
+    def test_a_healthy_temporal_tail_is_left_alone(self) -> None:
+        """Widening is a fallback, not the default. A temporal split answers the stronger question."""
+        from penumbra.models.sequence import SequenceConfig, SequenceDetector
+
+        detector = SequenceDetector(SequenceConfig(validation_fraction=0.15))
+        y = (np.arange(20_000) % 3 == 0).astype(np.int8)
+        cut, kind = detector._validation_cut(y)
+        assert kind == "temporal"
+        assert cut == int(20_000 * 0.85)
+
+    def test_which_split_was_used_is_recorded(self) -> None:
+        """A random split answers a weaker question; substituting one silently would hide that."""
+        from penumbra.models.sequence import TrainingHistory
+
+        history = TrainingHistory(validation_split="temporal-widened", validation_minority=1234)
+        assert "temporal-widened" in history.summary()
+        assert "1,234" in history.summary()
+
     def test_scoring_before_fitting_raises(self, learnable) -> None:
         from penumbra.models.sequence import SequenceDetector
 

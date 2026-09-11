@@ -59,6 +59,10 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 # a genuinely extreme flow, tight enough that one row cannot saturate the network.
 CLIP_SIGMAS = 10.0
 
+# A validation split needs at least this many of the rarer class for ROC-AUC to mean anything.
+# Below it, Keras reports 0.5 and EarlyStopping has nothing to monitor.
+MIN_VALIDATION_MINORITY = 500
+
 
 @dataclass
 class SequenceConfig:
@@ -88,6 +92,8 @@ class TrainingHistory:
     best_val_auc: float = 0.0
     stopped_early: bool = False
     collapsed_epochs: int = 0
+    validation_split: str = "temporal"
+    validation_minority: int = 0
     curve: list[dict[str, float]] = field(default_factory=list)
 
     @property
@@ -102,6 +108,10 @@ class TrainingHistory:
     def summary(self) -> str:
         stop = "early-stopped" if self.stopped_early else "ran to the epoch cap"
         line = f"  {self.epochs_run} epochs ({stop}), best validation ROC-AUC {self.best_val_auc:.4f}"
+        line += (
+            f"{chr(10)}  validation split: {self.validation_split}, "
+            f"{self.validation_minority:,} rows in the rarer class"
+        )
         if self.collapsed:
             line += (
                 chr(10) + "  WARNING: validation AUC sat at 0.500 for "
@@ -215,6 +225,34 @@ class SequenceDetector:
         out[:, :, d] = seq.mask
         return out
 
+    def _validation_cut(self, y: np.ndarray) -> tuple[int, str]:
+        """Where to split for validation, and by what rule.
+
+        A TEMPORAL split is the right default. The sequences arrive in time order, so holding out
+        the tail is the only split that answers "does this work on traffic that arrives after what
+        it was trained on" - the only question deployment asks.
+
+        But a temporal tail can be degenerate, and on CICIDS2017 it is. The last 15% of Mon-Wed in
+        time order has an attack rate of **0.0001** - four attacks in 44,638 windows, because
+        Wednesday evening is quiet after the DoS traffic stops. Keras computes ROC-AUC of 0.5 on a
+        validation set that is effectively one class, EarlyStopping monitors that, and the model
+        trains with no usable stopping signal at all. The run exits cleanly reporting
+        `val_auc 0.500`, which reads like divergence and is actually a broken split.
+
+        So the tail is widened until the minority class is large enough to support an AUC, and only
+        if no tail up to half the data works does it fall back to a stratified shuffle. Which rule
+        was used is recorded on the history, because a random split answers a weaker question and
+        the report should not silently substitute one for the other.
+        """
+        n = len(y)
+        for fraction in (self.config.validation_fraction, 0.25, 0.35, 0.5):
+            cut = int(n * (1.0 - fraction))
+            tail = y[cut:]
+            minority = min(int((tail == 1).sum()), int((tail == 0).sum()))
+            if minority >= MIN_VALIDATION_MINORITY:
+                return cut, "temporal" if fraction == self.config.validation_fraction else "temporal-widened"
+        return int(n * (1.0 - self.config.validation_fraction)), "random"
+
     # -- api -------------------------------------------------------------------------------
 
     def fit(self, seq: Sequences, *, verbose: int = 0) -> SequenceDetector:
@@ -226,10 +264,12 @@ class SequenceDetector:
         X = self._prepare(seq)
         y = seq.y.astype(np.float32)
 
-        # A TEMPORAL validation split, not a random one. The sequences arrive in time order, so
-        # holding out the tail is the only split that answers "does this work on traffic that
-        # arrives after what it was trained on" - which is the only question deployment asks.
-        cut = int(len(X) * (1.0 - self.config.validation_fraction))
+        cut, split_kind = self._validation_cut(y)
+        if split_kind == "random":
+            # Stratified shuffle, used only when no temporal tail works. Recorded, not hidden.
+            rng = np.random.default_rng(SEED)
+            order = rng.permutation(len(X))
+            X, y = X[order], y[order]
         X_fit, X_val = X[:cut], X[cut:]
         y_fit, y_val = y[:cut], y[cut:]
 
@@ -264,6 +304,8 @@ class SequenceDetector:
             best_val_auc=float(max(val_auc)) if val_auc else 0.0,
             stopped_early=stopper.stopped_epoch > 0,
             collapsed_epochs=collapsed,
+            validation_split=split_kind,
+            validation_minority=int(min((y_val == 1).sum(), (y_val == 0).sum())),
             curve=[
                 {"epoch": i + 1, "loss": float(loss), "val_auc": float(auc)}
                 for i, (loss, auc) in enumerate(zip(fitted.history.get("loss", []), val_auc, strict=False))
