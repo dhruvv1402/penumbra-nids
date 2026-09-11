@@ -111,7 +111,9 @@ class Correlator:
             incidents.extend(self._split_by_window(entity, family, group))
 
         incidents = [i for i in incidents if i.event_count >= self.policy.min_alerts]
-        incidents.sort(key=lambda i: i.priority, reverse=True)
+        # Priority first, then size. Two incidents at equal priority are not equally urgent when
+        # one represents 29,562 flows and the other represents one.
+        incidents.sort(key=lambda i: (i.priority, i.event_count), reverse=True)
 
         return CorrelationResult(incidents=incidents, n_alerts=len(actionable), unassigned=unassigned)
 

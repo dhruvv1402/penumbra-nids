@@ -59,6 +59,19 @@ attack prevalence that is an unusable ticket queue — so novelty findings do no
 - **Unknown-behaviour lane** → a ranked **hunting queue with a fixed daily budget**. Its honest metric is
   Precision@k, not FPR. A fixed-budget queue cannot cause alert fatigue by construction.
 
+## Alert fatigue, measured
+
+On CICIDS2017's Thursday–Friday split, with real source IPs from the capture:
+
+**30,780 alerts → 273 incidents.** 112.7 events each.
+
+The largest: a DoS Hulk flood producing **29,562 flows arrives as one incident**. Without
+correlation that is 29,562 tickets for one event a human understands in ten seconds.
+
+This number is reported from CICIDS2017 and nowhere else, because it is the only dataset here with
+real source identities. On UNSW-NB15 the correlator *raises* rather than grouping on identifiers we
+invented.
+
 ## It alerts. It never blocks.
 
 There is no blocking code path in this repository, and [a test fails the build if one appears](tests/). The

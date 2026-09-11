@@ -494,7 +494,50 @@ An operating point chosen honestly on training data lands in the one region wher
 fails. That is a drift problem, it is measurable before deployment, and it is the strongest
 available argument for the drift monitoring in §8.
 
-### 10.5 Reproduction
+### 10.5 Alert-to-incident correlation — measured, on real source IPs
+
+This is the anti-alert-fatigue number, and it is reported here rather than alongside the UNSW
+results for a specific reason: **UNSW-NB15 has no IP addresses**, so any compression ratio computed
+there would be derived from identifiers we invented. `Correlator.correlate` raises rather than
+grouping on synthesised entities, and the repository's `/stats` endpoint refuses to divide alerts by
+unrelated incidents.
+
+CICIDS2017, 240,000 test flows from the Thursday–Friday temporal split, grouped by
+(source IP, family, 15-minute window):
+
+| | |
+|---|---|
+| alerts emitted | **30,780** |
+| incidents presented | **273** |
+| events per incident | **112.7** |
+
+The largest single incident: **a DoS Hulk flood from one source — 29,562 flows, one destination, one
+port — arrives as one thing to look at.** Without correlation that is 29,562 tickets for one event
+that a human understands in ten seconds.
+
+Grouping is by `(entity, family)` rather than by entity alone, deliberately: a host running a port
+scan *and* exfiltrating data is two incidents with different responses, and merging them hides the
+second behind the first. Incidents are ranked by priority and then by event count, because two
+incidents at equal priority are not equally urgent when one represents 29,562 flows and the other
+represents one.
+
+*Reproduce: see `artifacts/reports/correlation_cicids.json`.*
+
+### 10.6 Throughput
+
+670 flows/second sustained on 8 CPU cores, single process, scoring both heads.
+
+**That is flows per second, not link speed, and the two are not interchangeable** — a flow record
+summarises many packets, so converting one to the other requires an assumption about mean flow size
+that we would rather state than bury. At CICIDS2017's observed mean flow size this corresponds very
+roughly to a few hundred Mbps of *monitored* traffic, and that figure should be treated as an
+order-of-magnitude sanity check rather than a capacity claim.
+
+The first measurement was 38 flows/s. The cause was `_importances()` rebuilding and re-sorting the
+model's global feature-importance dictionary once per scored row — a quantity that depends on the
+fitted model and not on the row. Caching it gave an 18× speedup with no change to output.
+
+### 10.7 Reproduction
 
 ```bash
 uv run penumbra audit --dataset unsw        # artifact + leak audit

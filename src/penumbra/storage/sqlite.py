@@ -313,8 +313,16 @@ class SqliteRepository:
 
         out["alerts_total"] = int(total_alerts)
         out["incidents_total"] = int(total_incidents)
-        # The anti-alert-fatigue headline: how many raw alerts one incident represents.
-        out["compression_ratio"] = int(total_alerts // max(total_incidents, 1))
+
+        # Compression is alerts-per-incident, and it is only meaningful over alerts that were
+        # actually correlated INTO those incidents. Dividing every alert by every incident would
+        # report a ratio built from unrelated rows - the same fabricated-metric problem the
+        # correlator refuses to commit, so the repository must not commit it either.
+        correlated = self._conn.execute(
+            f"SELECT COUNT(*) AS n FROM alerts WHERE incident_id IS NOT NULL{clause}", seg
+        ).fetchone()["n"]
+        out["alerts_correlated"] = int(correlated)
+        out["compression_ratio"] = int(correlated // total_incidents) if total_incidents and correlated else 0
         out["pending_verdicts"] = len(self.pending_verdicts())
         return out
 
