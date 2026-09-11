@@ -100,8 +100,43 @@ too.
    real: a 1% target fitted on *training* benign realises **10.2%** on test — and 10% is exactly
    the band where fusion hurts.
 
+4. **We mined 192 detection rules and 145 of them were built on a feature our own audit had
+   quarantined.** Every one validated at high precision on held-out data — because the held-out
+   data comes from the same testbed. Held-out validation does not catch a testbed artifact; only
+   the data audit does.
+5. **Our deep sequence model reported a number from a run that had collapsed.** Validation AUC hit
+   0.9999 in epoch one, then sat at exactly 0.500 for every epoch after. Early stopping restored
+   the epoch-one weights, the run exited cleanly, and it printed a result. The cause was not the
+   model — the last 15% of our time-ordered training data has an attack rate of **0.0001**, so
+   there was nothing for validation AUC to measure.
+
 > "Each of those is now a test. The third one isn't a bug we fixed, it's a finding we kept: your
-> operating point doesn't transfer, and that's the argument for drift monitoring."
+> operating point doesn't transfer, and that's the argument for drift monitoring. The fifth is the
+> one that scares me — nothing crashed. A broken experiment that raises an exception is a good day."
+
+---
+
+## 4b — The model writes signatures for the SIEM (45s)
+
+> "The brief says signatures miss novel attacks. The usual answer is to replace the signature IDS.
+> We do the opposite — we make the model **write rules for it**."
+
+High-purity decision paths come out of the forest as KQL and Sigma, each validated on held-out data
+and each carrying its own precision and false-positive count inline. They run with no model, no
+Python and no GPU, which is what makes them adoptable by a team that already owns a SIEM.
+
+**95 rules. No model. 66.3% of UNSW test attacks at 0.966 precision.**
+
+> "And 106 of the 207 paths we mined are not in that pack, because they rested on `sttl` — the
+> feature our own audit quarantined. They'd have looked perfect on held-out data and fired on an
+> operating system. Dropping them cost us 1.6 points of recall."
+
+On NSL-KDD the same rules lose **25 points of recall** between held-out training data and the real
+test set, because `KDDTest+` contains 17 attack families that were never in training.
+
+> "That's the honest limit. Mined rules compress what you already know into something your SIEM can
+> run. They are not a novelty detector. That's what the second head is for — and now we've measured
+> the boundary instead of asserting it."
 
 ---
 

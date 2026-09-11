@@ -85,12 +85,24 @@ and it cannot hallucinate, which is better for a demo. Hand-curated family→ATT
 output — a wrong technique ID in front of a security judge is fatal). Template-filled cited triage
 notes, with the LLM path behind an interface and off by default.
 
-## Phase 8 — Differentiators
+## Phase 8 — Differentiators ✅ (mostly)
 
-KQL rule mining with **held-out validation of every mined rule** (purity ≥ 0.98, support ≥ 50; Sigma
-only for genuinely mappable fields). Problem-space adversarial evaluation plus slow-rate mimicry.
-Sequence head on CICIDS2017 with causal windows. Graph features. ONNX. Load test. Sentinel connector
-behind the `SiemConnector` Protocol.
+- ✅ **KQL/Sigma rule mining**, every rule validated on held-out data (purity ≥ 0.98, support ≥ 50).
+  `penumbra rules`. 95 rules catch 66.3% of UNSW test attacks at 0.966 precision with no model —
+  and 106 of the 207 mined paths were discarded because they rested on quarantined features.
+- ✅ **Problem-space adversarial evaluation** with slow-rate mimicry, plus the unconstrained
+  feature-space strawman run alongside it so the gap is measured. `penumbra adversarial`.
+- ✅ **Sequence head on CICIDS2017** with causal windows, and ✅ **entity-graph features**.
+  `penumbra sequence`, pre-registered as E6 in EXPERIMENTS.md.
+- ✅ **pcap → flow converter**, read-only, with the payload-dependent features named rather than
+  guessed. `penumbra pcap`.
+- ✅ **`reproduce-all`**, which reports SKIPPED with a reason rather than passing quietly.
+- ✅ **Console**: queue, evaluation, drift and governance pages, all reading measured reports.
+- ⬜ ONNX export · ⬜ load test · ⬜ Docker Compose · ⬜ ZAP DAST
+- ⬜ Sentinel connector against a live workspace (the Protocol and the mock exist; the plan was
+  always mock-first, and a live run needs credentials).
+- ⬜ A real lab capture. The converter works and is tested on synthetic captures; no capture from
+  owned hardware has been taken yet.
 
 ## Phase 9 — Governance, docs, rehearsal — **never cut**
 
