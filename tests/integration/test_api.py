@@ -185,3 +185,55 @@ class TestAlertNotBlock:
     def test_alerts_always_require_analyst_approval(self, client: TestClient) -> None:
         for alert in client.get("/alerts?limit=50", headers=_token(client, "senior")).json():
             assert alert["requires_analyst_approval"] is True
+
+
+class TestReports:
+    """The console reads every number it renders from these, so they are part of the contract."""
+
+    def test_requires_authentication(self, client: TestClient) -> None:
+        assert client.get("/reports").status_code == 401
+
+    def test_catalogue_lists_absent_reports_too(self, client: TestClient) -> None:
+        """A blank page and a missing file must be distinguishable on stage."""
+        body = client.get("/reports", headers=_token(client, "analyst")).json()
+        assert body["reports"], "the catalogue is a constant; it is never empty"
+        for entry in body["reports"]:
+            assert {"name", "title", "command", "available"} <= set(entry)
+            # Every entry names the command that produces it, present or not.
+            assert entry["command"].startswith("penumbra ")
+
+    def test_unknown_report_is_404_and_says_what_exists(self, client: TestClient) -> None:
+        resp = client.get("/reports/not-a-report", headers=_token(client, "analyst"))
+        assert resp.status_code == 404
+        assert "Known reports" in resp.json()["detail"]
+
+    def test_path_traversal_is_not_a_file_read(self, client: TestClient) -> None:
+        """The reason this is a catalogue rather than a StaticFiles mount.
+
+        A filename parameter that reaches the filesystem unchecked is the usual way a read-only
+        endpoint becomes an arbitrary-file-read endpoint.
+        """
+        for attempt in ("../../.env", "..%2f..%2f.env", "....//....//pyproject.toml"):
+            resp = client.get(f"/reports/{attempt}", headers=_token(client, "analyst"))
+            assert resp.status_code == 404, attempt
+
+    def test_a_generated_report_round_trips(self, client: TestClient, tmp_path) -> None:
+        import json as _json
+
+        from penumbra.api import reports as reports_mod
+        from penumbra.config import settings
+
+        target = settings().report_dir / "eval_unsw.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        existed = target.exists()
+        original = target.read_bytes() if existed else None
+        target.write_text(_json.dumps({"marker": 42}), encoding="utf-8")
+        try:
+            body = client.get("/reports/eval-unsw", headers=_token(client, "analyst")).json()
+            assert body["data"] == {"marker": 42}
+            assert body["command"] == reports_mod.BY_NAME["eval-unsw"].command
+        finally:
+            if original is not None:
+                target.write_bytes(original)
+            else:
+                target.unlink()

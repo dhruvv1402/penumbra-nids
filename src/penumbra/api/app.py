@@ -26,6 +26,7 @@ from starlette.responses import Response
 
 from penumbra import __version__
 from penumbra.alerts.models import Alert, Incident
+from penumbra.api import reports
 from penumbra.api.security import rbac
 from penumbra.api.security.audit import AuditLog
 from penumbra.api.security.auth import InvalidToken, UserStore, decode_token, issue_token
@@ -328,6 +329,36 @@ async def rbac_matrix(principal: CurrentUser) -> dict[str, Any]:
             role.value: sorted(p.value for p in perms) for role, perms in rbac.ROLE_PERMISSIONS.items()
         },
     }
+
+
+@app.get("/reports", tags=["reports"])
+async def list_reports(principal: CurrentUser) -> dict[str, Any]:
+    """Every evaluation report the console knows how to render, present or not.
+
+    Absent reports come back with `available: false` and the command that produces them. A page
+    that silently renders nothing looks identical to one whose data is genuinely empty, and on
+    stage that difference is the whole answer to "why is this blank".
+    """
+    require(principal, Permission.READ_ALERTS)
+    return {"reports": reports.catalogue()}
+
+
+@app.get("/reports/{name}", tags=["reports"])
+async def read_report(principal: CurrentUser, name: str) -> dict[str, Any]:
+    """One report's contents, straight from the file the CLI wrote.
+
+    Nothing is recomputed here. The console cannot drift out of step with the measurements, and
+    every number on screen traces back to a command a judge can run.
+    """
+    require(principal, Permission.READ_ALERTS)
+    payload = reports.load(name)
+    if payload is None:
+        known = ", ".join(sorted(reports.BY_NAME))
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"no report {name!r}. Known reports: {known}",
+        )
+    return payload
 
 
 @app.websocket("/stream")
