@@ -165,6 +165,49 @@ Two results we intend to publish either way: the deliberate **leakage demonstrat
 split vs inside folds, side by side), and a single SMOTE-generated flow row with fractional packet
 counts — the physical argument against resampling network data.
 
+### Result: leaking SMOTE inflates minority F1 by 8×
+
+Target: **UNSW-NB15 `Worms` vs everything else** — 130 positive rows, prevalence **0.074%**.
+Identical model, identical data, identical resampler. The only difference is *where* the resampling
+happens relative to the split.
+
+| | F1 | PR-AUC | ROC-AUC |
+|---|---|---|---|
+| correct — SMOTE inside the fold | **0.1231** | 0.2276 | 0.9916 |
+| leaky — SMOTE before the split | **0.9986** | 0.9999 | 1.0000 |
+| inflation | **+0.8756** | +0.7722 | +0.0084 |
+
+**The leaky pipeline does not fail. It reports a near-perfect number.** That is why this mistake
+survives review: there is no error, no warning, and no symptom other than a result good enough to
+publish. SMOTE synthesises minority rows by interpolating between neighbours, so applied before the
+split a validation row can be interpolated from its own neighbours — the model has effectively seen
+it.
+
+Note also that ROC-AUC barely moves (+0.008) while F1 moves by 0.876. **A leak this severe is
+invisible in the metric most papers lead with**, and obvious in the one that matters at this
+prevalence.
+
+#### A second objection, independent of leakage
+
+One synthetic `Worms` row SMOTE generated, verbatim:
+
+```
+spkts       38.3251     dpkts       33.8113
+sloss       12.7300     dloss        6.8244
+ct_dst_ltm   3.6081
+```
+
+A flow with 38.3 packets sent is not a rare flow. It is not a flow. SMOTE interpolates in feature
+space with no notion of which quantities are integral, which are derived from others (`rate`,
+`sload` and `smean` are functions of `dur`, `sbytes` and `spkts`), or which combinations are
+physically realisable.
+
+This is the argument for **threshold-moving over resampling on network data**: it changes where the
+boundary is drawn rather than manufacturing traffic that could not exist.
+
+*Reproduce: `uv run penumbra ablate --leakage-demo`. Raw output in
+`artifacts/reports/smote_leakage.json`.*
+
 ## 6. Statistics
 
 - **Stratified bootstrap** 95% CIs on every headline number. Unstratified resampling makes rare classes

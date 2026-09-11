@@ -214,11 +214,77 @@ def eval_cmd(
 
 
 @app.command()
+def ablate(
+    dataset: DatasetName = "unsw",
+    model: Annotated[str, typer.Option("--model", "-m")] = "rf",
+    leakage_demo: Annotated[
+        bool, typer.Option("--leakage-demo", help="Only run the SMOTE-before-split demonstration.")
+    ] = False,
+    save: Annotated[bool, typer.Option("--save/--no-save")] = True,
+) -> None:
+    """Class-imbalance ablation, evaluated on the natural distribution.
+
+    With --leakage-demo, runs the same pipeline correctly and leakily on a rare family and prints
+    both numbers. The leaky version does not error; it reports a better result, which is why the
+    comparison is worth printing.
+    """
+    seed_everything()
+    import json as _json
+
+    from penumbra.imbalance import ablation
+
+    ds = _load(dataset)
+
+    settings().ensure_dirs()
+
+    if leakage_demo:
+        leak = ablation.leakage_demonstration(ds, model=model)
+        console.print(leak.summary())
+        if save:
+            out = settings().report_dir / "smote_leakage.json"
+            out.write_text(_json.dumps(leak.to_dict(), indent=2), encoding="utf-8")
+            console.print(f"[dim]written to {out}[/dim]")
+        return
+
+    console.print(f"[dim]ablating {ds.name} with {model}...[/dim]")
+    table = ablation.run(ds, model=model, on_progress=lambda n: console.print(f"[dim]  {n}[/dim]"))
+    console.print(table.summary())
+    if save:
+        out = settings().report_dir / f"ablation_{dataset.lower()}.json"
+        out.write_text(_json.dumps(table.to_dict(), indent=2), encoding="utf-8")
+        console.print(f"[dim]written to {out}[/dim]")
+
+
+@app.command()
 def loafo(dataset: DatasetName = "unsw") -> None:
-    """Leave-One-Attack-Family-Out at a matched alert budget. (Phase 2)"""
-    _ = dataset
-    console.print("[yellow]Not implemented yet - Phase 2.[/yellow]")
-    raise typer.Exit(1)
+    """Leave-One-Attack-Family-Out at a matched false-positive budget.
+
+    On nslkdd this runs the natural experiment instead: the 17 attack types present in KDDTest+ but
+    absent from KDDTrain+, swept across operating points.
+    """
+    seed_everything()
+    import json as _json
+
+    from penumbra.eval import loafo as loafo_mod
+
+    settings().ensure_dirs()
+
+    if dataset.lower().startswith("nsl"):
+        curve = loafo_mod.unseen_curve()
+        console.print(curve.summary())
+        out = settings().report_dir / "unseen17_curve.json"
+        out.write_text(_json.dumps(curve.to_dict(), indent=2), encoding="utf-8")
+        console.print(f"[dim]written to {out}[/dim]")
+        return
+
+    ds = _load(dataset)
+    matrix = loafo_mod.run(
+        ds, budget_fpr=0.02, on_progress=lambda f: console.print(f"[dim]  holding out {f}[/dim]")
+    )
+    console.print(matrix.summary())
+    out = settings().report_dir / f"loafo_{dataset.lower()}.json"
+    out.write_text(_json.dumps(matrix.to_dict(), indent=2), encoding="utf-8")
+    console.print(f"[dim]written to {out}[/dim]")
 
 
 @app.command("reproduce-all")
