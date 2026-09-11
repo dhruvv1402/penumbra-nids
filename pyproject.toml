@@ -23,6 +23,7 @@ dependencies = [
     "orjson>=3.10",
     "platformdirs>=4.3",
     "imbalanced-learn>=0.14.2",
+    "pyjwt>=2.13.0",
 ]
 
 [project.optional-dependencies]
