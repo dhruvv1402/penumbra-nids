@@ -1,0 +1,21 @@
+title: Penumbra mined rule 037
+id: ef16f700-5d0c-5a28-bb5f-1d0d1b6affb4
+status: experimental
+description: |
+    Mined from a decision path in a trained random forest and validated on held-out
+    data. Held-out precision 1.000, 0 false positives in 71 matches.
+    Raised for analyst triage; this rule does not block traffic.
+author: Penumbra
+date: 2026-09-11
+logsource:
+    category: firewall
+    product: network
+detection:
+    selection:
+        ConnectionState: "int"
+        BytesSent|lte: 495
+        Protocol: "mobile"
+    condition: selection
+falsepositives:
+    - Authorised scanners and monitoring agents matching the same flow shape
+level: medium

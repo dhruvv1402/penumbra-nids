@@ -1,0 +1,21 @@
+title: Penumbra mined rule 061
+id: 96d768b9-5d2e-5079-a718-487f8c86fb99
+status: experimental
+description: |
+    Mined from a decision path in a trained random forest and validated on held-out
+    data. Held-out precision 1.000, 0 false positives in 758 matches.
+    Raised for analyst triage; this rule does not block traffic.
+author: Penumbra
+date: 2026-09-11
+logsource:
+    category: firewall
+    product: network
+detection:
+    selection:
+        BytesSent|gt: 798
+    filter:
+        Protocol: "tcp"
+    condition: selection and not filter
+falsepositives:
+    - Authorised scanners and monitoring agents matching the same flow shape
+level: medium

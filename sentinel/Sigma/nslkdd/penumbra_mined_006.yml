@@ -1,0 +1,22 @@
+title: Penumbra mined rule 285
+id: fd0ad853-9852-5fe7-81d0-1780398777f1
+status: experimental
+description: |
+    Mined from a decision path in a trained random forest and validated on held-out
+    data. Held-out precision 0.992, 2 false positives in 244 matches.
+    Raised for analyst triage; this rule does not block traffic.
+author: Penumbra
+date: 2026-09-11
+logsource:
+    category: firewall
+    product: network
+detection:
+    selection:
+        BytesSent|gt: 519
+        BytesSent|lte: 798
+    filter:
+        Protocol: "tcp"
+    condition: selection and not filter
+falsepositives:
+    - Authorised scanners and monitoring agents matching the same flow shape
+level: medium

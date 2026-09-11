@@ -407,6 +407,60 @@ def serve(
     uvicorn.run("penumbra.api.app:app", host=host, port=port, log_level="info")
 
 
+@app.command()
+def rules(
+    dataset: DatasetName = "unsw",
+    min_precision: Annotated[
+        float, typer.Option("--min-precision", help="Held-out precision floor a rule must clear.")
+    ] = 0.98,
+    min_support: Annotated[int, typer.Option("--min-support", help="Minimum leaf size.")] = 50,
+    max_conditions: Annotated[
+        int, typer.Option("--max-conditions", help="Readability cap on rule length.")
+    ] = 4,
+    sigma: Annotated[bool, typer.Option("--sigma/--no-sigma", help="Write Sigma files too.")] = True,
+) -> None:
+    """Mine KQL and Sigma detection rules out of a forest, validated on held-out data.
+
+    The model mines the signature; the SIEM enforces it. Rules run without Python, without the
+    model and without a GPU, which is what makes them adoptable by a team that already has a SIEM.
+
+    Two arms are mined and both are reported: one with the quarantined testbed features available
+    and one without. The gap between them is how much of a "validated detection" was the testbed.
+    """
+    seed_everything()
+    from penumbra.rules import runner
+
+    ds = _load(dataset)
+    key = dataset.lower().replace("-", "").replace("_", "")
+    report = runner.run(
+        ds,
+        dataset_key=key,
+        min_support=min_support,
+        min_purity=0.98,
+        max_conditions=max_conditions,
+        min_precision=min_precision,
+        on_progress=lambda m: console.print(f"[dim]  {m}[/dim]"),
+    )
+
+    console.print()
+    console.print(report.summary())
+
+    paths = runner.write_artifacts(
+        report,
+        report_path=settings().report_dir / f"mined_rules_{key}.json",
+        kql_path=Path("sentinel") / "Analytic Rules" / f"PenumbraMinedRules_{key}.kql",
+        sigma_dir=(Path("sentinel") / "Sigma" / key) if sigma else None,
+    )
+    console.print(f"[green]wrote[/green] {paths['report']}")
+    console.print(f"[green]wrote[/green] {paths['kql']}")
+    if paths["sigma_written"]:
+        console.print(f"[green]wrote[/green] {len(paths['sigma_written'])} Sigma rules")
+    console.print(
+        f"[dim]{paths['sigma_skipped']} rules were not emitted as Sigma: their conditions "
+        f"reference flow features Sigma's log-based taxonomy does not define.[/dim]"
+    )
+
+
 @app.command("reproduce-all")
 def reproduce_all(
     out: Annotated[Path | None, typer.Option("--out", help="Directory for regenerated reports.")] = None,

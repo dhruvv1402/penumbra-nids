@@ -1,0 +1,211 @@
+// Penumbra mined detection rules
+// Generated 2026-09-11T12:14:09.003228+00:00
+//
+// 101 candidate decision paths were extracted from the trained
+// forest; 95 survived validation at precision >= 0.98
+// on 61,370 held-out rows the trees never saw.
+//
+// These run WITHOUT the model. That is the point: the ML mines the detection, the SIEM
+// enforces it, and a detection engineer can read, argue with and own the result.
+//
+// Each rule's own held-out precision and false-positive count is stated inline. Enable
+// them individually on that basis rather than as a block.
+
+let PenumbraMinedRules = (
+    PenumbraFlows_CL
+    | extend MatchedRule = case(
+        // precision 1.000, 0 FP in 14,399 matches
+        ct_dst_sport_ltm > 3.5 and djit <= 25.7937 and sload > 3.49178e+07, "penumbra-mined-000",
+        // precision 1.000, 0 FP in 14,363 matches
+        sload > 4.51667e+07 and ct_dst_sport_ltm > 3.5, "penumbra-mined-001",
+        // precision 1.000, 0 FP in 13,429 matches
+        ct_dst_src_ltm > 12.5 and ct_dst_sport_ltm > 2.5 and ct_dst_sport_ltm <= 34 and dur <= 4.7e-05, "penumbra-mined-002",
+        // precision 1.000, 0 FP in 12,571 matches
+        ct_src_dport_ltm > 6.5 and sinpkt <= 0.0475 and sload <= 2.688e+08 and ct_dst_sport_ltm > 1.5, "penumbra-mined-003",
+        // precision 1.000, 0 FP in 12,303 matches
+        ct_src_dport_ltm > 8.5 and service != "-" and sload > 1387.63, "penumbra-mined-004",
+        // precision 1.000, 0 FP in 12,099 matches
+        ct_srv_src > 15.5 and ct_dst_sport_ltm > 3.5 and smean <= 241, "penumbra-mined-005",
+        // precision 1.000, 0 FP in 9,506 matches
+        rate > 27402.4 and ct_src_ltm > 15.5 and smean <= 106.5 and service != "-", "penumbra-mined-006",
+        // precision 1.000, 0 FP in 6,314 matches
+        dmean <= 52.5 and sload > 4.51667e+07 and proto != "udp" and ct_dst_sport_ltm > 1.5, "penumbra-mined-007",
+        // precision 1.000, 0 FP in 2,930 matches
+        ct_dst_sport_ltm > 2.5 and sload > 3.49178e+07 and service != "dns" and sbytes > 190, "penumbra-mined-008",
+        // precision 1.000, 0 FP in 943 matches
+        dur > 5.55e-05 and synack <= 0.0052575 and dmean <= 45.5 and spkts > 13, "penumbra-mined-009",
+        // precision 1.000, 0 FP in 374 matches
+        ct_dst_sport_ltm > 2.5 and sload > 3.49178e+07 and service == "dns" and rate <= 105556, "penumbra-mined-010",
+        // precision 1.000, 0 FP in 340 matches
+        sload > 4.51667e+07 and ct_dst_sport_ltm > 1.5 and rate <= 105556 and service == "dns", "penumbra-mined-011",
+        // precision 1.000, 0 FP in 236 matches
+        rate > 27402.4 and state != "req" and proto == "sctp", "penumbra-mined-012",
+        // precision 1.000, 0 FP in 220 matches
+        sload > 4.51667e+07 and proto == "sctp", "penumbra-mined-013",
+        // precision 1.000, 0 FP in 199 matches
+        state != "int" and ackdat <= 0.005123 and dur > 50.9944 and sinpkt > 835.806, "penumbra-mined-014",
+        // precision 1.000, 0 FP in 182 matches
+        dwin <= 18.5 and state == "con" and proto == "sctp", "penumbra-mined-015",
+        // precision 1.000, 0 FP in 146 matches
+        dmean > 52.5 and tcprtt <= 0.020216 and proto == "sctp", "penumbra-mined-016",
+        // precision 1.000, 0 FP in 146 matches
+        dmean > 52.5 and tcprtt <= 0.019742 and proto == "sctp", "penumbra-mined-017",
+        // precision 1.000, 0 FP in 146 matches
+        dmean > 52.5 and tcprtt <= 0.022169 and proto == "sctp", "penumbra-mined-018",
+        // precision 1.000, 0 FP in 146 matches
+        dur > 5.55e-05 and synack <= 0.0052575 and dmean > 45.5 and proto == "sctp", "penumbra-mined-019",
+        // precision 1.000, 0 FP in 137 matches
+        sbytes > 1469 and dmean <= 90.5 and dbytes > 3163 and dpkts > 55, "penumbra-mined-020",
+        // precision 1.000, 0 FP in 127 matches
+        state == "int" and sload <= 0.271199 and smean > 56, "penumbra-mined-021",
+        // precision 1.000, 0 FP in 114 matches
+        dinpkt <= 0.0005 and sbytes <= 93 and smean > 53, "penumbra-mined-022",
+        // precision 1.000, 0 FP in 114 matches
+        dbytes <= 83 and sbytes <= 93 and smean > 53, "penumbra-mined-023",
+        // precision 1.000, 0 FP in 111 matches
+        sload > 4.51667e+07 and proto == "any", "penumbra-mined-024",
+        // precision 1.000, 0 FP in 111 matches
+        rate > 27402.4 and swin <= 51.5 and proto == "any", "penumbra-mined-025",
+        // precision 1.000, 0 FP in 111 matches
+        dpkts <= 0.5 and dur > 5e-07 and swin <= 127.5 and proto == "any", "penumbra-mined-026",
+        // precision 1.000, 0 FP in 99 matches
+        sbytes > 1469 and dbytes > 2306 and dmean <= 68.5 and smean > 1261.5, "penumbra-mined-027",
+        // precision 1.000, 0 FP in 92 matches
+        dmean > 52.5 and sjit <= 1105.48 and sbytes > 54153, "penumbra-mined-028",
+        // precision 1.000, 0 FP in 89 matches
+        sload > 4.51667e+07 and sload <= 2.69212e+08 and sbytes > 109 and proto == "sctp", "penumbra-mined-029",
+        // precision 1.000, 0 FP in 88 matches
+        dinpkt <= 0.0005 and service == "dns" and state == "req", "penumbra-mined-030",
+        // precision 1.000, 0 FP in 84 matches
+        ct_src_dport_ltm > 6.5 and rate <= 22134.2 and service == "dns", "penumbra-mined-031",
+        // precision 1.000, 0 FP in 81 matches
+        sinpkt <= 0.0335 and state == "int" and smean <= 52.5 and proto == "sctp", "penumbra-mined-032",
+        // precision 1.000, 0 FP in 81 matches
+        dur <= 5.55e-05 and smean <= 54.5 and proto == "sctp", "penumbra-mined-033",
+        // precision 1.000, 0 FP in 79 matches
+        sload > 4.51667e+07 and sload <= 2.69212e+08 and proto == "gre", "penumbra-mined-034",
+        // precision 1.000, 0 FP in 73 matches
+        dpkts <= 0.5 and sload <= 361.693 and sbytes > 388 and dur > 28.3501, "penumbra-mined-035",
+        // precision 1.000, 0 FP in 71 matches
+        dbytes > 84 and sjit <= 911.786 and proto == "sctp" and smean > 138, "penumbra-mined-036",
+        // precision 1.000, 0 FP in 71 matches
+        state == "int" and sbytes <= 495 and proto == "mobile", "penumbra-mined-037",
+        // precision 1.000, 0 FP in 69 matches
+        dbytes <= 83 and sinpkt > 2069.62 and sbytes > 385 and ct_dst_src_ltm <= 3.5, "penumbra-mined-038",
+        // precision 1.000, 0 FP in 66 matches
+        ct_dst_src_ltm <= 12.5 and dinpkt <= 0.0005 and sloss <= 0.5 and proto == "sun-nd", "penumbra-mined-039",
+        // precision 1.000, 0 FP in 66 matches
+        dload > 33940 and sjit > 1098.83 and smean <= 52.5 and ackdat > 0.106533, "penumbra-mined-040",
+        // precision 1.000, 0 FP in 61 matches
+        sload > 4.51667e+07 and state != "req" and proto == "rsvp", "penumbra-mined-041",
+        // precision 1.000, 0 FP in 61 matches
+        dpkts <= 0.5 and sload > 208.157 and proto == "rsvp", "penumbra-mined-042",
+        // precision 1.000, 0 FP in 59 matches
+        ct_src_dport_ltm > 6.5 and sbytes > 501 and state == "req", "penumbra-mined-043",
+        // precision 1.000, 0 FP in 54 matches
+        dbytes > 84 and sjit <= 911.786 and proto == "sctp" and smean <= 138, "penumbra-mined-044",
+        // precision 1.000, 0 FP in 54 matches
+        dbytes <= 83 and ct_srv_src > 2.5 and proto == "sun-nd", "penumbra-mined-045",
+        // precision 1.000, 0 FP in 53 matches
+        state != "int" and dinpkt > 20.7206 and synack <= 0.005409 and proto == "sctp", "penumbra-mined-046",
+        // precision 1.000, 0 FP in 52 matches
+        sloss <= 2.5 and state == "con" and ct_srv_dst > 1.5 and dbytes > 360, "penumbra-mined-047",
+        // precision 1.000, 0 FP in 48 matches
+        dmean > 52.5 and sload > 32700.1 and ackdat <= 0.005875 and proto == "sctp", "penumbra-mined-048",
+        // precision 1.000, 0 FP in 42 matches
+        dload > 33906.7 and smean <= 44.5 and sinpkt > 58.7179, "penumbra-mined-049",
+        // precision 1.000, 1 FP in 13,479 matches
+        dload <= 33906.7 and sload > 4.51667e+07 and service != "-" and sbytes <= 135, "penumbra-mined-050",
+        // precision 1.000, 2 FP in 13,690 matches
+        rate > 18824.8 and state == "int" and smean <= 106.5 and service == "dns", "penumbra-mined-051",
+        // precision 1.000, 1 FP in 6,514 matches
+        sload > 4.51667e+07 and sinpkt <= 0.0095 and service != "-" and rate <= 133929, "penumbra-mined-052",
+        // precision 1.000, 3 FP in 13,709 matches
+        dload <= 31362.1 and service == "dns" and sload > 897.73 and ct_dst_sport_ltm > 1.5, "penumbra-mined-053",
+        // precision 1.000, 3 FP in 13,692 matches
+        dpkts <= 0.5 and service != "-" and ct_src_ltm > 2.5, "penumbra-mined-054",
+        // precision 1.000, 3 FP in 13,649 matches
+        dur <= 5.55e-05 and service != "-" and ct_dst_ltm > 1.5, "penumbra-mined-055",
+        // precision 1.000, 3 FP in 13,640 matches
+        rate > 18824.8 and sloss <= 0.5 and service == "dns" and ct_srv_src > 2.5, "penumbra-mined-056",
+        // precision 1.000, 3 FP in 13,625 matches
+        dur <= 5.55e-05 and service == "dns" and ct_dst_ltm > 1.5, "penumbra-mined-057",
+        // precision 1.000, 3 FP in 13,449 matches
+        dload <= 33901.3 and rate > 95454.5 and service != "-" and ct_dst_ltm > 1.5, "penumbra-mined-058",
+        // precision 1.000, 3 FP in 13,444 matches
+        sload > 4.51667e+07 and swin <= 127.5 and service == "dns" and ct_srv_src > 2.5, "penumbra-mined-059",
+        // precision 1.000, 3 FP in 13,438 matches
+        sload > 4.51667e+07 and service != "-" and ct_src_dport_ltm > 1.5, "penumbra-mined-060",
+        // precision 1.000, 3 FP in 13,429 matches
+        sload > 4.51667e+07 and state == "int" and ct_dst_sport_ltm > 1.5 and service != "-", "penumbra-mined-061",
+        // precision 1.000, 3 FP in 13,422 matches
+        sload > 4.53e+07 and state == "int" and service == "dns" and ct_src_dport_ltm > 1.5, "penumbra-mined-062",
+        // precision 1.000, 3 FP in 12,969 matches
+        ct_dst_sport_ltm > 2.5 and sload > 3.49178e+07 and service == "dns" and rate > 105556, "penumbra-mined-063",
+        // precision 1.000, 3 FP in 12,963 matches
+        sload > 4.51667e+07 and sload <= 2.69212e+08 and proto != "gre" and service != "-", "penumbra-mined-064",
+        // precision 1.000, 2 FP in 7,073 matches
+        rate > 27402.4 and proto != "tcp" and service != "-" and dur > 7.5e-06, "penumbra-mined-065",
+        // precision 1.000, 4 FP in 13,800 matches
+        dpkts <= 0.5 and service == "dns" and sinpkt <= 1134.56, "penumbra-mined-066",
+        // precision 1.000, 3 FP in 10,301 matches
+        rate > 27402.4 and ct_dst_sport_ltm > 1.5 and ct_src_dport_ltm > 13.5, "penumbra-mined-067",
+        // precision 1.000, 4 FP in 13,700 matches
+        sinpkt <= 0.0385 and state != "con" and proto != "tcp" and service == "dns", "penumbra-mined-068",
+        // precision 1.000, 4 FP in 13,698 matches
+        sloss <= 2.5 and dur <= 5.55e-05 and smean > 46.5 and service == "dns", "penumbra-mined-069",
+        // precision 1.000, 4 FP in 13,698 matches
+        rate > 18824.8 and sloss <= 0.5 and service == "dns", "penumbra-mined-070",
+        // precision 1.000, 4 FP in 13,693 matches
+        dinpkt <= 0.0005 and dur > 5e-07 and service != "-" and ct_src_ltm > 2.5, "penumbra-mined-071",
+        // precision 1.000, 4 FP in 13,500 matches
+        sload > 4.51667e+07 and service == "dns", "penumbra-mined-072",
+        // precision 1.000, 6 FP in 20,133 matches
+        state == "int" and sbytes > 105 and ct_dst_sport_ltm > 1.5 and smean <= 236.5, "penumbra-mined-073",
+        // precision 1.000, 6 FP in 13,554 matches
+        sload > 4.51667e+07 and service != "-", "penumbra-mined-074",
+        // precision 0.999, 8 FP in 15,869 matches
+        rate > 27402.4 and sbytes > 109 and smean <= 106.5 and ct_src_ltm > 4.5, "penumbra-mined-075",
+        // precision 0.999, 9 FP in 16,887 matches
+        dload <= 33906.7 and ct_dst_sport_ltm > 2.5 and sbytes <= 443, "penumbra-mined-076",
+        // precision 0.999, 5 FP in 9,353 matches
+        sload > 4.51667e+07 and ct_dst_ltm > 14.5 and smean <= 396 and ct_src_ltm > 15.5, "penumbra-mined-077",
+        // precision 0.999, 8 FP in 11,664 matches
+        ct_dst_ltm > 10.5 and sbytes <= 122, "penumbra-mined-078",
+        // precision 0.999, 5 FP in 4,459 matches
+        rate > 27402.4 and ct_dst_sport_ltm > 1.5 and ct_src_dport_ltm > 3.5 and ct_src_dport_ltm <= 13.5, "penumbra-mined-079",
+        // precision 0.998, 1 FP in 428 matches
+        dload > 33906.7 and smean <= 52.5 and sload <= 6054.75, "penumbra-mined-080",
+        // precision 0.998, 1 FP in 407 matches
+        dload > 33906.7 and smean > 44.5 and smean <= 52.5 and sinpkt > 58.7179, "penumbra-mined-081",
+        // precision 0.997, 25 FP in 9,804 matches
+        rate > 105556 and sbytes > 109 and ct_src_ltm > 15.5, "penumbra-mined-082",
+        // precision 0.997, 1 FP in 375 matches
+        dload > 31362.1 and response_body_len > 86.5 and sbytes <= 1577 and sload <= 11788.6, "penumbra-mined-083",
+        // precision 0.997, 2 FP in 739 matches
+        sjit > 0.0005 and tcprtt <= 0.015074 and proto == "ospf" and ct_dst_sport_ltm <= 1.5, "penumbra-mined-084",
+        // precision 0.995, 114 FP in 24,313 matches
+        rate > 18824.8 and sbytes > 105 and smean <= 388.5, "penumbra-mined-085",
+        // precision 0.995, 1 FP in 208 matches
+        rate > 18824.8 and rate <= 95454.5 and service != "-", "penumbra-mined-086",
+        // precision 0.995, 43 FP in 7,917 matches
+        rate > 18824.8 and ct_dst_sport_ltm > 1.5 and ct_srv_dst <= 15.5, "penumbra-mined-087",
+        // precision 0.993, 1 FP in 135 matches
+        dmean > 52.5 and sinpkt <= 21.7207 and sloss > 40 and rate <= 149.696, "penumbra-mined-088",
+        // precision 0.992, 1 FP in 119 matches
+        dloss <= 3.5 and spkts <= 1.5 and sbytes > 53, "penumbra-mined-089",
+        // precision 0.991, 1 FP in 117 matches
+        dur <= 5.55e-05 and spkts <= 1.5 and proto != "arp", "penumbra-mined-090",
+        // precision 0.988, 1 FP in 83 matches
+        sinpkt <= 0.0385 and state == "con" and rate <= 354.443 and dur > 0.109549, "penumbra-mined-091",
+        // precision 0.986, 1 FP in 74 matches
+        sinpkt <= 0.0365 and rate <= 15633.1 and smean > 73.5, "penumbra-mined-092",
+        // precision 0.986, 1 FP in 73 matches
+        dur <= 5.55e-05 and service == "dns" and ct_dst_ltm <= 1.5, "penumbra-mined-093",
+        // precision 0.986, 1 FP in 69 matches
+        dur <= 5.55e-05 and service != "-" and ct_dst_ltm <= 1.5 and rate > 118056, "penumbra-mined-094",
+        ""
+    )
+    | where isnotempty(MatchedRule)
+);
+PenumbraMinedRules

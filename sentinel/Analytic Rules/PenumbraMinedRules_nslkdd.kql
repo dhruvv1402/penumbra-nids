@@ -1,0 +1,655 @@
+// Penumbra mined detection rules
+// Generated 2026-09-11T12:14:28.496607+00:00
+//
+// 361 candidate decision paths were extracted from the trained
+// forest; 317 survived validation at precision >= 0.98
+// on 44,091 held-out rows the trees never saw.
+//
+// These run WITHOUT the model. That is the point: the ML mines the detection, the SIEM
+// enforces it, and a detection engineer can read, argue with and own the result.
+//
+// Each rule's own held-out precision and false-positive count is stated inline. Enable
+// them individually on that basis rather than as a block.
+
+let PenumbraMinedRules = (
+    PenumbraFlows_CL
+    | extend MatchedRule = case(
+        // precision 1.000, 0 FP in 13,680 matches
+        dst_bytes <= 3.5 and dst_host_same_src_port_rate <= 0.005 and dst_host_diff_srv_rate > 0.025 and count > 4.5, "penumbra-mined-000",
+        // precision 1.000, 0 FP in 12,033 matches
+        logged_in <= 0.5 and dst_host_srv_serror_rate > 0.34 and serror_rate > 0.205 and count > 1.5, "penumbra-mined-001",
+        // precision 1.000, 0 FP in 12,032 matches
+        serror_rate > 0.505 and logged_in <= 0.5 and dst_host_srv_serror_rate > 0.175 and count > 1.5, "penumbra-mined-002",
+        // precision 1.000, 0 FP in 12,031 matches
+        dst_bytes <= 3.5 and logged_in <= 0.5 and dst_host_srv_serror_rate > 0.335 and count > 2.5, "penumbra-mined-003",
+        // precision 1.000, 0 FP in 12,031 matches
+        dst_bytes <= 3.5 and src_bytes <= 28.5 and dst_host_srv_serror_rate > 0.335 and count > 2.5, "penumbra-mined-004",
+        // precision 1.000, 0 FP in 12,014 matches
+        flag != "sf" and serror_rate > 0.54 and dst_host_same_srv_rate <= 0.805 and count > 1.5, "penumbra-mined-005",
+        // precision 1.000, 0 FP in 11,922 matches
+        flag != "sf" and srv_serror_rate > 0.54 and logged_in <= 0.5 and diff_srv_rate > 0.02, "penumbra-mined-006",
+        // precision 1.000, 0 FP in 11,899 matches
+        serror_rate > 0.505 and dst_host_same_srv_rate <= 0.65 and srv_serror_rate > 0.14 and same_srv_rate <= 0.975, "penumbra-mined-007",
+        // precision 1.000, 0 FP in 11,820 matches
+        dst_host_serror_rate > 0.885 and dst_bytes <= 0.5 and flag == "s0" and diff_srv_rate > 0.02, "penumbra-mined-008",
+        // precision 1.000, 0 FP in 11,794 matches
+        src_bytes <= 28.5 and dst_host_serror_rate > 0.885 and srv_serror_rate > 0.81 and diff_srv_rate > 0.02, "penumbra-mined-009",
+        // precision 1.000, 0 FP in 11,727 matches
+        same_srv_rate <= 0.495 and dst_host_serror_rate > 0.035 and flag == "s0", "penumbra-mined-010",
+        // precision 1.000, 0 FP in 11,579 matches
+        dst_host_serror_rate > 0.915 and src_bytes <= 4.5 and service != "courier" and same_srv_rate <= 0.975, "penumbra-mined-011",
+        // precision 1.000, 0 FP in 11,437 matches
+        dst_bytes <= 3.5 and count > 23.5 and srv_serror_rate > 0.045, "penumbra-mined-012",
+        // precision 1.000, 0 FP in 11,365 matches
+        same_srv_rate <= 0.495 and flag != "sf" and dst_host_diff_srv_rate > 0.025 and serror_rate > 0.505, "penumbra-mined-013",
+        // precision 1.000, 0 FP in 11,235 matches
+        service != "http" and count > 19.5 and flag == "s0", "penumbra-mined-014",
+        // precision 1.000, 0 FP in 11,190 matches
+        dst_host_srv_serror_rate > 0.99 and count > 1.5 and dst_host_srv_count > 1.5, "penumbra-mined-015",
+        // precision 1.000, 0 FP in 11,183 matches
+        dst_host_srv_serror_rate > 0.885 and count > 2.5 and srv_count > 1.5, "penumbra-mined-016",
+        // precision 1.000, 0 FP in 11,132 matches
+        dst_host_srv_serror_rate > 0.885 and srv_serror_rate > 0.775 and srv_count > 1.5 and count > 4.5, "penumbra-mined-017",
+        // precision 1.000, 0 FP in 11,022 matches
+        count > 39.5 and protocol_type != "udp" and dst_host_srv_count <= 253.5 and srv_serror_rate > 0.03, "penumbra-mined-018",
+        // precision 1.000, 0 FP in 10,912 matches
+        flag != "sf" and dst_host_same_src_port_rate <= 0.005 and src_bytes <= 56.5 and dst_host_serror_rate > 0.965, "penumbra-mined-019",
+        // precision 1.000, 0 FP in 10,463 matches
+        dst_host_same_srv_rate <= 0.275 and flag == "s0" and srv_count > 2.5, "penumbra-mined-020",
+        // precision 1.000, 0 FP in 9,162 matches
+        same_srv_rate <= 0.495 and flag == "s0" and dst_host_diff_srv_rate > 0.055, "penumbra-mined-021",
+        // precision 1.000, 0 FP in 7,284 matches
+        service != "private" and dst_host_srv_serror_rate > 0.855 and same_srv_rate <= 0.975 and dst_host_serror_rate > 0.985, "penumbra-mined-022",
+        // precision 1.000, 0 FP in 6,227 matches
+        diff_srv_rate > 0.035 and dst_bytes <= 32 and service == "private", "penumbra-mined-023",
+        // precision 1.000, 0 FP in 5,853 matches
+        logged_in <= 0.5 and service == "private" and protocol_type != "udp" and same_srv_rate <= 0.97, "penumbra-mined-024",
+        // precision 1.000, 0 FP in 5,820 matches
+        count > 39.5 and service == "private", "penumbra-mined-025",
+        // precision 1.000, 0 FP in 5,679 matches
+        same_srv_rate <= 0.495 and service == "private" and flag != "sf" and dst_host_count > 27.5, "penumbra-mined-026",
+        // precision 1.000, 0 FP in 4,610 matches
+        service == "private" and dst_host_srv_serror_rate > 0.25 and dst_host_count > 31.5, "penumbra-mined-027",
+        // precision 1.000, 0 FP in 4,603 matches
+        service == "private" and dst_host_serror_rate > 0.005 and rerror_rate <= 0.005 and dst_host_srv_count > 1.5, "penumbra-mined-028",
+        // precision 1.000, 0 FP in 4,556 matches
+        flag == "s0" and service == "private", "penumbra-mined-029",
+        // precision 1.000, 0 FP in 4,486 matches
+        flag != "sf" and serror_rate > 0.54 and dst_host_count > 90.5 and service == "private", "penumbra-mined-030",
+        // precision 1.000, 0 FP in 3,131 matches
+        count > 37.5 and dst_host_same_srv_rate <= 0.625 and srv_rerror_rate > 0.025, "penumbra-mined-031",
+        // precision 1.000, 0 FP in 3,092 matches
+        srv_serror_rate <= 0.53 and same_srv_rate <= 0.195 and flag != "sf" and rerror_rate > 0.7, "penumbra-mined-032",
+        // precision 1.000, 0 FP in 2,684 matches
+        same_srv_rate <= 0.495 and rerror_rate > 0.335 and flag == "rej", "penumbra-mined-033",
+        // precision 1.000, 0 FP in 2,538 matches
+        dst_host_serror_rate <= 0.035 and logged_in <= 0.5 and same_srv_rate <= 0.165 and rerror_rate > 0.03, "penumbra-mined-034",
+        // precision 1.000, 0 FP in 2,211 matches
+        dst_host_serror_rate <= 0.035 and flag == "rej" and same_srv_rate <= 0.735 and rerror_rate > 0.905, "penumbra-mined-035",
+        // precision 1.000, 0 FP in 2,195 matches
+        dst_host_serror_rate <= 0.035 and same_srv_rate <= 0.195 and srv_count > 1.5 and srv_rerror_rate > 0.165, "penumbra-mined-036",
+        // precision 1.000, 0 FP in 2,116 matches
+        dst_host_rerror_rate > 0.225 and logged_in <= 0.5 and service == "private", "penumbra-mined-037",
+        // precision 1.000, 0 FP in 1,937 matches
+        rerror_rate > 0.005 and service == "private", "penumbra-mined-038",
+        // precision 1.000, 0 FP in 1,644 matches
+        same_srv_rate > 0.165 and same_srv_rate <= 0.495 and count > 10.5 and src_bytes <= 37, "penumbra-mined-039",
+        // precision 1.000, 0 FP in 1,635 matches
+        service == "private" and dst_host_serror_rate <= 0.005 and src_bytes <= 101.5 and count > 1.5, "penumbra-mined-040",
+        // precision 1.000, 0 FP in 1,540 matches
+        service == "private" and dst_host_srv_count <= 188.5 and rerror_rate > 0.005 and count > 1.5, "penumbra-mined-041",
+        // precision 1.000, 0 FP in 1,447 matches
+        flag == "sf" and dst_bytes <= 3.5 and service == "eco_i" and src_bytes <= 25, "penumbra-mined-042",
+        // precision 1.000, 0 FP in 1,446 matches
+        dst_bytes <= 3.5 and count <= 21.5 and service == "eco_i" and src_bytes <= 25, "penumbra-mined-043",
+        // precision 1.000, 0 FP in 1,445 matches
+        same_srv_rate > 0.495 and src_bytes <= 28.5 and service == "eco_i", "penumbra-mined-044",
+        // precision 1.000, 0 FP in 1,431 matches
+        dst_host_same_srv_rate > 0.275 and service == "eco_i" and src_bytes <= 24, "penumbra-mined-045",
+        // precision 1.000, 0 FP in 1,428 matches
+        dst_bytes <= 3.5 and src_bytes <= 28.5 and dst_host_diff_srv_rate <= 0.005 and service == "eco_i", "penumbra-mined-046",
+        // precision 1.000, 0 FP in 1,426 matches
+        src_bytes <= 28.5 and dst_host_srv_diff_host_rate > 0.005 and service == "eco_i", "penumbra-mined-047",
+        // precision 1.000, 0 FP in 1,426 matches
+        src_bytes <= 28.5 and protocol_type != "tcp" and dst_host_srv_diff_host_rate > 0.2, "penumbra-mined-048",
+        // precision 1.000, 0 FP in 1,426 matches
+        dst_host_srv_diff_host_rate > 0.005 and service != "http" and src_bytes <= 18.5 and protocol_type == "icmp", "penumbra-mined-049",
+        // precision 1.000, 0 FP in 1,345 matches
+        serror_rate <= 0.505 and logged_in <= 0.5 and service == "private" and flag == "rej", "penumbra-mined-050",
+        // precision 1.000, 0 FP in 1,318 matches
+        same_srv_rate <= 0.495 and protocol_type != "udp" and serror_rate <= 0.995 and service == "private", "penumbra-mined-051",
+        // precision 1.000, 0 FP in 1,259 matches
+        protocol_type != "udp" and src_bytes <= 8.5 and protocol_type != "tcp", "penumbra-mined-052",
+        // precision 1.000, 0 FP in 1,250 matches
+        dst_host_same_srv_rate > 0.275 and src_bytes <= 13 and service == "eco_i", "penumbra-mined-053",
+        // precision 1.000, 0 FP in 1,235 matches
+        src_bytes <= 28.5 and same_srv_rate > 0.995 and protocol_type == "icmp" and srv_count > 1.5, "penumbra-mined-054",
+        // precision 1.000, 0 FP in 1,126 matches
+        dst_host_same_srv_rate > 0.275 and service == "eco_i" and srv_count > 5.5, "penumbra-mined-055",
+        // precision 1.000, 0 FP in 999 matches
+        src_bytes > 292 and dst_bytes <= 0.5 and service == "ecr_i", "penumbra-mined-056",
+        // precision 1.000, 0 FP in 924 matches
+        dst_host_serror_rate <= 0.035 and service == "ecr_i" and dst_host_srv_count > 6.5 and src_bytes > 292, "penumbra-mined-057",
+        // precision 1.000, 0 FP in 871 matches
+        dst_host_srv_count > 67.5 and protocol_type == "icmp" and service != "ecr_i" and src_bytes <= 24, "penumbra-mined-058",
+        // precision 1.000, 0 FP in 864 matches
+        dst_host_srv_serror_rate <= 0.885 and dst_host_same_srv_rate > 0.085 and protocol_type == "icmp" and count > 53, "penumbra-mined-059",
+        // precision 1.000, 0 FP in 851 matches
+        dst_host_srv_count > 69.5 and src_bytes <= 28.5 and service == "eco_i", "penumbra-mined-060",
+        // precision 1.000, 0 FP in 758 matches
+        src_bytes > 798 and protocol_type != "tcp", "penumbra-mined-061",
+        // precision 1.000, 0 FP in 758 matches
+        src_bytes > 1031.5 and service == "ecr_i", "penumbra-mined-062",
+        // precision 1.000, 0 FP in 745 matches
+        flag == "sf" and src_bytes <= 28.5 and protocol_type != "tcp" and service == "private", "penumbra-mined-063",
+        // precision 1.000, 0 FP in 728 matches
+        dst_host_srv_count > 69.5 and protocol_type == "icmp" and count > 6.5 and dst_host_same_src_port_rate > 0.355, "penumbra-mined-064",
+        // precision 1.000, 0 FP in 718 matches
+        dst_host_srv_count > 70.5 and protocol_type == "icmp" and srv_diff_host_rate > 0.25, "penumbra-mined-065",
+        // precision 1.000, 0 FP in 710 matches
+        dst_host_srv_serror_rate > 0.885 and count > 2.5 and srv_count <= 1.5 and serror_rate > 0.62, "penumbra-mined-066",
+        // precision 1.000, 0 FP in 700 matches
+        dst_bytes <= 3.5 and count <= 21.5 and service != "eco_i" and flag == "rstr", "penumbra-mined-067",
+        // precision 1.000, 0 FP in 688 matches
+        dst_host_same_srv_rate > 0.275 and service == "eco_i" and dst_host_srv_count <= 89.5 and srv_count > 1.5, "penumbra-mined-068",
+        // precision 1.000, 0 FP in 668 matches
+        count > 39.5 and diff_srv_rate <= 0.035 and protocol_type == "icmp" and src_bytes > 776, "penumbra-mined-069",
+        // precision 1.000, 0 FP in 662 matches
+        dst_host_diff_srv_rate > 0.045 and serror_rate > 0.005 and srv_rerror_rate > 0.75, "penumbra-mined-070",
+        // precision 1.000, 0 FP in 656 matches
+        dst_host_diff_srv_rate <= 0.045 and same_srv_rate <= 0.495 and service != "private" and serror_rate > 0.525, "penumbra-mined-071",
+        // precision 1.000, 0 FP in 634 matches
+        flag == "sf" and src_bytes > 518 and srv_count > 323.5, "penumbra-mined-072",
+        // precision 1.000, 0 FP in 633 matches
+        src_bytes > 28.5 and num_compromised <= 0.5 and count > 324.5 and protocol_type == "icmp", "penumbra-mined-073",
+        // precision 1.000, 0 FP in 605 matches
+        dst_host_srv_rerror_rate > 0.995 and serror_rate > 0.005 and rerror_rate > 0.795, "penumbra-mined-074",
+        // precision 1.000, 0 FP in 586 matches
+        src_bytes > 1031.5 and service == "ecr_i" and dst_host_diff_srv_rate > 0.005, "penumbra-mined-075",
+        // precision 1.000, 0 FP in 584 matches
+        flag != "sf" and same_srv_rate > 0.97 and service == "private" and dst_host_rerror_rate > 0.005, "penumbra-mined-076",
+        // precision 1.000, 0 FP in 573 matches
+        count > 37.5 and dst_host_same_srv_rate > 0.625 and service == "ecr_i", "penumbra-mined-077",
+        // precision 1.000, 0 FP in 545 matches
+        dst_host_serror_rate > 0.035 and srv_serror_rate <= 0.525 and count > 17.5 and dst_host_srv_rerror_rate > 0.325, "penumbra-mined-078",
+        // precision 1.000, 0 FP in 537 matches
+        same_srv_rate <= 0.495 and protocol_type != "udp" and serror_rate > 0.995 and dst_host_count <= 253.5, "penumbra-mined-079",
+        // precision 1.000, 0 FP in 497 matches
+        dst_host_srv_rerror_rate > 0.995 and srv_diff_host_rate <= 0.05 and service == "other" and dst_host_diff_srv_rate > 0.665, "penumbra-mined-080",
+        // precision 1.000, 0 FP in 489 matches
+        dst_host_srv_count > 69.5 and src_bytes > 28.5 and count > 324.5 and protocol_type == "icmp", "penumbra-mined-081",
+        // precision 1.000, 0 FP in 487 matches
+        dst_host_srv_count > 69.5 and hot <= 1.5 and count > 326.5 and src_bytes > 518, "penumbra-mined-082",
+        // precision 1.000, 0 FP in 477 matches
+        diff_srv_rate <= 0.035 and logged_in <= 0.5 and srv_count > 367.5 and src_bytes > 776, "penumbra-mined-083",
+        // precision 1.000, 0 FP in 474 matches
+        src_bytes > 28.5 and count > 324.5 and dst_bytes <= 2 and dst_host_count > 253.5, "penumbra-mined-084",
+        // precision 1.000, 0 FP in 434 matches
+        src_bytes > 28.5 and srv_count > 327.5 and dst_host_same_srv_rate <= 0.99, "penumbra-mined-085",
+        // precision 1.000, 0 FP in 434 matches
+        service == "private" and dst_host_srv_count <= 188.5 and rerror_rate <= 0.005 and dst_host_rerror_rate > 0.005, "penumbra-mined-086",
+        // precision 1.000, 0 FP in 429 matches
+        src_bytes > 28.5 and srv_count > 327.5 and count > 464.5 and dst_host_srv_count <= 232.5, "penumbra-mined-087",
+        // precision 1.000, 0 FP in 427 matches
+        dst_host_srv_serror_rate <= 0.865 and dst_host_srv_count > 100.5 and count > 324.5 and service == "ecr_i", "penumbra-mined-088",
+        // precision 1.000, 0 FP in 422 matches
+        dst_host_srv_serror_rate <= 0.885 and dst_host_serror_rate > 0.035 and service == "private", "penumbra-mined-089",
+        // precision 1.000, 0 FP in 398 matches
+        flag == "s0" and service == "ftp_data", "penumbra-mined-090",
+        // precision 1.000, 0 FP in 397 matches
+        dst_host_serror_rate <= 0.035 and flag == "rsto" and count > 11.5, "penumbra-mined-091",
+        // precision 1.000, 0 FP in 396 matches
+        count > 39.5 and service == "other" and same_srv_rate <= 0.605, "penumbra-mined-092",
+        // precision 1.000, 0 FP in 393 matches
+        dst_host_srv_count > 70.5 and rerror_rate <= 0.525 and service == "ecr_i" and dst_host_same_src_port_rate <= 0.995, "penumbra-mined-093",
+        // precision 1.000, 0 FP in 392 matches
+        dst_host_serror_rate > 0.38 and srv_serror_rate > 0.525 and service == "ftp_data", "penumbra-mined-094",
+        // precision 1.000, 0 FP in 392 matches
+        srv_serror_rate > 0.615 and dst_host_diff_srv_rate > 0.005 and flag == "s0" and service == "ftp_data", "penumbra-mined-095",
+        // precision 1.000, 0 FP in 385 matches
+        dst_host_srv_serror_rate > 0.865 and dst_host_count > 15.5 and service == "telnet" and count > 6.5, "penumbra-mined-096",
+        // precision 1.000, 0 FP in 384 matches
+        dst_host_srv_serror_rate > 0.885 and service == "http", "penumbra-mined-097",
+        // precision 1.000, 0 FP in 381 matches
+        dst_host_diff_srv_rate > 0.045 and diff_srv_rate > 0.015 and service == "other" and dst_host_same_src_port_rate <= 0.02, "penumbra-mined-098",
+        // precision 1.000, 0 FP in 378 matches
+        service == "private" and dst_host_serror_rate > 0.005 and rerror_rate > 0.005, "penumbra-mined-099",
+        // precision 1.000, 0 FP in 373 matches
+        count > 36.5 and dst_host_diff_srv_rate <= 0.005 and protocol_type == "icmp", "penumbra-mined-100",
+        // precision 1.000, 0 FP in 363 matches
+        flag == "sf" and logged_in <= 0.5 and dst_host_srv_diff_host_rate <= 0.245 and wrong_fragment > 0.5, "penumbra-mined-101",
+        // precision 1.000, 0 FP in 360 matches
+        dst_host_srv_rerror_rate <= 0.995 and service == "http" and dst_host_serror_rate > 0.585 and dst_host_count > 147.5, "penumbra-mined-102",
+        // precision 1.000, 0 FP in 352 matches
+        src_bytes <= 28.5 and service == "http" and dst_host_srv_serror_rate > 0.585 and dst_host_count > 192.5, "penumbra-mined-103",
+        // precision 1.000, 0 FP in 351 matches
+        src_bytes <= 28.5 and service == "http" and same_srv_rate <= 0.975 and flag != "rej", "penumbra-mined-104",
+        // precision 1.000, 0 FP in 348 matches
+        flag == "s0" and dst_host_srv_serror_rate > 0.065 and service == "http" and same_srv_rate <= 0.925, "penumbra-mined-105",
+        // precision 1.000, 0 FP in 347 matches
+        src_bytes <= 28.5 and dst_host_srv_rerror_rate > 0.005 and diff_srv_rate > 0.025 and service == "other", "penumbra-mined-106",
+        // precision 1.000, 0 FP in 345 matches
+        dst_bytes <= 3.5 and src_bytes <= 28.5 and dst_host_diff_srv_rate > 0.005 and duration > 222.5, "penumbra-mined-107",
+        // precision 1.000, 0 FP in 345 matches
+        dst_host_srv_serror_rate <= 0.865 and dst_host_srv_count <= 100.5 and flag == "sf" and wrong_fragment > 0.5, "penumbra-mined-108",
+        // precision 1.000, 0 FP in 344 matches
+        same_srv_rate > 0.495 and wrong_fragment > 0.5, "penumbra-mined-109",
+        // precision 1.000, 0 FP in 326 matches
+        dst_host_srv_diff_host_rate > 0.005 and dst_host_srv_count > 155.5 and service == "eco_i", "penumbra-mined-110",
+        // precision 1.000, 0 FP in 318 matches
+        service != "domain_u" and wrong_fragment > 0.5 and src_bytes <= 754, "penumbra-mined-111",
+        // precision 1.000, 0 FP in 318 matches
+        service == "private" and wrong_fragment > 0.5, "penumbra-mined-112",
+        // precision 1.000, 0 FP in 318 matches
+        src_bytes <= 28.5 and dst_host_serror_rate <= 0.885 and wrong_fragment > 0.5, "penumbra-mined-113",
+        // precision 1.000, 0 FP in 299 matches
+        logged_in <= 0.5 and service == "z39_50", "penumbra-mined-114",
+        // precision 1.000, 0 FP in 285 matches
+        same_srv_rate > 0.495 and dst_host_srv_count > 165.5 and protocol_type == "icmp" and dst_host_srv_diff_host_rate > 0.125, "penumbra-mined-115",
+        // precision 1.000, 0 FP in 279 matches
+        dst_bytes <= 3.5 and protocol_type == "udp" and service == "private" and dst_host_serror_rate > 0.005, "penumbra-mined-116",
+        // precision 1.000, 0 FP in 258 matches
+        dst_host_serror_rate > 0.035 and dst_host_srv_serror_rate <= 0.945 and service == "private" and dst_host_srv_rerror_rate > 0.165, "penumbra-mined-117",
+        // precision 1.000, 0 FP in 248 matches
+        flag == "sf" and dst_host_same_src_port_rate > 0.125 and dst_host_same_src_port_rate <= 0.995 and wrong_fragment > 0.5, "penumbra-mined-118",
+        // precision 1.000, 0 FP in 243 matches
+        same_srv_rate <= 0.495 and protocol_type == "udp" and dst_host_rerror_rate > 0.005, "penumbra-mined-119",
+        // precision 1.000, 0 FP in 240 matches
+        src_bytes > 10235.5 and service == "http" and dst_host_srv_rerror_rate > 0.015, "penumbra-mined-120",
+        // precision 1.000, 0 FP in 235 matches
+        logged_in > 0.5 and src_bytes > 42657 and dst_bytes > 920 and srv_count > 2.5, "penumbra-mined-121",
+        // precision 1.000, 0 FP in 232 matches
+        logged_in <= 0.5 and count > 19.5 and service == "auth", "penumbra-mined-122",
+        // precision 1.000, 0 FP in 232 matches
+        flag != "sf" and dst_host_same_src_port_rate <= 0.005 and service == "whois", "penumbra-mined-123",
+        // precision 1.000, 0 FP in 231 matches
+        count > 39.5 and diff_srv_rate <= 0.035 and protocol_type == "icmp" and src_bytes <= 776, "penumbra-mined-124",
+        // precision 1.000, 0 FP in 220 matches
+        flag != "sf" and dst_host_serror_rate > 0.755 and service == "courier", "penumbra-mined-125",
+        // precision 1.000, 0 FP in 220 matches
+        dst_host_serror_rate > 0.915 and src_bytes <= 4.5 and service == "courier", "penumbra-mined-126",
+        // precision 1.000, 0 FP in 220 matches
+        dst_host_srv_serror_rate > 0.885 and same_srv_rate <= 0.975 and service == "courier", "penumbra-mined-127",
+        // precision 1.000, 0 FP in 213 matches
+        dst_host_diff_srv_rate <= 0.045 and flag == "s0" and count > 2.5 and service == "telnet", "penumbra-mined-128",
+        // precision 1.000, 0 FP in 208 matches
+        serror_rate > 0.505 and src_bytes <= 32.5 and dst_host_serror_rate > 0.175 and service == "bgp", "penumbra-mined-129",
+        // precision 1.000, 0 FP in 208 matches
+        dst_host_srv_serror_rate > 0.885 and srv_diff_host_rate <= 0.115 and service == "bgp", "penumbra-mined-130",
+        // precision 1.000, 0 FP in 206 matches
+        flag == "sf" and service == "http" and dst_host_srv_rerror_rate > 0.015 and src_bytes > 27514, "penumbra-mined-131",
+        // precision 1.000, 0 FP in 205 matches
+        service == "http" and dst_host_serror_rate > 0.625 and same_srv_rate <= 0.925 and diff_srv_rate > 0.065, "penumbra-mined-132",
+        // precision 1.000, 0 FP in 204 matches
+        flag != "sf" and dst_host_same_src_port_rate <= 0.005 and service == "nnsp", "penumbra-mined-133",
+        // precision 1.000, 0 FP in 203 matches
+        dst_host_srv_rerror_rate <= 0.995 and flag == "s0" and service == "uucp", "penumbra-mined-134",
+        // precision 1.000, 0 FP in 203 matches
+        dst_host_srv_serror_rate > 0.885 and service == "uucp", "penumbra-mined-135",
+        // precision 1.000, 0 FP in 202 matches
+        dst_host_srv_serror_rate > 0.885 and diff_srv_rate > 0.02 and service == "uucp", "penumbra-mined-136",
+        // precision 1.000, 0 FP in 201 matches
+        protocol_type != "icmp" and dst_host_srv_serror_rate > 0.885 and service == "iso_tsap", "penumbra-mined-137",
+        // precision 1.000, 0 FP in 201 matches
+        dst_host_srv_serror_rate > 0.885 and service == "iso_tsap", "penumbra-mined-138",
+        // precision 1.000, 0 FP in 197 matches
+        flag == "sf" and count > 326.5 and src_bytes > 518 and dst_host_diff_srv_rate <= 0.005, "penumbra-mined-139",
+        // precision 1.000, 0 FP in 190 matches
+        src_bytes <= 28.5 and service == "supdup", "penumbra-mined-140",
+        // precision 1.000, 0 FP in 187 matches
+        logged_in <= 0.5 and dst_bytes <= 2.5 and serror_rate > 0.505 and service == "auth", "penumbra-mined-141",
+        // precision 1.000, 0 FP in 186 matches
+        dst_host_srv_serror_rate > 0.885 and diff_srv_rate > 0.02 and service == "auth", "penumbra-mined-142",
+        // precision 1.000, 0 FP in 183 matches
+        dst_host_diff_srv_rate <= 0.045 and dst_host_serror_rate > 0.955 and service == "ftp_data", "penumbra-mined-143",
+        // precision 1.000, 0 FP in 181 matches
+        dst_host_same_srv_rate <= 0.275 and dst_host_same_src_port_rate <= 0.005 and srv_serror_rate > 0.145 and service == "whois", "penumbra-mined-144",
+        // precision 1.000, 0 FP in 181 matches
+        dst_host_same_srv_rate > 0.275 and src_bytes > 13 and src_bytes <= 28.5 and service == "eco_i", "penumbra-mined-145",
+        // precision 1.000, 0 FP in 177 matches
+        src_bytes <= 28.5 and srv_serror_rate > 0.975 and service == "vmnet", "penumbra-mined-146",
+        // precision 1.000, 0 FP in 176 matches
+        dst_host_srv_count <= 71.5 and src_bytes <= 8.5 and service == "http_443", "penumbra-mined-147",
+        // precision 1.000, 0 FP in 172 matches
+        src_bytes > 1031.5 and service == "ecr_i" and dst_host_diff_srv_rate <= 0.005, "penumbra-mined-148",
+        // precision 1.000, 0 FP in 168 matches
+        diff_srv_rate <= 0.035 and dst_host_same_src_port_rate > 0.505 and service == "other" and rerror_rate > 0.5, "penumbra-mined-149",
+        // precision 1.000, 0 FP in 165 matches
+        dst_host_same_srv_rate > 0.275 and num_compromised <= 0.5 and wrong_fragment > 0.5, "penumbra-mined-150",
+        // precision 1.000, 0 FP in 165 matches
+        dst_host_srv_rerror_rate > 0.995 and service == "other" and duration > 1.5, "penumbra-mined-151",
+        // precision 1.000, 0 FP in 164 matches
+        dst_host_serror_rate > 0.035 and dst_host_srv_serror_rate <= 0.945 and service == "private" and dst_host_srv_rerror_rate <= 0.165, "penumbra-mined-152",
+        // precision 1.000, 0 FP in 163 matches
+        dst_host_srv_serror_rate > 0.885 and same_srv_rate <= 0.975 and service == "nnsp", "penumbra-mined-153",
+        // precision 1.000, 0 FP in 162 matches
+        dst_bytes <= 2.5 and srv_count > 2.5 and srv_serror_rate > 0.685 and service == "auth", "penumbra-mined-154",
+        // precision 1.000, 0 FP in 161 matches
+        srv_serror_rate > 0.53 and dst_host_count > 156.5 and service == "time", "penumbra-mined-155",
+        // precision 1.000, 0 FP in 161 matches
+        same_srv_rate <= 0.495 and dst_host_same_src_port_rate > 0.035 and src_bytes <= 29 and srv_rerror_rate > 0.165, "penumbra-mined-156",
+        // precision 1.000, 0 FP in 159 matches
+        src_bytes > 28.5 and count > 324.5 and dst_bytes <= 2 and dst_host_count <= 253.5, "penumbra-mined-157",
+        // precision 1.000, 0 FP in 144 matches
+        same_srv_rate > 0.495 and protocol_type == "icmp" and dst_host_same_srv_rate > 0.165 and dst_host_rerror_rate > 0.005, "penumbra-mined-158",
+        // precision 1.000, 0 FP in 142 matches
+        service == "http" and dst_host_serror_rate > 0.625 and same_srv_rate <= 0.925 and diff_srv_rate <= 0.065, "penumbra-mined-159",
+        // precision 1.000, 0 FP in 140 matches
+        logged_in <= 0.5 and srv_count > 100.5 and dst_host_serror_rate > 0.005, "penumbra-mined-160",
+        // precision 1.000, 0 FP in 139 matches
+        flag == "sf" and protocol_type == "icmp" and dst_host_rerror_rate > 0.005 and count > 244.5, "penumbra-mined-161",
+        // precision 1.000, 0 FP in 136 matches
+        dst_host_same_srv_rate > 0.275 and dst_host_count > 4.5 and wrong_fragment > 0.5, "penumbra-mined-162",
+        // precision 1.000, 0 FP in 134 matches
+        dst_host_srv_count > 69.5 and wrong_fragment > 0.5, "penumbra-mined-163",
+        // precision 1.000, 0 FP in 134 matches
+        src_bytes > 28.5 and dst_host_rerror_rate > 0.005 and service == "ecr_i" and count > 298.5, "penumbra-mined-164",
+        // precision 1.000, 0 FP in 134 matches
+        src_bytes > 28.5 and service == "ecr_i" and dst_host_rerror_rate > 0.005 and dst_host_srv_count > 46.5, "penumbra-mined-165",
+        // precision 1.000, 0 FP in 134 matches
+        dst_host_srv_serror_rate > 0.885 and same_srv_rate <= 0.975 and diff_srv_rate <= 0.48 and service == "hostnames", "penumbra-mined-166",
+        // precision 1.000, 0 FP in 130 matches
+        dst_host_same_srv_rate > 0.275 and dst_host_same_src_port_rate <= 0.535 and dst_host_serror_rate > 0.835 and count > 9.5, "penumbra-mined-167",
+        // precision 1.000, 0 FP in 126 matches
+        dst_host_srv_count <= 70.5 and src_bytes > 8.5 and count > 31.5 and service == "private", "penumbra-mined-168",
+        // precision 1.000, 0 FP in 123 matches
+        dst_host_srv_count > 69.5 and protocol_type != "icmp" and dst_bytes <= 0.5 and wrong_fragment > 1.5, "penumbra-mined-169",
+        // precision 1.000, 0 FP in 120 matches
+        dst_host_srv_count > 67.5 and protocol_type == "icmp" and service == "ecr_i" and dst_host_rerror_rate > 0.005, "penumbra-mined-170",
+        // precision 1.000, 0 FP in 118 matches
+        src_bytes > 28.5 and srv_count > 324.5 and count > 437.5 and dst_host_serror_rate > 0.005, "penumbra-mined-171",
+        // precision 1.000, 0 FP in 109 matches
+        logged_in > 0.5 and dst_bytes <= 8310 and hot > 26.5 and duration <= 16, "penumbra-mined-172",
+        // precision 1.000, 0 FP in 109 matches
+        logged_in > 0.5 and src_bytes <= 42657 and hot > 26 and dst_bytes <= 3299, "penumbra-mined-173",
+        // precision 1.000, 0 FP in 106 matches
+        src_bytes > 28.5 and count > 324.5 and dst_host_srv_count > 250.5 and protocol_type == "icmp", "penumbra-mined-174",
+        // precision 1.000, 0 FP in 103 matches
+        dst_host_srv_serror_rate <= 0.885 and dst_host_serror_rate > 0.025 and dst_host_serror_rate <= 0.035 and service == "private", "penumbra-mined-175",
+        // precision 1.000, 0 FP in 103 matches
+        dst_host_srv_rerror_rate > 0.995 and service != "other" and dst_host_srv_diff_host_rate > 0.875, "penumbra-mined-176",
+        // precision 1.000, 0 FP in 101 matches
+        dst_host_srv_count > 69.5 and dst_host_srv_count <= 222.5 and dst_host_same_src_port_rate <= 0.525 and wrong_fragment > 0.5, "penumbra-mined-177",
+        // precision 1.000, 0 FP in 100 matches
+        src_bytes <= 28.5 and srv_serror_rate > 0.975 and service == "private" and serror_rate <= 0.995, "penumbra-mined-178",
+        // precision 1.000, 0 FP in 90 matches
+        service == "http" and srv_serror_rate <= 0.545 and srv_rerror_rate > 0.155 and num_compromised > 0.5, "penumbra-mined-179",
+        // precision 1.000, 0 FP in 90 matches
+        flag != "sf" and same_srv_rate > 0.97 and service == "private" and dst_host_rerror_rate <= 0.005, "penumbra-mined-180",
+        // precision 1.000, 0 FP in 89 matches
+        diff_srv_rate <= 0.02 and dst_host_diff_srv_rate > 0.105 and flag == "sh", "penumbra-mined-181",
+        // precision 1.000, 0 FP in 87 matches
+        dst_bytes > 3.5 and dst_host_srv_count > 115.5 and num_compromised > 0.5 and dst_host_rerror_rate > 0.025, "penumbra-mined-182",
+        // precision 1.000, 0 FP in 87 matches
+        serror_rate <= 0.505 and dst_host_srv_rerror_rate > 0.995 and dst_host_srv_diff_host_rate > 0.005 and service == "private", "penumbra-mined-183",
+        // precision 1.000, 0 FP in 84 matches
+        dst_host_srv_serror_rate > 0.885 and count <= 2.5 and dst_host_srv_count <= 11.5 and service == "private", "penumbra-mined-184",
+        // precision 1.000, 0 FP in 84 matches
+        dst_host_same_srv_rate <= 0.275 and src_bytes <= 5.5 and same_srv_rate <= 0.975 and dst_host_count <= 65.5, "penumbra-mined-185",
+        // precision 1.000, 0 FP in 73 matches
+        dst_host_same_srv_rate > 0.275 and service == "eco_i" and srv_count > 2.5 and srv_count <= 5.5, "penumbra-mined-186",
+        // precision 1.000, 0 FP in 71 matches
+        diff_srv_rate > 0.035 and protocol_type == "udp" and service == "other" and src_bytes <= 76.5, "penumbra-mined-187",
+        // precision 1.000, 0 FP in 70 matches
+        dst_host_srv_serror_rate > 0.885 and same_srv_rate <= 0.975 and diff_srv_rate > 0.48 and dst_host_same_srv_rate > 0.015, "penumbra-mined-188",
+        // precision 1.000, 0 FP in 69 matches
+        service == "http" and dst_host_srv_rerror_rate > 0.005 and dst_host_same_srv_rate <= 0.125, "penumbra-mined-189",
+        // precision 1.000, 0 FP in 69 matches
+        logged_in <= 0.5 and protocol_type != "tcp" and src_bytes <= 28.5 and serror_rate > 0.005, "penumbra-mined-190",
+        // precision 1.000, 0 FP in 68 matches
+        protocol_type == "icmp" and dst_host_diff_srv_rate > 0.005 and dst_host_same_srv_rate <= 0.165 and count > 57, "penumbra-mined-191",
+        // precision 1.000, 0 FP in 67 matches
+        dst_host_srv_rerror_rate > 0.995 and service == "http" and dst_host_same_srv_rate <= 0.11, "penumbra-mined-192",
+        // precision 1.000, 0 FP in 67 matches
+        dst_host_count <= 2.5 and dst_host_srv_count > 246.5 and service != "http", "penumbra-mined-193",
+        // precision 1.000, 0 FP in 63 matches
+        service == "smtp" and logged_in <= 0.5 and dst_host_srv_serror_rate > 0.045, "penumbra-mined-194",
+        // precision 1.000, 0 FP in 62 matches
+        service != "domain_u" and wrong_fragment > 0.5 and src_bytes > 754, "penumbra-mined-195",
+        // precision 1.000, 0 FP in 62 matches
+        flag == "sf" and service == "ecr_i" and wrong_fragment > 0.5, "penumbra-mined-196",
+        // precision 1.000, 0 FP in 62 matches
+        dst_bytes <= 3.5 and src_bytes > 28.5 and service != "urp_i" and wrong_fragment > 0.5, "penumbra-mined-197",
+        // precision 1.000, 0 FP in 62 matches
+        src_bytes > 28.5 and logged_in <= 0.5 and wrong_fragment > 0.5, "penumbra-mined-198",
+        // precision 1.000, 0 FP in 62 matches
+        count <= 39.5 and src_bytes > 28.5 and num_compromised <= 0.5 and wrong_fragment > 0.5, "penumbra-mined-199",
+        // precision 1.000, 0 FP in 61 matches
+        dst_host_srv_rerror_rate > 0.995 and srv_diff_host_rate <= 0.05 and service == "z39_50", "penumbra-mined-200",
+        // precision 1.000, 0 FP in 61 matches
+        serror_rate <= 0.505 and dst_host_srv_rerror_rate > 0.995 and dst_host_srv_diff_host_rate <= 0.005 and service == "z39_50", "penumbra-mined-201",
+        // precision 1.000, 0 FP in 60 matches
+        serror_rate <= 0.005 and flag == "rej" and service == "z39_50", "penumbra-mined-202",
+        // precision 1.000, 0 FP in 58 matches
+        same_srv_rate > 0.27 and same_srv_rate <= 0.495 and count <= 10.5 and srv_serror_rate > 0.75, "penumbra-mined-203",
+        // precision 1.000, 0 FP in 58 matches
+        src_bytes > 28.5 and dst_host_rerror_rate <= 0.005 and service == "ecr_i" and wrong_fragment > 0.5, "penumbra-mined-204",
+        // precision 1.000, 0 FP in 57 matches
+        flag == "s0" and same_srv_rate <= 0.975 and dst_host_srv_count > 68.5, "penumbra-mined-205",
+        // precision 1.000, 0 FP in 55 matches
+        service == "private" and dst_host_srv_serror_rate > 0.25 and dst_host_count <= 31.5, "penumbra-mined-206",
+        // precision 1.000, 0 FP in 54 matches
+        dst_host_same_srv_rate > 0.265 and dst_host_same_src_port_rate <= 0.505 and protocol_type == "icmp" and dst_host_serror_rate > 0.005, "penumbra-mined-207",
+        // precision 1.000, 0 FP in 53 matches
+        count > 36.5 and dst_host_diff_srv_rate <= 0.015 and protocol_type != "icmp" and service == "private", "penumbra-mined-208",
+        // precision 1.000, 0 FP in 52 matches
+        dst_host_serror_rate <= 0.035 and dst_host_srv_rerror_rate > 0.995 and dst_host_same_srv_rate <= 0.245 and service == "uucp", "penumbra-mined-209",
+        // precision 1.000, 0 FP in 51 matches
+        dst_host_srv_rerror_rate > 0.995 and dst_host_same_srv_rate <= 0.245 and dst_host_diff_srv_rate <= 0.055 and same_srv_rate <= 0.135, "penumbra-mined-210",
+        // precision 1.000, 0 FP in 51 matches
+        diff_srv_rate <= 0.035 and logged_in <= 0.5 and flag == "sh" and dst_host_serror_rate > 0.935, "penumbra-mined-211",
+        // precision 1.000, 0 FP in 50 matches
+        same_srv_rate <= 0.495 and flag != "sf" and service == "smtp", "penumbra-mined-212",
+        // precision 1.000, 0 FP in 50 matches
+        dst_host_same_src_port_rate > 0.005 and dst_host_same_src_port_rate <= 0.995 and dst_host_srv_count > 226.5 and service == "ecr_i", "penumbra-mined-213",
+        // precision 1.000, 0 FP in 48 matches
+        same_srv_rate > 0.495 and src_bytes <= 28.5 and dst_host_same_srv_rate <= 0.025 and dst_host_serror_rate > 0.995, "penumbra-mined-214",
+        // precision 1.000, 0 FP in 48 matches
+        dst_host_srv_count > 70.5 and dst_host_diff_srv_rate > 0.305 and protocol_type == "udp", "penumbra-mined-215",
+        // precision 1.000, 0 FP in 47 matches
+        same_srv_rate <= 0.495 and service == "private" and flag != "sf" and dst_host_count <= 27.5, "penumbra-mined-216",
+        // precision 1.000, 0 FP in 46 matches
+        dst_host_diff_srv_rate <= 0.045 and same_srv_rate <= 0.495 and service == "private" and srv_count > 2.5, "penumbra-mined-217",
+        // precision 1.000, 0 FP in 46 matches
+        src_bytes <= 28.5 and dst_host_same_srv_rate <= 0.325 and dst_host_rerror_rate > 0.255 and service == "nnsp", "penumbra-mined-218",
+        // precision 1.000, 0 FP in 46 matches
+        dst_host_srv_serror_rate <= 0.885 and flag != "sf" and srv_serror_rate <= 0.01 and service == "ctf", "penumbra-mined-219",
+        // precision 1.000, 0 FP in 44 matches
+        service != "http" and dst_host_serror_rate > 0.025 and src_bytes > 30.5 and srv_count > 354, "penumbra-mined-220",
+        // precision 1.000, 0 FP in 41 matches
+        dst_host_srv_rerror_rate > 0.995 and count > 1.5 and service == "http" and srv_count > 7.5, "penumbra-mined-221",
+        // precision 1.000, 0 FP in 41 matches
+        dst_host_rerror_rate > 0.175 and dst_host_rerror_rate <= 0.225 and logged_in <= 0.5 and service == "private", "penumbra-mined-222",
+        // precision 1.000, 0 FP in 40 matches
+        diff_srv_rate <= 0.035 and logged_in <= 0.5 and flag == "sh" and dst_host_serror_rate <= 0.935, "penumbra-mined-223",
+        // precision 1.000, 0 FP in 36 matches
+        dst_bytes <= 3.5 and service == "ftp_data" and serror_rate <= 0.575 and srv_rerror_rate > 0.5, "penumbra-mined-224",
+        // precision 1.000, 0 FP in 32 matches
+        src_bytes <= 28.5 and service == "http" and dst_host_srv_serror_rate > 0.585 and dst_host_count <= 192.5, "penumbra-mined-225",
+        // precision 1.000, 0 FP in 28 matches
+        dst_host_srv_count > 69.5 and protocol_type == "icmp" and count > 6.5 and dst_host_same_src_port_rate <= 0.355, "penumbra-mined-226",
+        // precision 1.000, 0 FP in 28 matches
+        dst_host_srv_diff_host_rate > 0.005 and protocol_type != "tcp" and src_bytes > 804, "penumbra-mined-227",
+        // precision 1.000, 1 FP in 14,695 matches
+        flag != "sf" and service != "http" and src_bytes <= 6.5 and count > 5.5, "penumbra-mined-228",
+        // precision 1.000, 1 FP in 12,581 matches
+        diff_srv_rate > 0.035 and protocol_type != "udp" and src_bytes <= 6.5 and dst_host_serror_rate > 0.015, "penumbra-mined-229",
+        // precision 1.000, 1 FP in 11,899 matches
+        serror_rate > 0.51 and dst_host_diff_srv_rate > 0.005 and dst_host_srv_serror_rate > 0.305 and diff_srv_rate > 0.02, "penumbra-mined-230",
+        // precision 1.000, 1 FP in 11,865 matches
+        flag == "s0" and same_srv_rate <= 0.975 and dst_host_srv_count <= 68.5, "penumbra-mined-231",
+        // precision 1.000, 1 FP in 11,767 matches
+        srv_serror_rate > 0.57 and dst_host_same_src_port_rate <= 0.025 and dst_host_serror_rate > 0.095 and diff_srv_rate > 0.02, "penumbra-mined-232",
+        // precision 1.000, 1 FP in 11,746 matches
+        dst_host_same_srv_rate <= 0.265 and src_bytes <= 3 and dst_host_serror_rate > 0.945, "penumbra-mined-233",
+        // precision 1.000, 1 FP in 11,728 matches
+        same_srv_rate <= 0.495 and dst_host_srv_serror_rate > 0.08 and serror_rate > 0.505, "penumbra-mined-234",
+        // precision 1.000, 1 FP in 11,608 matches
+        dst_host_srv_serror_rate > 0.885 and same_srv_rate <= 0.975 and diff_srv_rate <= 0.48 and service != "hostnames", "penumbra-mined-235",
+        // precision 1.000, 1 FP in 11,569 matches
+        flag == "s0" and dst_host_srv_serror_rate > 0.065 and service != "http" and same_srv_rate <= 0.97, "penumbra-mined-236",
+        // precision 1.000, 1 FP in 10,828 matches
+        dst_bytes <= 3.5 and same_srv_rate <= 0.495 and srv_count > 1.5 and dst_host_serror_rate > 0.985, "penumbra-mined-237",
+        // precision 1.000, 1 FP in 7,179 matches
+        service != "private" and same_srv_rate <= 0.495 and srv_serror_rate > 0.525 and service != "other", "penumbra-mined-238",
+        // precision 1.000, 2 FP in 11,990 matches
+        src_bytes <= 28.5 and count > 3.5 and serror_rate > 0.275 and srv_serror_rate > 0.37, "penumbra-mined-239",
+        // precision 1.000, 2 FP in 11,970 matches
+        flag == "s0" and srv_serror_rate > 0.525 and dst_host_same_srv_rate <= 0.855 and dst_host_srv_serror_rate > 0.675, "penumbra-mined-240",
+        // precision 1.000, 3 FP in 12,033 matches
+        dst_host_serror_rate > 0.035 and flag == "s0" and dst_host_srv_serror_rate > 0.055 and dst_host_same_src_port_rate <= 0.105, "penumbra-mined-241",
+        // precision 1.000, 3 FP in 11,941 matches
+        dst_host_serror_rate > 0.035 and same_srv_rate <= 0.975 and dst_host_srv_serror_rate > 0.335, "penumbra-mined-242",
+        // precision 1.000, 1 FP in 2,571 matches
+        same_srv_rate <= 0.495 and flag == "s0" and dst_host_diff_srv_rate <= 0.055, "penumbra-mined-243",
+        // precision 0.999, 1 FP in 1,462 matches
+        flag == "sf" and protocol_type == "icmp" and src_bytes <= 25, "penumbra-mined-244",
+        // precision 0.999, 1 FP in 1,457 matches
+        dst_host_srv_rerror_rate <= 0.995 and src_bytes <= 28.5 and dst_host_count <= 253.5 and protocol_type == "icmp", "penumbra-mined-245",
+        // precision 0.999, 1 FP in 1,456 matches
+        flag == "sf" and protocol_type == "icmp" and diff_srv_rate <= 0.02 and src_bytes <= 25, "penumbra-mined-246",
+        // precision 0.999, 1 FP in 1,447 matches
+        dst_host_diff_srv_rate <= 0.045 and src_bytes <= 28.5 and protocol_type == "icmp", "penumbra-mined-247",
+        // precision 0.999, 1 FP in 784 matches
+        dst_host_srv_serror_rate > 0.885 and srv_serror_rate > 0.775 and srv_count <= 1.5 and flag == "s0", "penumbra-mined-248",
+        // precision 0.999, 1 FP in 712 matches
+        same_srv_rate <= 0.495 and rerror_rate <= 0.335 and serror_rate > 0.425 and srv_count <= 1.5, "penumbra-mined-249",
+        // precision 0.998, 1 FP in 566 matches
+        same_srv_rate <= 0.495 and dst_host_serror_rate > 0.035 and flag != "s0" and count > 158.5, "penumbra-mined-250",
+        // precision 0.998, 1 FP in 520 matches
+        protocol_type == "udp" and src_bytes <= 11, "penumbra-mined-251",
+        // precision 0.998, 2 FP in 960 matches
+        src_bytes > 28.5 and service == "ecr_i" and count > 3.5, "penumbra-mined-252",
+        // precision 0.998, 3 FP in 1,429 matches
+        dst_host_srv_diff_host_rate > 0.005 and protocol_type != "tcp" and src_bytes <= 21, "penumbra-mined-253",
+        // precision 0.998, 3 FP in 1,422 matches
+        dst_host_serror_rate <= 0.035 and dst_host_srv_diff_host_rate > 0.245 and service == "eco_i" and dst_host_count <= 4.5, "penumbra-mined-254",
+        // precision 0.998, 1 FP in 468 matches
+        dst_host_serror_rate <= 0.885 and service == "eco_i" and dst_host_count <= 4.5 and dst_host_srv_diff_host_rate > 0.505, "penumbra-mined-255",
+        // precision 0.998, 3 FP in 1,205 matches
+        dst_host_same_srv_rate > 0.275 and dst_host_same_src_port_rate > 0.535 and dst_host_srv_diff_host_rate > 0.245 and srv_count > 2.5, "penumbra-mined-256",
+        // precision 0.997, 2 FP in 769 matches
+        same_srv_rate <= 0.495 and dst_host_diff_srv_rate > 0.015 and rerror_rate > 0.335 and rerror_rate <= 0.985, "penumbra-mined-257",
+        // precision 0.997, 1 FP in 350 matches
+        src_bytes <= 28.5 and service == "http" and srv_rerror_rate <= 0.21 and same_srv_rate <= 0.975, "penumbra-mined-258",
+        // precision 0.997, 1 FP in 329 matches
+        same_srv_rate > 0.495 and dst_host_srv_diff_host_rate <= 0.245 and service == "http" and src_bytes > 10280, "penumbra-mined-259",
+        // precision 0.997, 1 FP in 329 matches
+        srv_serror_rate <= 0.53 and same_srv_rate > 0.195 and service == "http" and src_bytes > 10280, "penumbra-mined-260",
+        // precision 0.997, 1 FP in 325 matches
+        dst_bytes > 2.5 and hot > 0.5 and src_bytes > 11454.5, "penumbra-mined-261",
+        // precision 0.997, 10 FP in 3,198 matches
+        dst_host_srv_rerror_rate > 0.995 and service != "http" and same_srv_rate <= 0.6, "penumbra-mined-262",
+        // precision 0.997, 1 FP in 319 matches
+        logged_in > 0.5 and src_bytes > 41133 and dst_host_srv_diff_host_rate <= 0.005 and dst_host_diff_srv_rate <= 0.005, "penumbra-mined-263",
+        // precision 0.997, 3 FP in 939 matches
+        same_srv_rate > 0.495 and protocol_type == "icmp" and count > 9.5, "penumbra-mined-264",
+        // precision 0.997, 7 FP in 2,144 matches
+        diff_srv_rate <= 0.035 and protocol_type == "icmp" and dst_host_same_srv_rate > 0.075 and srv_count > 2.5, "penumbra-mined-265",
+        // precision 0.996, 4 FP in 993 matches
+        same_srv_rate > 0.495 and src_bytes > 28.5 and service == "ecr_i" and srv_count > 2.5, "penumbra-mined-266",
+        // precision 0.996, 6 FP in 1,448 matches
+        flag == "sf" and src_bytes <= 28.5 and dst_host_same_srv_rate > 0.99 and dst_bytes <= 2, "penumbra-mined-267",
+        // precision 0.996, 6 FP in 1,437 matches
+        dst_host_same_srv_rate <= 0.275 and srv_count <= 2.5 and srv_serror_rate > 0.25 and diff_srv_rate > 0.02, "penumbra-mined-268",
+        // precision 0.996, 2 FP in 470 matches
+        src_bytes > 28.5 and dst_host_srv_count <= 222.5 and count > 320.5, "penumbra-mined-269",
+        // precision 0.996, 1 FP in 227 matches
+        src_bytes > 30185 and srv_rerror_rate <= 0.13 and hot > 1.5, "penumbra-mined-270",
+        // precision 0.995, 1 FP in 220 matches
+        src_bytes <= 28.5 and same_srv_rate > 0.995 and protocol_type == "icmp" and srv_count <= 1.5, "penumbra-mined-271",
+        // precision 0.995, 2 FP in 436 matches
+        flag == "sf" and count > 326.5 and src_bytes > 518 and dst_host_diff_srv_rate > 0.005, "penumbra-mined-272",
+        // precision 0.995, 2 FP in 430 matches
+        src_bytes <= 28.5 and service == "ftp_data" and flag != "sf", "penumbra-mined-273",
+        // precision 0.995, 7 FP in 1,473 matches
+        protocol_type == "icmp" and service != "urp_i" and dst_host_count <= 4.5, "penumbra-mined-274",
+        // precision 0.995, 2 FP in 413 matches
+        src_bytes > 28.5 and service == "ecr_i" and dst_host_same_srv_rate > 0.995 and srv_count > 2.5, "penumbra-mined-275",
+        // precision 0.995, 6 FP in 1,204 matches
+        dst_host_serror_rate <= 0.035 and service == "eco_i" and srv_count > 2.5, "penumbra-mined-276",
+        // precision 0.995, 1 FP in 190 matches
+        service == "http" and dst_host_same_srv_rate <= 0.135 and flag != "rej", "penumbra-mined-277",
+        // precision 0.994, 9 FP in 1,566 matches
+        dst_bytes <= 3.5 and same_srv_rate <= 0.035 and srv_count <= 1.5, "penumbra-mined-278",
+        // precision 0.994, 2 FP in 324 matches
+        dst_host_srv_serror_rate <= 0.885 and flag == "rsto" and diff_srv_rate > 0.025 and dst_host_diff_srv_rate > 0.065, "penumbra-mined-279",
+        // precision 0.993, 3 FP in 450 matches
+        service != "smtp" and flag == "sf" and dst_host_same_src_port_rate <= 0.995 and count > 324.5, "penumbra-mined-280",
+        // precision 0.993, 9 FP in 1,273 matches
+        dst_host_same_src_port_rate <= 0.005 and dst_host_serror_rate > 0.025 and same_srv_rate <= 0.975 and srv_count <= 1.5, "penumbra-mined-281",
+        // precision 0.993, 5 FP in 688 matches
+        dst_host_diff_srv_rate <= 0.045 and dst_host_serror_rate > 0.955 and service != "ftp_data" and dst_host_same_src_port_rate <= 0.065, "penumbra-mined-282",
+        // precision 0.993, 7 FP in 940 matches
+        dst_bytes <= 3.5 and src_bytes > 28.5 and protocol_type == "icmp" and srv_count > 10.5, "penumbra-mined-283",
+        // precision 0.992, 4 FP in 497 matches
+        src_bytes > 28.5 and count > 324.5 and dst_host_srv_count <= 250.5 and dst_host_rerror_rate <= 0.215, "penumbra-mined-284",
+        // precision 0.992, 2 FP in 244 matches
+        src_bytes > 519 and src_bytes <= 798 and protocol_type != "tcp", "penumbra-mined-285",
+        // precision 0.991, 5 FP in 576 matches
+        dst_host_srv_rerror_rate > 0.995 and count > 1.5 and service != "http" and dst_host_same_src_port_rate > 0.055, "penumbra-mined-286",
+        // precision 0.991, 1 FP in 107 matches
+        dst_host_serror_rate > 0.035 and same_srv_rate > 0.975 and dst_host_srv_count <= 1.5 and dst_host_diff_srv_rate > 0.615, "penumbra-mined-287",
+        // precision 0.990, 5 FP in 526 matches
+        dst_host_count > 254.5 and diff_srv_rate <= 0.035 and flag == "rstr", "penumbra-mined-288",
+        // precision 0.990, 1 FP in 103 matches
+        dst_host_diff_srv_rate <= 0.045 and logged_in <= 0.5 and protocol_type == "icmp" and dst_host_serror_rate > 0.005, "penumbra-mined-289",
+        // precision 0.990, 1 FP in 102 matches
+        same_srv_rate > 0.415 and same_srv_rate <= 0.495 and count > 8.5 and flag != "sf", "penumbra-mined-290",
+        // precision 0.990, 4 FP in 402 matches
+        same_srv_rate <= 0.495 and protocol_type != "icmp" and flag == "rsto", "penumbra-mined-291",
+        // precision 0.990, 13 FP in 1,269 matches
+        serror_rate <= 0.505 and srv_diff_host_rate > 0.005 and protocol_type == "icmp", "penumbra-mined-292",
+        // precision 0.990, 2 FP in 193 matches
+        same_srv_rate <= 0.495 and protocol_type == "udp" and diff_srv_rate <= 0.245 and count > 19.5, "penumbra-mined-293",
+        // precision 0.989, 10 FP in 951 matches
+        protocol_type == "icmp" and dst_host_srv_diff_host_rate <= 0.245 and srv_count > 9.5, "penumbra-mined-294",
+        // precision 0.989, 12 FP in 1,134 matches
+        diff_srv_rate > 0.285 and src_bytes <= 28.5 and dst_host_srv_count <= 2.5, "penumbra-mined-295",
+        // precision 0.989, 17 FP in 1,577 matches
+        flag == "sf" and dst_host_same_src_port_rate > 0.995 and src_bytes <= 22 and same_srv_rate > 0.51, "penumbra-mined-296",
+        // precision 0.989, 18 FP in 1,642 matches
+        flag == "sf" and dst_host_same_src_port_rate > 0.995 and service != "other" and src_bytes <= 24.5, "penumbra-mined-297",
+        // precision 0.989, 1 FP in 89 matches
+        src_bytes > 10235.5 and service == "http" and dst_host_srv_rerror_rate <= 0.015, "penumbra-mined-298",
+        // precision 0.988, 1 FP in 83 matches
+        dst_host_same_srv_rate <= 0.275 and dst_host_srv_diff_host_rate > 0.005 and dst_host_serror_rate > 0.895, "penumbra-mined-299",
+        // precision 0.988, 5 FP in 410 matches
+        service != "domain_u" and flag == "rsto" and diff_srv_rate > 0.025, "penumbra-mined-300",
+        // precision 0.988, 6 FP in 490 matches
+        service != "private" and srv_serror_rate > 0.545 and srv_count <= 1.5 and same_srv_rate <= 0.75, "penumbra-mined-301",
+        // precision 0.987, 1 FP in 76 matches
+        dst_host_same_srv_rate <= 0.275 and srv_count > 2.5 and count <= 9.5 and serror_rate > 0.55, "penumbra-mined-302",
+        // precision 0.986, 18 FP in 1,289 matches
+        dst_host_same_srv_rate <= 0.265 and dst_host_same_src_port_rate > 0.005 and flag != "sf" and diff_srv_rate > 0.02, "penumbra-mined-303",
+        // precision 0.986, 1 FP in 71 matches
+        dst_bytes > 3.5 and src_bytes > 20770 and rerror_rate > 0.07, "penumbra-mined-304",
+        // precision 0.986, 1 FP in 69 matches
+        same_srv_rate <= 0.495 and count <= 8.5 and service != "other" and srv_serror_rate > 0.75, "penumbra-mined-305",
+        // precision 0.985, 36 FP in 2,411 matches
+        dst_host_same_src_port_rate <= 0.005 and dst_host_serror_rate <= 0.025 and dst_host_rerror_rate > 0.025 and logged_in <= 0.5, "penumbra-mined-306",
+        // precision 0.985, 19 FP in 1,233 matches
+        dst_host_srv_serror_rate <= 0.885 and dst_host_srv_diff_host_rate > 0.245 and srv_count > 2.5, "penumbra-mined-307",
+        // precision 0.985, 19 FP in 1,228 matches
+        same_srv_rate > 0.495 and dst_host_srv_diff_host_rate > 0.245 and srv_count > 2.5, "penumbra-mined-308",
+        // precision 0.984, 24 FP in 1,481 matches
+        dst_host_diff_srv_rate <= 0.045 and dst_host_count <= 4.5 and service != "http" and protocol_type != "tcp", "penumbra-mined-309",
+        // precision 0.983, 10 FP in 602 matches
+        dst_host_srv_count <= 69.5 and dst_host_srv_diff_host_rate > 0.015 and protocol_type == "icmp", "penumbra-mined-310",
+        // precision 0.983, 1 FP in 60 matches
+        serror_rate <= 0.505 and srv_diff_host_rate > 0.005 and protocol_type != "icmp" and num_compromised > 0.5, "penumbra-mined-311",
+        // precision 0.982, 2 FP in 113 matches
+        srv_rerror_rate > 0.98 and dst_host_srv_diff_host_rate > 0.005 and dst_host_diff_srv_rate > 0.425, "penumbra-mined-312",
+        // precision 0.981, 1 FP in 53 matches
+        dst_host_srv_rerror_rate > 0.995 and serror_rate > 0.005 and rerror_rate <= 0.795, "penumbra-mined-313",
+        // precision 0.981, 3 FP in 157 matches
+        flag == "sf" and service == "ecr_i" and dst_host_rerror_rate > 0.015, "penumbra-mined-314",
+        // precision 0.981, 6 FP in 308 matches
+        dst_host_srv_serror_rate <= 0.885 and dst_bytes > 3.5 and src_bytes > 36148 and dst_host_rerror_rate > 0.005, "penumbra-mined-315",
+        // precision 0.980, 6 FP in 306 matches
+        dst_bytes > 8312.5 and num_compromised > 0.5 and hot > 1.5, "penumbra-mined-316",
+        ""
+    )
+    | where isnotempty(MatchedRule)
+);
+PenumbraMinedRules

@@ -4,9 +4,10 @@ Laid out the way a real Sentinel Solution is, so the artifacts can be read again
 [Azure/Azure-Sentinel](https://github.com/Azure/Azure-Sentinel) rather than taken on trust.
 
 ```
-Analytic Rules/   scheduled KQL detection rules
+Analytic Rules/   scheduled KQL detection rules, plus the mined rule packs
 Parsers/          ASIM normalizing + filtering parsers
 Data Connectors/  the DCR and connector definition
+Sigma/            mined rules that Sigma can express honestly
 Workbooks/        (not built)
 ```
 
@@ -67,3 +68,28 @@ Production use would require Microsoft to allocate a designator. We use our own 
 `NotConfigured` until credentials exist — the demo never depends on a live Azure call. Azure for
 Students provides $100 with no credit card, and enabling Sentinel grants 10 GB/day free for 31 days,
 which is orders of magnitude more than this alert volume needs.
+
+
+## Mined rules
+
+`PenumbraMinedRules_{unsw,nslkdd}.kql` are not hand-written. They are decision paths lifted out of
+a trained random forest, validated on held-out data the trees never saw, and emitted with their own
+precision and false-positive count inline. They run **without the model** — that is the point. The
+ML mines the detection; Sentinel enforces it; a detection engineer can read, argue with, and own
+the result.
+
+Enable them individually on the basis of the cost stated in each rule's comment, not as a block.
+
+Two things are deliberately absent:
+
+**Rules resting on testbed artifacts.** 106 of 207 mined UNSW paths depended on a feature our own
+audit quarantined (`sttl`, `dttl`, `ct_state_ttl`, `is_sm_ips_ports`, `proto='unas'`). Every one of
+them validated at high precision on held-out data from the same testbed and would fire on an
+operating system rather than on an attack. They are counted in `docs/EVALUATION.md` §10.7b and
+shipped nowhere.
+
+**Sigma translations that Sigma cannot express.** 1 of 95 UNSW rules and 7 of 317 NSL-KDD rules are
+in `Sigma/`. The rest reference flow features Sigma's log-based taxonomy has no field for — `sload`,
+`ct_srv_src`, `sinpkt` — and a partial translation is a different rule, not a shorter one.
+
+Regenerate with `uv run penumbra rules --dataset unsw`.

@@ -1,0 +1,23 @@
+title: Penumbra mined rule 052
+id: 6d399814-e0be-5ff2-8cab-bacca8d1112d
+status: experimental
+description: |
+    Mined from a decision path in a trained random forest and validated on held-out
+    data. Held-out precision 1.000, 0 false positives in 1259 matches.
+    Raised for analyst triage; this rule does not block traffic.
+author: Penumbra
+date: 2026-09-11
+logsource:
+    category: firewall
+    product: network
+detection:
+    selection:
+        BytesSent|lte: 8.5
+    filter:
+        Protocol:
+            - "udp"
+            - "tcp"
+    condition: selection and not filter
+falsepositives:
+    - Authorised scanners and monitoring agents matching the same flow shape
+level: medium

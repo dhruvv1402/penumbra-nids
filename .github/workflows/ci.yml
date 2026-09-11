@@ -90,12 +90,12 @@ jobs:
           echo "No enforcement path. ADR-0001 holds."
 
       - name: Import boundaries
-        # models/ and eval/ must run headless. If the science imports the web layer, it can no
-        # longer be reproduced without one.
+        # models/, eval/ and rules/ must run headless. If the science imports the web layer,
+        # it can no longer be reproduced without one.
         run: |
           if grep -rInE '^\s*(from|import)\s+penumbra\.(api|alerts|storage)' \
-               src/penumbra/models src/penumbra/eval 2>/dev/null; then
-            echo "::error::models/ and eval/ must not import api/, alerts/ or storage/. See ARCHITECTURE.md."
+               src/penumbra/models src/penumbra/eval src/penumbra/rules 2>/dev/null; then
+            echo "::error::models/, eval/ and rules/ must not import api/, alerts/ or storage/. See ARCHITECTURE.md."
             exit 1
           fi
           echo "Import boundaries hold."

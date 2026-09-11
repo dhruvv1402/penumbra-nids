@@ -1,0 +1,20 @@
+title: Penumbra mined rule 251
+id: da11479f-d129-502a-bb61-e4c059aa444a
+status: experimental
+description: |
+    Mined from a decision path in a trained random forest and validated on held-out
+    data. Held-out precision 0.998, 1 false positives in 520 matches.
+    Raised for analyst triage; this rule does not block traffic.
+author: Penumbra
+date: 2026-09-11
+logsource:
+    category: firewall
+    product: network
+detection:
+    selection:
+        Protocol: "udp"
+        BytesSent|lte: 11
+    condition: selection
+falsepositives:
+    - Authorised scanners and monitoring agents matching the same flow shape
+level: medium

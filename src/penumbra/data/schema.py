@@ -370,9 +370,44 @@ ARTIFACT_VERDICTS: Final[dict[str, dict[str, tuple[Verdict, str]]]] = {
 }
 
 
+# Some verdicts are value-level, not column-level. `proto` is a legitimate feature - TCP versus UDP
+# is real network behaviour - and only the generator's `unas` marker is the artifact. Quarantining
+# the whole column to remove one value would throw away a genuine signal to fix a synthetic one.
+#
+# This matters most for rule mining, where the unit of exclusion is a condition rather than a
+# column: `proto=unas > 0.5` must go and `proto=tcp > 0.5` must stay.
+ARTIFACT_VALUES: Final[dict[str, dict[str, list[str]]]] = {
+    "unsw": {"proto": ["unas"]},
+}
+
+
 def artifact_verdict(dataset: str, feature: str) -> tuple[Verdict, str]:
     """Verdict for one feature. Unknown features are `unresolved`, never silently `signal`."""
     return ARTIFACT_VERDICTS.get(dataset, {}).get(feature, ("unresolved", "No recorded judgment."))
+
+
+def quarantined(dataset: str) -> set[str]:
+    """Every feature whose recorded verdict is `artifact`.
+
+    Value-level quarantines come back as indicator names (`proto=unas`) rather than as the whole
+    column, so a consumer excluding this set removes the artifact and keeps the feature.
+
+    `unresolved` features are deliberately NOT in here. The ct_* window counters are genuinely
+    ambiguous - high connection counts to one destination are what scanning looks like - and
+    quarantining on suspicion would be the same error as keeping on convenience, in the other
+    direction.
+    """
+    key = dataset.lower().replace("-", "").replace("_", "")
+    values = ARTIFACT_VALUES.get(key, {})
+    out: set[str] = set()
+    for feature, (verdict, _) in ARTIFACT_VERDICTS.get(key, {}).items():
+        if verdict != "artifact":
+            continue
+        if feature in values:
+            out.update(f"{feature}={v}" for v in values[feature])
+        else:
+            out.add(feature)
+    return out
 
 
 # =================================================================================================

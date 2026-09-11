@@ -585,12 +585,109 @@ The first measurement was 38 flows/s. The cause was `_importances()` rebuilding 
 model's global feature-importance dictionary once per scored row — a quantity that depends on the
 fitted model and not on the row. Caching it gave an 18× speedup with no change to output.
 
+### 10.7b Mined detection rules — the model writes signatures for the SIEM
+
+The brief's premise is that a signature IDS misses novel attacks. The usual answer is to replace
+it. This is the other direction: extract the high-purity decision paths out of the forest and emit
+them as KQL and Sigma, so the existing SIEM enforces detections nobody has shipped a rule for.
+
+A path from root to a pure leaf already *is* a rule. `ct_dst_sport_ltm > 3.5 and sload > 3.49e7` is
+a conjunction any SIEM can evaluate with no model, no Python and no GPU.
+
+**Three splits, and the separation is the point.** The forest is grown on a `fit` split. Every
+precision number attached to a rule comes from a `holdout` carved out of *training* data the trees
+never saw — not the test set, because then the rules and the model's own reported metrics would
+share a denominator and the rule pack would stop being independent evidence. The test set is
+touched once, at the end, and changes no threshold and discards no rule.
+
+#### Result: half the mined rules rested on a feature our own audit had quarantined
+
+| UNSW-NB15 | with artifacts | quarantined |
+|---|---:|---:|
+| unique decision paths mined | 207 | 101 |
+| discarded as artifact-dependent | 0 | **106** |
+| survived held-out validation (≥ 0.98 precision) | 193 | **95** |
+| set recall, holdout (61,370 rows) | 0.6628 | 0.6470 |
+| set precision, holdout | 0.9924 | 0.9925 |
+| set recall, **test** (82,332 rows) | 0.6786 | **0.6626** |
+| set precision, **test** | 0.9635 | **0.9657** |
+
+`sttl`, `dttl`, `ct_state_ttl`, `is_sm_ips_ports` and the value `proto='unas'` are quarantined —
+the verdicts and their reasoning are in §2. 106 of 207 mined paths depend on one of them. Every one
+of those 106 would have validated at high precision on held-out data from the same testbed and
+detected nothing on a real network, because what they encode is which machine generated the packet.
+
+**Held-out validation does not catch a testbed artifact.** That is the finding. The 193-rule pack
+and the 95-rule pack were validated identically, on the same rows, against the same floor. Only the
+artifact audit separates them, and it runs on the data rather than on the model.
+
+The cost of the quarantine is **1.6 points of set recall** (0.6786 → 0.6626) and half the rules.
+The artifact-dependent rules were almost entirely redundant: the behavioural rules already covered
+the same attacks. Test precision is fractionally *better* without them.
+
+**The headline we stand behind: 95 rules, no model, 66.3% of attacks on the UNSW test set at 0.966
+precision.** Quoted at the test set's own prevalence (see §1) — precision on a real network would
+be far lower, and the prevalence-invariant reading is the relevant one.
+
+#### The transfer drop is visible in both datasets, and it is larger on NSL-KDD
+
+Nothing is quarantined on NSL-KDD: every leaky value the audit found has a verdict of `signal`
+(§2). A SYN flood genuinely produces a SYN error rate of 1.0 — a rule resting on that is the
+detection working, not a leak. So there is one arm, and 317 of 361 mined paths survive.
+
+| | holdout | test | Δ |
+|---|---:|---:|---:|
+| UNSW set recall | 0.6470 | 0.6626 | +0.016 |
+| UNSW set precision | 0.9925 | 0.9657 | **−0.027** |
+| NSL-KDD set recall | 0.9823 | **0.7312** | **−0.251** |
+| NSL-KDD set precision | 0.9880 | 0.9140 | **−0.074** |
+
+NSL-KDD's rule set loses **25 points of recall** between a held-out slice of training data and the
+official test set, against UNSW's +1.6. The difference is the dataset: `KDDTest+` contains 17
+attack types absent from `KDDTrain+` (§10.3), and a conjunction of thresholds mined from a family
+it has never seen does not fire on that family. This is the thesis experiment showing up in the
+rule pack, and it is the honest limit of rule mining — mined rules are excellent at compressing
+known behaviour into something a SIEM can run, and they are not a novelty detector. That is what
+the second head is for.
+
+#### Sigma is emitted only where it can be honest
+
+**1 of 95 UNSW rules and 7 of 317 NSL-KDD rules are expressible as Sigma.** Sigma's taxonomy is
+log-based — process creation, firewall, DNS, web — and has no field for `sload`, `ct_srv_src`,
+`sinpkt` or `tcprtt`. Emitting `sload > 1400000` as a Sigma rule produces something that looks
+portable and evaluates nowhere, so `to_sigma()` returns `None` rather than a partial translation,
+and the skip count is reported alongside the emitted count. "We emitted 7 Sigma rules" and "we
+emitted 7 of 317 because Sigma cannot express the other 310" are different claims.
+
+KQL against a flow table can express all of it, which is why KQL is the primary target.
+
+#### Two bugs in this pipeline, both worth recording
+
+**76% of the first run's rules were artifact-dependent, and the first count of them was wrong.**
+The exclusion was applied before de-duplication, so the same path rediscovered by 40 trees counted
+40 times: it reported "110 excluded" against "101 kept" — two numbers in different units. De-duping
+first makes them add up (106 + 101 = 207). A test now asserts that identity.
+
+**The Sigma emitter indented detection keys as siblings of `selection` rather than children.** The
+document parsed as valid YAML and described a different rule. No test caught it because the run
+that would have exercised it produced zero Sigma-expressible rules — the emitter was only reached
+once categorical conditions were supported. Categoricals now reach the forest as indicators named
+`proto=tcp`, which round-trip back to `proto == "tcp"` in KQL rather than surfacing as a threshold
+on an anonymous one-hot index, and that is what made the first real Sigma document appear.
+
+Reproduce: `uv run penumbra rules --dataset unsw`. Outputs:
+`artifacts/reports/mined_rules_{unsw,nslkdd}.json`,
+`sentinel/Analytic Rules/PenumbraMinedRules_{unsw,nslkdd}.kql`, `sentinel/Sigma/{unsw,nslkdd}/`.
+
+---
+
 ### 10.8 Reproduction
 
 ```bash
 uv run penumbra audit --dataset unsw        # artifact + leak audit
 uv run penumbra eval  --dataset unsw        # binary + per-family, with/without artifacts
 uv run penumbra loafo --dataset nslkdd      # the unseen-17 experiment
+uv run penumbra rules --dataset unsw        # mine + validate KQL/Sigma rules
 ```
 
 Raw outputs: `artifacts/reports/{audit,eval}_{unsw,nslkdd}.json`,

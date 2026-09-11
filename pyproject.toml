@@ -119,4 +119,5 @@ dev = [
     "hypothesis>=6.123",
     "bandit>=1.8",
     "pip-audit>=2.7",
+    "pyyaml>=6.0",
 ]
