@@ -151,11 +151,14 @@ class PromoteRequest(BaseModel):
     incident_ids: list[str]
 
 
-class ScoreRequest(BaseModel):
-    """Flow features to score. Keys are dataset-native feature names."""
+class IngestRequest(BaseModel):
+    """Alerts from a sensor or the replay engine.
 
-    features: dict[str, float | str]
-    dataset: str = "unsw"
+    Senior or above: an ingest endpoint that anyone can post to is an alert-injection primitive,
+    and a queue an attacker can fill is a queue an attacker can hide in.
+    """
+
+    alerts: list[Alert]
 
 
 # --- routes -----------------------------------------------------------------------------------------
@@ -277,6 +280,25 @@ async def promote_verdicts(body: PromoteRequest, principal: CurrentUser) -> dict
         detail={"count": n, "incident_ids": body.incident_ids},
     )
     return {"promoted": n}
+
+
+@app.post("/ingest", tags=["alerts"])
+async def ingest(body: IngestRequest, principal: CurrentUser) -> dict[str, Any]:
+    """Accept scored alerts, persist them, and push to connected consoles."""
+    require(principal, Permission.PROMOTE_VERDICT)  # senior or above
+    for alert in body.alerts:
+        await publish_alert(alert)
+    return {"ingested": len(body.alerts)}
+
+
+@app.post("/incidents/bulk", tags=["incidents"])
+async def ingest_incidents(incidents: list[Incident], principal: CurrentUser) -> dict[str, Any]:
+    """Accept correlated incidents from the replay engine."""
+    require(principal, Permission.PROMOTE_VERDICT)
+    for incident in incidents:
+        state.repo.save_incident(incident)
+    await state.broadcast({"type": "incidents", "count": len(incidents)})
+    return {"ingested": len(incidents)}
 
 
 @app.get("/stats", tags=["ops"])

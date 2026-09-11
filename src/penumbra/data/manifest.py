@@ -110,7 +110,7 @@ UNSW_FILES: Final[list[RemoteFile]] = [
 CICIDS_FILES: Final[list[RemoteFile]] = [
     RemoteFile(
         key="cicids_improved",
-        url="https://intrusion-detection.distrinet-research.be/CNS2022/CICIDS2017_improved.zip",
+        url="https://intrusion-detection.distrinet-research.be/CNS2022/Datasets/CICIDS2017_improved.zip",
         filename="CICIDS2017_improved.zip",
         expected_bytes=343_549_013,
         dataset="cicids",
