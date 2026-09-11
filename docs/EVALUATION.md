@@ -276,43 +276,80 @@ exists to address, visible in a per-class recall column.
 ### 10.3 The thesis experiment — NSL-KDD's natural unseen-attack split
 
 3,750 test rows (16.6% of `KDDTest+`) belong to 17 attack types that never appear in `KDDTrain+`.
-Both configurations flag **the same number of benign rows** (matched at 1% FPR).
 
-| population | n | supervised | + novelty | Δ |
+**The answer is a curve, not a number.** A single operating point invites the objection that it was
+chosen to flatter one configuration; the curve shows where the technique works and where it does
+not. Thresholds here are placed so the realised FPR hits each target exactly, isolating the
+scientific question from the separate deployment problem in §10.4.
+
+| realised FPR | supervised | + novelty | Δ | detections novelty found alone |
 |---|---|---|---|---|
-| **genuinely unseen attack types** | 3,750 | **0.0525** | **0.4085** | **+0.3560** |
-| attack types present in training | 9,083 | 0.6345 | 0.6685 | +0.0340 |
+| 0.12% | 0.0453 | 0.0512 | +0.0059 | 24 |
+| 0.51% | 0.0515 | 0.1536 | **+0.1021** | 388 |
+| 1.01% | 0.0525 | 0.3464 | **+0.2939** | 1,106 |
+| **2.01%** | **0.0848** | **0.5405** | **+0.4557** | **1,830** |
+| 5.03% | 0.6437 | 0.7520 | +0.1083 | 2,321 |
+| 10.01% | 0.8640 | 0.7693 | **−0.0947** | 470 |
 
-Per attack type: `mscan` 0 → **0.706**, `apache2` 0 → **0.527**, `processtable` 0 → **0.336**,
-`xlock` 0 → 0.333, `xsnoop` 0 → 0.250, `saint` 0.618 → 0.630.
-Still zero after the novelty head: `snmpguess`, `mailbomb`, `snmpgetattack`, `sendmail`,
-`sqlattack`, `udpstorm`, `worm`.
+Three things this says, and the third is the one worth arguing about:
 
-Two readings, both worth stating:
+**The supervised head fails on attacks it has never seen.** At 1% FPR it recalls 0.0525 of the
+unseen types. Its recall on attack types it *was* trained on, at the same threshold, is an order of
+magnitude higher. That gap is the failure mode this project was built around, measured rather than
+asserted.
 
-**The supervised head scores 0.0525 on attacks it has never seen, against 0.6345 on attacks it
-has.** That gap is the failure mode this project was built around, measured rather than asserted.
+**The novelty head recovers a large part of it, in a band.** +0.29 at 1% FPR, +0.46 at 2%. It does
+this while flagging the same number of benign rows, because the OR cost is charged: two heads at a
+1% total budget each run at ~0.5%.
 
-**The novelty head recovers 35.6 points of it at no additional analyst cost** — and recovers
-nothing at all on seven of the seventeen types. It is not a solution to novel attacks. It is a
-measurable, bounded improvement, and the types it misses are as informative as the ones it catches.
+**Outside that band it does nothing, or harm.** Below ~0.2% FPR neither head has room to fire. Above
+~5% the supervised head is already loose enough to catch most things, and splitting the budget costs
+more than novelty returns — at 10% FPR the fused configuration is **worse** by 9.5 points. A novelty
+head is not a free addition; it is a trade that pays off only where the supervised head is starved.
 
-### 10.4 A methodological correction, recorded because it changed the answer
+At the per-type level the picture is equally uneven. `mscan`, `apache2`, `processtable` and
+`httptunnel` are recovered substantially; `snmpgetattack` and `worm` stay at zero regardless of
+threshold. The types it misses are as informative as the ones it catches.
 
-The first run of this experiment matched on **total alert count** (50 alerts per 1,000 flows) and
-produced Δ = **+0.0003** — flat, apparently refuting E1.
+### 10.4 Three methodological corrections, recorded because each changed the answer
 
-That result was an artifact of the budget definition. These test sets are 55–57% attack, so a cap of
-50 alerts per 1,000 rows is consumed almost entirely by true positives and caps recall near 9%
-before any detector has spoken. A real network is >99% benign, so operational alert volume is
-essentially *false-positive* volume.
+These are in the results section rather than hidden in a commit log because two of them produced
+publishable-looking numbers that were wrong, and the sequence is the actual finding.
 
-Re-matching on **benign rows flagged** (equivalently, on FPR) — which is prevalence-invariant and is
-the actual driver of analyst workload — gives +0.3560 on the same data with the same models.
+**(a) Matching on alert count instead of false positives.** The first run capped total alerts at 50
+per 1,000 flows and gave Δ = +0.0003 — flat. But these test sets are 55–57% attack, so that cap is
+consumed by true positives and limits recall to ~9% before any detector speaks. A real network is
+>99% benign, so operational alert volume is essentially *false-positive* volume. Matching on benign
+rows flagged is both prevalence-invariant and the actual driver of analyst workload.
 
-The lesson is not that the second number is the right one because it is larger. It is that **"equal
-cost" has to be defined against the deployment environment, not the test set**, and that a
-prevalence-inflated benchmark will silently invalidate a budget defined in its own terms.
+**(b) Fusing incommensurable scores.** The second run used `max(p_attack, novelty_percentile)` and
+gave Δ = **+0.3560** — a flattering number produced by a bug. On benign rows `p_attack` has
+p99 = 0.907 while the novelty percentile is uniform by construction with p99 = 0.996, so the max
+inherited a 0.996 threshold and **discarded every supervised detection between the two**. The same
+error, run on UNSW-NB15, gave mean Δ = −0.36 with eight of nine families worse.
+
+The irony is instructive: `NoveltyEnsemble` already rank-normalises its three detectors against each
+other, for precisely this reason. The reasoning was simply never carried across the
+supervised/novelty boundary.
+
+Rank-normalising both heads then failed a third way — **2.41% of benign rows score above the entire
+reference set**, so their rank is exactly 1.0, the 99th percentile is 1.0, and every configuration
+admits the identical tied block. Supervised and fused came out digit-for-digit equal on every attack
+type, which is what prompted looking again.
+
+The working design thresholds each head on its own raw scale and charges the OR cost explicitly.
+
+**(c) Test-set peeking in the operating point.** Deriving a threshold from test-set benign rows is
+not deployable — at inference time there are no labels to derive it from — even when every
+configuration gets the same advantage. Thresholds are now fitted on held-out benign data and applied
+blind.
+
+**That change surfaced a genuine finding.** Targeting 1% FPR from training-benign traffic realises
+**10.17%** on test benign. The operating point does not transfer, because `KDDTest+`'s benign traffic
+is distributed differently from `KDDTrain+`'s — and 10% is precisely the band where fusion *hurts*.
+An operating point chosen honestly on training data lands in the one region where the technique
+fails. That is a drift problem, it is measurable before deployment, and it is the strongest
+available argument for the drift monitoring in §8.
 
 ### 10.5 Reproduction
 

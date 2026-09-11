@@ -115,4 +115,5 @@ typed by hand.
 
 ## Status
 
-Phase 0 — foundations, dataset manifest, leak audit, API contract.
+Phase 1 complete: loaders, leak audit, supervised heads, honest metrics, novelty head, LOAFO harness,
+alert contract and three SIEM serialisers. 63 tests. Next: imbalance ablation, calibration, drift.
