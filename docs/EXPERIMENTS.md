@@ -192,6 +192,73 @@ also a result.
 
 ---
 
+## E6 — Does sequence context buy recall that per-flow features cannot?
+
+**Registered before the run. Nothing below was written after seeing a number.**
+
+### Hypothesis
+
+A per-flow classifier is given one connection and asked whether it looks unusual. For a whole class
+of attacks that is the wrong unit: a slow port sweep contains no unusual connection, only an
+unusual *sequence* of ordinary ones. So:
+
+> **H6.** Adding per-host temporal context raises recall at a matched false-positive budget on
+> CICIDS2017, and the gain concentrates in the families whose signature is distributional rather
+> than per-flow — `PortScan`, the slow DoS variants (`DoS Slowloris`, `DoS Slowhttptest`),
+> `FTP-Patator` / `SSH-Patator`.
+
+And the question we actually care about, because it decides whether the deep model earns its place:
+
+> **H6b.** Most of that gain is available from **nine cheap causal entity-graph features** and does
+> not require a deep sequence model. Trees beat deep nets on tabular data of this size and shape
+> (Grinsztajn et al., NeurIPS 2022); the open question is only whether the *temporal* axis is the
+> exception.
+
+### Design
+
+Three arms, scored on **exactly the same rows**, at a **matched benign-flag budget** (1% FPR):
+
+| arm | what it sees |
+|---|---|
+| `per-flow` | CICIDS2017's own features. The floor. |
+| `per-flow + graph` | plus 9 causal entity-graph features (fan-out, fan-in, port entropy, pair count, inter-arrival) |
+| `sequence` | 1D-CNN → BiGRU over a K=16 causal window of the source host's preceding flows |
+
+- **CICIDS2017 only.** It is the one dataset here with `Src IP`, `Dst IP` and `Timestamp`. UNSW's
+  published split has none of them, and its `ct_*` columns are already entity-window aggregates
+  computed by the original pipeline — a graph head there would recompute what is in the data.
+- **Temporal split throughout**: train Mon–Wed, test Thu–Fri. The sequence head's own validation
+  split is the tail of train, not a random slice.
+- **The same rows.** The window builder drops unparseable timestamps and reorders by time, so all
+  three arms are evaluated on its index. Comparing the deep arm on its convenient subset against
+  the floor on everything would be a different dataset, not a different model.
+- **Matched budget, on benign rows.** "Higher recall" is empty if it also alerts more. Matching on
+  total alert count would cap recall at the prevalence — the bug already measured in
+  EVALUATION.md §10.4.
+- **Causality is tested, not asserted.** Appending future traffic must leave every earlier row's
+  features bit-identical (`tests/unit/test_sequence.py`). A forward-reading window scores better
+  and cannot be deployed, and nothing crashes when it happens.
+
+### Predicted outcome, recorded in advance
+
+1. `per-flow + graph` beats `per-flow` by a **small but real** margin — call it +0.01 to +0.05
+   recall at 1% FPR — concentrated almost entirely in `PortScan`.
+2. `sequence` lands **within noise of `per-flow + graph`**, and may well come in below it. If so,
+   that is the finding: the temporal signal on this dataset is captured by nine aggregate features,
+   and the deep model is not paying for itself.
+3. CICIDS2017's per-flow features are already strong (this is the dataset where `Destination Port`
+   alone nearly separates the classes, which is why it is dropped), so the headroom for any arm is
+   small. A large gain would be more suspicious than a small one.
+
+### Falsification
+
+H6 is refuted if neither context arm clears `per-flow` by more than 0.01 recall at the matched
+budget. H6b is refuted if `sequence` beats `per-flow + graph` by more than 0.02. **Both refutations
+get published.** The value of this experiment does not depend on the deep model winning — it
+depends on the comparison being fair, and the fairness is in the matched rows and matched budget.
+
+---
+
 ## Standing rules for all experiments
 
 - **Prevalence is stated with every precision-family number.** UNSW-NB15's test set is ~55% attack;
