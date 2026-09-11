@@ -92,6 +92,13 @@ no_implicit_optional = true
 module = ["pandas.*", "joblib.*", "sklearn.*", "xgboost.*", "shap.*", "imblearn.*", "river.*", "evidently.*", "mapie.*", "scipy.*", "seaborn.*", "matplotlib.*", "rank_bm25.*", "scapy.*", "dpkt.*"]
 ignore_missing_imports = true
 
+[tool.bandit]
+# B608 flags the f-string SQL construction in storage/sqlite.py. The interpolated fragment contains
+# only `?` placeholders and every value is bound as a parameter - see the justification on
+# SqliteRepository._segment_clause. Skipping it here rather than sprinkling nosec through the file.
+skips = ["B608"]
+exclude_dirs = ["tests", ".venv"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"

@@ -178,6 +178,8 @@ class IngestClient:
     skipped rather than raised: a console that disconnects mid-demo should not stop the stream.
     """
 
+    # B310 on the urlopen calls below is suppressed because __init__ rejects any scheme but
+    # http(s), which is the mitigation the rule asks for.
     def __init__(self, base_url: str = "http://127.0.0.1:8000", token: str = "") -> None:
         if urllib.parse.urlparse(base_url).scheme.lower() not in {"http", "https"}:
             raise ValueError(f"ingest URL must be http(s), got {base_url!r}")
@@ -193,7 +195,7 @@ class IngestClient:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 - scheme validated in __init__
+            with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310
                 self.token = json.loads(resp.read())["access_token"]
             return True
         except (urllib.error.URLError, KeyError, TimeoutError):
@@ -210,7 +212,7 @@ class IngestClient:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 - scheme validated in __init__
+            with urllib.request.urlopen(req, timeout=20) as resp:  # nosec B310
                 return int(json.loads(resp.read()).get("ingested", 0))
         except (urllib.error.URLError, TimeoutError, ValueError):
             return 0

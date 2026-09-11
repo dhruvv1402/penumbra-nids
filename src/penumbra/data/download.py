@@ -60,7 +60,9 @@ def _download(url: str, dest: Path, on_progress: Callable[[int, int], None] | No
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
     written = 0
     # HuggingFace `resolve/main` answers 302 to a CDN URL; urlopen follows redirects by default.
-    with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310 - scheme checked above
+    # B310 suppressed: _check_scheme above rejects anything but http(s), which is the mitigation
+    # the rule asks for. Bandit cannot follow it.
+    with urllib.request.urlopen(req, timeout=120) as resp:  # nosec B310
         total = int(resp.headers.get("Content-Length") or 0)
         with part.open("wb") as fh:
             while chunk := resp.read(_CHUNK):

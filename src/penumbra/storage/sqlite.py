@@ -162,7 +162,7 @@ class SqliteRepository:
     def get_alert(self, alert_id: str, principal: Principal) -> Alert | None:
         clause, params = self._segment_clause(principal, "alerts")
         row = self._conn.execute(
-            f"SELECT payload FROM alerts WHERE alert_id = ?{clause}",  # nosec B608 - placeholders only
+            f"SELECT payload FROM alerts WHERE alert_id = ?{clause}",  # nosec B608
             [alert_id, *params],
         ).fetchone()
         return Alert.model_validate_json(row["payload"]) if row else None
