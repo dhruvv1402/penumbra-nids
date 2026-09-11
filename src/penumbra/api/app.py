@@ -90,6 +90,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Headers that cost nothing and close off whole classes of finding. CI's ZAP baseline job scans a
+# running container for exactly these, and a DAST job that only ever confirms known gaps is
+# decorative - the point is for it to find nothing here and then to start finding things when
+# somebody changes this file.
+SECURITY_HEADERS: dict[str, str] = {
+    # MIME sniffing on a JSON API that echoes user-supplied strings is a real risk: a browser that
+    # decides a response is HTML will execute what is in it.
+    "X-Content-Type-Options": "nosniff",
+    # Nothing here is meant to be framed. Clickjacking a verdict button is a small attack with a
+    # large blast radius, given the verdicts feed retraining.
+    "X-Frame-Options": "DENY",
+    # This API serves JSON, never markup. A CSP that forbids everything is accurate rather than
+    # cautious, and it means a reflected-XSS bug in an error path has nowhere to execute.
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+    # Referrer data from an internal SOC tool should not reach whatever an analyst clicks next.
+    "Referrer-Policy": "no-referrer",
+    # Deliberately absent: Strict-Transport-Security. TLS terminates at a reverse proxy or ingress;
+    # this service speaks plain HTTP on loopback by design, and asserting HSTS from here would be
+    # a guarantee it cannot keep. Recorded in .zap/rules.tsv rather than left for someone to
+    # rediscover.
+}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next: Any) -> Any:
+    response = await call_next(request)
+    for header, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
+    return response
+
+
 bearer = HTTPBearer(auto_error=False)
 
 

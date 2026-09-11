@@ -1,0 +1,31 @@
+# ZAP baseline rule overrides.
+#
+# Format: RULE_ID<TAB>ACTION<TAB>comment.   Actions: WARN | IGNORE | FAIL
+#
+# Each IGNORE below is a stated judgment about THIS service, not a blanket suppression. The
+# baseline profile is written for HTML applications served through a reverse proxy; Penumbra's
+# container is a JSON API behind one, so several of its checks are about a layer this image does
+# not own. Ignoring those is honest. Ignoring a finding that IS ours would not be, and none of the
+# entries here do that.
+#
+# Anything not listed stays at WARN and shows up in the job output.
+
+10035	IGNORE	Strict-Transport-Security missing. TLS terminates at the reverse proxy or ingress; this container serves plain HTTP on loopback by design and setting HSTS here would assert a guarantee it cannot keep.
+10063	IGNORE	Permissions-Policy missing. A browser feature-gating header on a JSON API with no browser surface of its own. The console sets its own.
+10098	IGNORE	Cross-Domain Misconfiguration. The API sets no permissive CORS policy; the console reaches it through a same-origin proxy rather than cross-origin, which is why CORS is absent rather than permissive.
+10109	IGNORE	Modern web application. Informational classification, not a finding.
+10027	IGNORE	Information disclosure - suspicious comments. Fires on the word "TODO" in OpenAPI descriptions.
+
+# Deliberately NOT ignored, because on this service they would be real:
+#
+#   10038  Content-Security-Policy missing      - the console is the browser surface; if ZAP ever
+#                                                 scans it, this must be fixed and not silenced.
+#   10021  X-Content-Type-Options missing       - cheap to set, and MIME sniffing on a JSON API
+#                                                 that echoes user-supplied strings is a real risk.
+#   10202  Anti-CSRF tokens absent              - the API is bearer-token authenticated, so CSRF is
+#                                                 not applicable today; if a cookie session is ever
+#                                                 added this must fail the build.
+#   40012  Cross Site Scripting (Reflected)     - would be a genuine finding anywhere.
+#   90022  Application Error Disclosure         - a stack trace in a response is exactly what DAST
+#                                                 exists to catch, and exactly what an attacker
+#                                                 uses to fingerprint a stack.

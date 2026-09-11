@@ -237,3 +237,42 @@ class TestReports:
                 target.write_bytes(original)
             else:
                 target.unlink()
+
+
+class TestSecurityHeaders:
+    """CI's ZAP baseline scans a running container for exactly these.
+
+    A DAST job that only ever confirms known gaps is decorative. The point is for it to find
+    nothing today and to start finding things the moment somebody removes this middleware, which is
+    why the expectations are pinned here rather than left to the scanner alone.
+    """
+
+    def test_mime_sniffing_is_disabled(self, client: TestClient) -> None:
+        """A browser that decides a JSON response is HTML will execute what is in it."""
+        assert client.get("/health").headers["X-Content-Type-Options"] == "nosniff"
+
+    def test_framing_is_denied(self, client: TestClient) -> None:
+        """Clickjacking a verdict button is small; the verdicts feed retraining."""
+        assert client.get("/health").headers["X-Frame-Options"] == "DENY"
+
+    def test_csp_forbids_everything(self, client: TestClient) -> None:
+        """This API serves JSON and never markup, so a total CSP is accurate, not cautious."""
+        csp = client.get("/health").headers["Content-Security-Policy"]
+        assert "default-src 'none'" in csp
+        assert "frame-ancestors 'none'" in csp
+
+    def test_referrer_is_not_leaked(self, client: TestClient) -> None:
+        assert client.get("/health").headers["Referrer-Policy"] == "no-referrer"
+
+    def test_hsts_is_deliberately_absent(self, client: TestClient) -> None:
+        """TLS terminates upstream. Asserting HSTS from here is a guarantee this service cannot keep.
+
+        Pinned as a test so removing the comment does not quietly turn into adding the header.
+        """
+        assert "Strict-Transport-Security" not in client.get("/health").headers
+
+    def test_headers_are_present_on_errors_too(self, client: TestClient) -> None:
+        """Error paths are where a reflected-content bug would live, so they need the CSP most."""
+        response = client.get("/incidents/does-not-exist")
+        assert response.status_code in (401, 403, 404)
+        assert response.headers["X-Content-Type-Options"] == "nosniff"

@@ -13,8 +13,11 @@
 #              push never finds that.
 #   model      the ML regression gate. Model quality is a merge blocker here, like a failing test.
 #              Skipped until Phase 2 commits a baseline to compare against.
-#   image      docker build. Nobody on the team can run this locally -- the development machine is
-#              short on disk -- so this is the only place that claim gets tested.
+#   image      docker build, and then the container actually starting and answering /health. A
+#              build that succeeds and a container that exits on boot are different things.
+#   dast       ZAP baseline against the running container. bandit and semgrep read the source;
+#              this one attacks the service, which is the only way to catch a missing runtime
+#              header, an endpoint answering without a token, or a stack trace in an error page.
 #
 # Concurrency is per-branch so a quick second push cancels the first rather than queueing.
 
@@ -176,5 +179,91 @@ jobs:
         with:
           context: .
           push: false
+          load: true
+          tags: penumbra-api:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # The image has to actually start. A build that succeeds and a container that exits on boot
+      # are different things, and only one of them is worth having in CI.
+      - name: The container starts and answers /health
+        run: |
+          docker run -d --name penumbra-ci -p 8000:8000 \
+            -e PENUMBRA_JWT_SECRET=ci-only-not-a-real-secret \
+            -e PENUMBRA_PII_SALT=ci-only-not-a-real-salt \
+            penumbra-api:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+              echo "healthy after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::container never became healthy"
+          docker logs penumbra-ci
+          exit 1
+
+      - name: Save the image for the DAST job
+        run: docker save penumbra-api:ci | gzip > /tmp/penumbra-image.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: penumbra-image
+          path: /tmp/penumbra-image.tar.gz
+          retention-days: 1
+
+      - name: Stop
+        if: always()
+        run: docker rm -f penumbra-ci || true
+
+  dast:
+    name: DAST (ZAP baseline)
+    runs-on: ubuntu-latest
+    needs: image
+    # The counterpart to bandit and semgrep in `security`. Those read the source; this one attacks
+    # the running service, which is the only way to find a header that is missing at runtime, an
+    # endpoint that answers without a token, or a stack trace leaking through an error page.
+    #
+    # The scan runs against a container started with throwaway secrets and no demo users, so the
+    # only thing it can reach is the unauthenticated surface - which is exactly the surface an
+    # unauthenticated attacker reaches, and therefore the one worth scanning.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: penumbra-image
+          path: /tmp
+
+      - name: Load and start the API
+        run: |
+          gunzip -c /tmp/penumbra-image.tar.gz | docker load
+          docker run -d --name penumbra-dast -p 8000:8000 \
+            -e PENUMBRA_JWT_SECRET=dast-only-not-a-real-secret \
+            -e PENUMBRA_PII_SALT=dast-only-not-a-real-salt \
+            penumbra-api:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8000/health
+
+      - name: ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: http://127.0.0.1:8000
+          rules_file_name: .zap/rules.tsv
+          # The baseline scan is passive: it crawls and inspects, it does not attack. Active
+          # scanning our own API would be fine, but it is slow and this runs on every PR.
+          cmd_options: "-a -j"
+          # Findings are reported, and a genuine one should be fixed rather than tolerated. This
+          # does not fail the build because the baseline profile flags informational issues that
+          # depend on deployment (HSTS is a reverse-proxy concern, not an application one) and a
+          # check that cries wolf on every PR gets switched off within a month.
+          fail_action: false
+          allow_issue_writing: false
+
+      - name: Stop
+        if: always()
+        run: docker rm -f penumbra-dast || true

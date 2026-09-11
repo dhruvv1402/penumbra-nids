@@ -171,3 +171,60 @@ Full statement: `docs/ETHICS_SCOPE.md`.
 
 MITRE ATT&CK · MITRE ATLAS · Pierazzi et al., IEEE S&P 2020 · Axelsson 2000 · Arp et al., USENIX
 Security 2022 · GDPR Art. 4(5), Recital 26 · *Breyer v Bundesrepublik Deutschland*, CJEU C-582/14
+
+
+## Security of the service itself
+
+Four checks run against Penumbra's own code and its running container, because a detector with an
+exploitable management API has made the network less safe, not more.
+
+| check | what it reads | runs |
+|---|---|---|
+| `bandit` | our source, AST-level | every push |
+| `semgrep` | our source, pattern-level | every push |
+| `pip-audit` | the exported lockfile, so `--strict` still means something | every push **and weekly** |
+| `gitleaks` | the **whole history**, not the diff | every push |
+| **ZAP baseline** | **the running container** | every push |
+
+The weekly `pip-audit` run exists because a dependency does not have to change in order to become
+vulnerable, and a check that only runs on push will never find that.
+
+### Why DAST as well as SAST
+
+`bandit` and `semgrep` read the source. They cannot see a security header that is missing at
+runtime, an endpoint that answers without a token because a decorator was dropped, or a stack trace
+escaping through an error page. Those are runtime properties, and the only way to find them is to
+attack the running service.
+
+The scan targets a container started with throwaway secrets and **no demo users**, so the surface
+it reaches is the unauthenticated one — which is precisely the surface an unauthenticated attacker
+reaches, and therefore the one worth scanning.
+
+### Headers the API sets, and one it deliberately does not
+
+| header | value | why |
+|---|---|---|
+| `X-Content-Type-Options` | `nosniff` | a browser that decides a JSON response is HTML will execute what is in it |
+| `X-Frame-Options` | `DENY` | clickjacking a verdict button is a small attack with a large blast radius, since verdicts feed retraining |
+| `Content-Security-Policy` | `default-src 'none'; frame-ancestors 'none'` | this API serves JSON and never markup, so a total CSP is accurate rather than cautious |
+| `Referrer-Policy` | `no-referrer` | referrer data from an internal SOC tool should not follow an analyst to the next tab |
+| `Strict-Transport-Security` | **not set** | TLS terminates at a reverse proxy; asserting HSTS from a service that speaks plain HTTP on loopback is a guarantee it cannot keep |
+
+Each is pinned by a test, including the absent one — so removing the reasoning does not quietly
+become adding the header.
+
+### What the ZAP rule file suppresses, and what it refuses to
+
+`.zap/rules.tsv` ignores five baseline rules, each with a stated reason about *this* service: they
+are checks written for HTML applications served through a reverse proxy, and this container is a
+JSON API behind one.
+
+It deliberately does **not** suppress reflected XSS, application-error disclosure, missing
+`X-Content-Type-Options`, missing CSP, or absent anti-CSRF tokens. The last is currently
+inapplicable — the API is bearer-token authenticated, so there is no ambient credential to forge —
+but if a cookie session is ever introduced it must fail the build rather than sit silenced in a
+file somebody added two years earlier.
+
+The job reports findings without failing the build. That is a deliberate trade: the baseline
+profile flags deployment-dependent informational issues, and a check that cries wolf on every pull
+request is switched off within a month. A genuine finding is meant to be fixed, not tolerated.
