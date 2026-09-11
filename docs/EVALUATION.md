@@ -523,7 +523,55 @@ represents one.
 
 *Reproduce: see `artifacts/reports/correlation_cicids.json`.*
 
-### 10.6 Throughput
+### 10.6 Conformal coverage as a label-free drift signal
+
+Split conformal gives a finite-sample coverage guarantee — **under exchangeability**. Drift violates
+exchangeability by definition, so a project claiming "guaranteed 95% coverage" on one slide and
+"we monitor drift" on the next has contradicted itself.
+
+We state the caveat and then measure it. Mondrian (class-conditional) conformal at α = 0.10,
+calibrated on held-out *training* rows, evaluated under three conditions:
+
+| condition | score PSI | empirical coverage | gap vs nominal | abstention |
+|---|---|---|---|---|
+| **A** — exchangeable (held-out train) | 0.0036 | **89.8%** | −0.2% | 10.2% |
+| **B** — natural shift (`KDDTest+`) | 0.6532 | **59.5%** | −30.5% | 39.6% |
+| **C** — injected covariate drift | 1.9326 | **29.7%** | −60.3% | 69.9% |
+
+**A is the control and it works**: 89.8% against 90.0% nominal, per-class, on data drawn from the
+calibration distribution. The method is correctly implemented.
+
+**B is not an injected condition.** It is NSL-KDD's own train/test split, and coverage collapses by
+30 points on it. `KDDTest+` is deliberately not exchangeable with `KDDTrain+` — 17 attack types
+appear only in test — so the conformal predictor is *correctly reporting that its own assumption
+does not hold on this data*. This independently corroborates §10.4(c): an operating point fitted on
+training benign realises 10.2% FPR on test rather than the targeted 1%. Two different methods,
+measuring the same shift, agreeing.
+
+**C escalates it further**, as it should.
+
+#### Why this matters operationally
+
+Coverage needs labels to compute, so it is not directly available in production. But look at the
+abstention column: **10.2% → 39.6% → 69.9%**, tracking coverage monotonically. Abstention rate needs
+no labels at all.
+
+So the deployable signal is: *the fraction of flows on which the model declines to commit*. When it
+climbs, exchangeability is breaking, and that is observable in real time — in the regime where
+ground truth arrives days late or never.
+
+Coverage loss is the offline validation; abstention rate is the operational read of the same thing.
+
+#### What this buys the analyst
+
+Ambiguous and empty prediction sets route to the `UNCERTAIN` verdict and the review lane. That is
+human-in-the-loop with a stated error rate attached rather than a gesture — and an empty set (the
+row is atypical of *both* calibration classes) is a natural companion to the novelty head rather
+than a failure mode.
+
+*Reproduce: `artifacts/reports/conformal_coverage.json`.*
+
+### 10.7 Throughput
 
 670 flows/second sustained on 8 CPU cores, single process, scoring both heads.
 
@@ -537,7 +585,7 @@ The first measurement was 38 flows/s. The cause was `_importances()` rebuilding 
 model's global feature-importance dictionary once per scored row — a quantity that depends on the
 fitted model and not on the row. Caching it gave an 18× speedup with no change to output.
 
-### 10.7 Reproduction
+### 10.8 Reproduction
 
 ```bash
 uv run penumbra audit --dataset unsw        # artifact + leak audit
