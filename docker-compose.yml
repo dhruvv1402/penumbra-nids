@@ -1,0 +1,90 @@
+# Penumbra demo stack.
+#
+# Two services and no database container. SQLite behind the `Repository` Protocol was chosen
+# precisely so demo day has fewer moving parts — a Postgres container that fails to come up ninety
+# seconds before a presentation is a category of problem worth designing out rather than debugging.
+# Swapping to Postgres is one binding in `storage/`, not a refactor.
+#
+# What is deliberately absent:
+#
+#   * No training service. Models are fitted on the host with `penumbra fit` and the versioned
+#     artifact is mounted in read-only. A container that trains on start has an unbounded startup
+#     time, and 16 GB shared with a browser and a dev server is not where that should happen.
+#   * No Grafana. It duplicates the console's own drift page and is one more thing that can be down
+#     on stage. The `/metrics` endpoint is still there for anything that wants to scrape it.
+#   * No published database port. Nothing outside the stack needs to reach storage.
+#
+# Usage:
+#   penumbra fit -d nslkdd          # on the host, once
+#   PENUMBRA_JWT_SECRET=$(openssl rand -hex 32) docker compose up
+
+name: penumbra
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: penumbra-api:local
+    restart: unless-stopped
+    ports:
+      # Bound to loopback. The API is reached through the console's proxy, and a detector's
+      # management surface has no business listening on every interface by default.
+      - "127.0.0.1:8000:8000"
+    environment:
+      # No default. An unset secret makes the API refuse to start rather than fall back to a
+      # well-known development key that would then reach a real deployment.
+      PENUMBRA_JWT_SECRET: ${PENUMBRA_JWT_SECRET:?set PENUMBRA_JWT_SECRET, e.g. openssl rand -hex 32}
+      # The salt for HMAC IP pseudonymisation. Separate from the JWT secret on purpose: the threat
+      # model treats re-identification and authentication as different capabilities, and one key
+      # that grants both collapses that distinction.
+      PENUMBRA_PII_SALT: ${PENUMBRA_PII_SALT:?set PENUMBRA_PII_SALT}
+      # Deliberately NOT set: PENUMBRA_ALLOW_DEMO_USERS. An image built from this repository has no
+      # known credentials. Set it explicitly for a local demo and understand what you are doing.
+      PENUMBRA_ARTIFACT_ROOT: /app/artifacts
+      PENUMBRA_DATA_ROOT: /app/data
+    volumes:
+      # Read-only. The API scores with the model; it never writes one, and mounting rw would let a
+      # compromised container rewrite the detector it is running.
+      - ./artifacts:/app/artifacts:ro
+      - penumbra-state:/app/state
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  console:
+    build:
+      context: ./console
+      dockerfile: Dockerfile
+    image: penumbra-console:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      # The console proxies /api/* here, so the browser stays on one origin and the API never needs
+      # CORS or a public port.
+      PENUMBRA_API_URL: http://api:8000
+      NODE_ENV: production
+    depends_on:
+      api:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  # The SQLite file and the audit log. Named rather than bind-mounted so the hash chain survives a
+  # rebuild — an audit log that resets on every `docker compose up` is not an audit log.
+  penumbra-state:
