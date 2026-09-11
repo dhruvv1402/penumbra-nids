@@ -165,6 +165,58 @@ Two results we intend to publish either way: the deliberate **leakage demonstrat
 split vs inside folds, side by side), and a single SMOTE-generated flow row with fractional packet
 counts — the physical argument against resampling network data.
 
+### Result: every SMOTE variant performs worse than doing nothing
+
+UNSW-NB15, RandomForest, all eleven strategies evaluated on the **natural** test distribution
+(prevalence 0.5506). Ranked by **recall at 1% FPR** — the operationally meaningful column, because
+it is where a SOC actually runs.
+
+| strategy | ROC-AUC | recall @1% FPR | minority recall † | train rows after resampling | fit time |
+|---|---|---|---|---|---|
+| undersample | 0.9846 | **0.8613** | 1.0000 | 112,000 | 20 s |
+| class_weight | 0.9844 | 0.8561 | 1.0000 | 175,341 | 31 s |
+| balanced_rf | 0.9839 | 0.8501 | 1.0000 | 175,341 | 29 s |
+| **none** | 0.9828 | **0.8488** | 1.0000 | 175,341 | 27 s |
+| **threshold_moving** | 0.9828 | **0.8488** | 0.8636 | 175,341 | 28 s |
+| smotenc | 0.9821 | 0.8284 | 1.0000 | 238,682 | **426 s** |
+| smote_tomek | 0.9816 | 0.8280 | 1.0000 | 228,086 | 268 s |
+| smote | 0.9824 | 0.8258 | 1.0000 | 238,682 | 59 s |
+| borderline_smote | 0.9816 | 0.8251 | 1.0000 | 238,682 | 85 s |
+| adasyn | 0.9822 | 0.8237 | 1.0000 | 238,470 | 88 s |
+| easy_ensemble | 0.9559 | 0.6572 | 0.9773 | 175,341 | 74 s |
+
+† `Worms`, 44 test rows. **Below the estimation floor** — a 1.0000 here means 44 of 44, which is not
+evidence of discrimination. It is in the table for completeness and should not be read as a result.
+
+**All five SMOTE-family strategies land below the no-handling baseline.** SMOTE-NC spent 426 seconds
+and 63,000 synthetic rows to arrive 2 points *worse* than doing nothing at all. E2 predicted
+threshold-moving would match or beat resampling; the data says something stronger — on this dataset
+resampling is not merely unnecessary, it is actively counterproductive.
+
+The mechanism is in §10.2's companion result: SMOTE interpolates in feature space with no notion of
+which quantities are integral or which are derived from others, so the synthetic rows it adds are
+off the data manifold. The model spends capacity learning a region of feature space that no real
+flow occupies.
+
+#### Why `none` and `threshold_moving` are identical in that column
+
+They are the same fitted model. Recall-at-fixed-FPR is read off the ROC curve, so it cannot
+distinguish two configurations that differ only in where the threshold sits.
+
+The difference is in what each one *does at its operating point*:
+
+| | recall | FPR |
+|---|---|---|
+| none, at the default 0.5 | 0.9885 | **0.2728** |
+| threshold_moving, targeting 1% FPR | 0.8488 | **0.0100** |
+
+Same model, same training, no synthetic data. **Moving the threshold took FPR from 27% to 1%** for
+14 points of recall. Nothing in the resampling column achieves anything comparable, and the
+untuned default is the configuration a SOC could least afford to run.
+
+*Reproduce: `uv run penumbra ablate --dataset unsw`. Raw output in
+`artifacts/reports/ablation_unsw.json`.*
+
 ### Result: leaking SMOTE inflates minority F1 by 8×
 
 Target: **UNSW-NB15 `Worms` vs everything else** — 130 positive rows, prevalence **0.074%**.

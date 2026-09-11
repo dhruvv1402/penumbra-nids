@@ -206,7 +206,12 @@ def lookup(family: str, *, dataset: str = "unsw", fine_label: str | None = None)
     Returns None when no defensible mapping exists. Callers must render that as "no mapping" rather
     than substituting a plausible-looking technique.
     """
-    if fine_label:
+    # pandas turns a None in an object column into NaN, so a "family" arriving here can be a float.
+    # Guard rather than assume: a crash in the alert path would take down scoring for a benign row.
+    if not isinstance(family, str) or not family.strip():
+        return None
+
+    if isinstance(fine_label, str) and fine_label.strip():
         override = NSLKDD_FINE_OVERRIDES.get(fine_label.strip().lower())
         if override:
             return override
