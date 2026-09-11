@@ -337,6 +337,7 @@ def replay(
 
     model_dir = settings().model_dir / dataset.lower()
     if not (model_dir / "detector.joblib").exists():
+        console.print()
         console.print(f"[red]No detector at {model_dir}.[/red] Run `penumbra fit -d {dataset}` first.")
         raise typer.Exit(1)
 
@@ -536,6 +537,7 @@ def adversarial(
 
     model_dir = settings().model_dir / dataset.lower()
     if not (model_dir / "detector.joblib").exists():
+        console.print()
         console.print(f"[red]No detector at {model_dir}.[/red] Run `penumbra fit -d {dataset}` first.")
         raise typer.Exit(1)
 
@@ -571,6 +573,68 @@ def adversarial(
     console.print(report.summary())
     out = evasion.write_report(report, settings().report_dir / f"adversarial_{key}.json")
     console.print(f"[green]wrote[/green] {out}")
+
+
+@app.command()
+def pcap(
+    capture: Annotated[Path, typer.Argument(help="Path to a .pcap or .pcapng file.")],
+    score: Annotated[
+        bool, typer.Option("--score/--no-score", help="Run the detector over the assembled flows.")
+    ] = True,
+    model: Annotated[str, typer.Option("--model", help="Which fitted detector to score with.")] = "unsw",
+    out: Annotated[Path | None, typer.Option("--out", help="Write the assembled flows as CSV.")] = None,
+) -> None:
+    """Assemble a packet capture into flow features, and optionally score it.
+
+    This is what removes the "it only works on a CSV someone else prepared" objection: point it at
+    a capture and the detector runs on traffic.
+
+    Only capture from a network you own. See docs/ETHICS_SCOPE.md - this package reads capture
+    files and never transmits a packet.
+    """
+    seed_everything()
+    from penumbra.pcap import assemble as assembler
+
+    if not capture.exists():
+        console.print(f"[red]No such capture:[/red] {capture}")
+        raise typer.Exit(1)
+
+    console.print(f"[dim]assembling flows from {capture.name}...[/dim]")
+    flows = assembler.assemble(capture)
+    console.print()
+    console.print(assembler.summary(flows))
+
+    if out is not None and not flows.empty:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        flows.to_csv(out, index=False)
+        console.print()
+        console.print(f"[green]wrote[/green] {out}")
+
+    if not score or flows.empty:
+        return
+
+    model_dir = settings().model_dir / model
+    if not (model_dir / "detector.joblib").exists():
+        console.print()
+        console.print(
+            f"[yellow]No detector at {model_dir}[/yellow] - flows assembled but not scored. "
+            f"Run `penumbra fit -d {model}` first."
+        )
+        return
+
+    from penumbra.alerts.builder import alerts_from_scores
+    from penumbra.models.detector import PenumbraDetector
+
+    det = PenumbraDetector.load(model_dir)
+    scored = det.score(flows)
+    alerts = alerts_from_scores(det, flows, scored, dataset=model)
+    console.print()
+    console.print(
+        f"  {len(flows):,} flows scored -> [bold]{len(alerts):,} alerts[/bold] "
+        f"({len(alerts) / max(len(flows), 1):.1%})"
+    )
+    for alert in alerts[:5]:
+        console.print(f"    {alert.verdict:18} p_attack={alert.p_attack:.3f} priority={alert.priority}")
 
 
 @app.command("reproduce-all")

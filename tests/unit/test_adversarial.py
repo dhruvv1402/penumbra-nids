@@ -98,8 +98,7 @@ class TestConstraints:
         """Effort has to be a price. If more effort is not more slowdown, the x-axis is meaningless."""
         X = attack_rows()
         durations = [
-            evasion.problem_space_attack(X, e, evasion.UNSW_SPACE)["dur"].mean()
-            for e in (0.0, 1.0, 4.0, 9.0)
+            evasion.problem_space_attack(X, e, evasion.UNSW_SPACE)["dur"].mean() for e in (0.0, 1.0, 4.0, 9.0)
         ]
         assert durations == sorted(durations)
 
