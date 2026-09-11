@@ -39,7 +39,10 @@ def alerts_from_scores(
     out: list[Alert] = []
     for pos, (_, row) in enumerate(scored.iterrows()):
         fired = int(row["fired"])
-        if fired == 0 and not include_benign:
+        abstains = bool(row.get("conformal_abstains", False))
+        # A row neither head flagged still reaches an analyst if the model declined to commit on it.
+        # That is the point of the abstention lane: "I don't know" is a reportable answer.
+        if fired == 0 and not abstains and not include_benign:
             continue
 
         # SUSPECTED_NOVEL is precisely "novelty fired and supervised did not", so a novelty-only
@@ -55,6 +58,8 @@ def alerts_from_scores(
                 family=family,
                 dataset=dataset,
                 agreement=int(row.get("agreement", 0)),
+                conformal_ambiguous=bool(row.get("conformal_abstains", False)),
+                conformal_set=list(row.get("conformal_set") or []),
                 network=_network_for(X, pos, entities),
                 contributions=_contributions(X, pos, ranked),
                 model_version=version,

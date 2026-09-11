@@ -32,6 +32,7 @@ import pandas as pd
 from penumbra.data.loaders.base import Dataset
 from penumbra.features.preprocess import assert_benign_only_fit, benign_only_pipeline
 from penumbra.models import supervised
+from penumbra.models.conformal import MondrianConformal
 from penumbra.models.fusion import OrGate
 from penumbra.models.novelty.ensemble import NoveltyEnsemble
 from penumbra.seeds import SEED, seed_everything
@@ -76,6 +77,7 @@ class PenumbraDetector:
         self.novelty_prep: Any = None
         self.novelty: NoveltyEnsemble | None = None
         self.gate: OrGate | None = None
+        self.conformal: MondrianConformal | None = None
         self.metadata: DetectorMetadata | None = None
         self._feature_names: list[str] = []
         # Ranked global importances, computed once. Recomputing per row made scoring O(rows x
@@ -90,6 +92,7 @@ class PenumbraDetector:
         *,
         model_name: str = "rf",
         fit_family_model: bool = True,
+        conformal_alpha: float = 0.10,
         on_progress: Any = None,
     ) -> PenumbraDetector:
         seed_everything()
@@ -131,6 +134,24 @@ class PenumbraDetector:
         benign_n = self.novelty.score(Z_cal, how="max")
         self.gate = OrGate.fit(benign_p, benign_n, total_fpr=self.target_fpr, use_novelty=True)
 
+        step("conformal calibration")
+        # Calibrated on a held-out slice of TRAINING data, stratified. Calibrating on rows the model
+        # fitted would tune the quantile to memorised predictions and the guarantee would be
+        # vacuous; calibrating on test would be peeking.
+        from sklearn.model_selection import train_test_split
+
+        try:
+            _, X_conf, _, y_conf = train_test_split(
+                ds.X_train, ds.y_train, test_size=0.2, stratify=ds.y_train, random_state=SEED
+            )
+            self.conformal = MondrianConformal(alpha=conformal_alpha).fit(
+                supervised.attack_scores(self.supervised_model, X_conf), y_conf.to_numpy()
+            )
+        except ValueError:
+            # Too few rows in some class to stratify. Better to have no conformal predictor than a
+            # miscalibrated one claiming a guarantee it cannot keep.
+            self.conformal = None
+
         self._feature_names = list(ds.feature_names)
         self.metadata = DetectorMetadata(
             model_name=model_name,
@@ -160,6 +181,16 @@ class PenumbraDetector:
         agreement = self.novelty.agreement(Z, percentile=0.99)
         which = self.gate.which_fired(p_attack, novelty_raw)
 
+        # Conformal abstention: an ambiguous or empty prediction set means the model declines to
+        # commit, which is a different statement from a low score and routes to human review.
+        if self.conformal is not None:
+            sets = self.conformal.predict_sets(p_attack)
+            abstains = sets.abstains
+            set_labels = sets.as_strings()
+        else:
+            abstains = np.zeros(len(X), dtype=bool)
+            set_labels = [[] for _ in range(len(X))]
+
         families: list[str | None] = [None] * len(X)
         if self.family_model is not None:
             predicted = supervised.predict_families(self.family_model, self.family_encoder, X)
@@ -172,6 +203,8 @@ class PenumbraDetector:
                 "agreement": agreement,
                 "fired": which,  # 0 neither, 1 supervised, 2 novelty only, 3 both
                 "family": families,
+                "conformal_abstains": abstains,
+                "conformal_set": set_labels,
             },
             index=X.index,
         )
@@ -219,6 +252,7 @@ class PenumbraDetector:
                 "novelty_prep": self.novelty_prep,
                 "novelty": self.novelty,
                 "gate": self.gate,
+                "conformal": self.conformal,
                 "policy": self.policy,
                 "target_fpr": self.target_fpr,
                 "feature_names": self._feature_names,
@@ -242,6 +276,7 @@ class PenumbraDetector:
         det.novelty_prep = blob["novelty_prep"]
         det.novelty = blob["novelty"]
         det.gate = blob["gate"]
+        det.conformal = blob.get("conformal")
         det._feature_names = blob["feature_names"]
         det._ranked_importances = None
 

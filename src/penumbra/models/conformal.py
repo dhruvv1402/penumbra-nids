@@ -271,15 +271,27 @@ class DriftCoverageResult:
             )
         breach = self.first_breach()
         lines.append("")
-        if breach is not None:
-            lines.append(f"  Coverage first breached nominal at window {breach}.")
-            if self.change_point_window is not None:
-                lines.append(
-                    f"  Drift was injected at window {self.change_point_window} "
-                    f"(detected {breach - self.change_point_window} windows later)."
-                )
-        else:
+        if breach is None:
             lines.append("  Coverage held throughout - conformal did not detect this drift.")
+        elif self.change_point_window is None:
+            lines.append(f"  Coverage first breached nominal at window {breach}.")
+        elif breach < self.change_point_window:
+            # A negative detection delay is not a fast detector, it is a broken baseline. Reporting
+            # "detected -2 windows later" would read as a result; it is the absence of one.
+            lines.append(
+                f"  Coverage was ALREADY below nominal at window {breach}, before drift was "
+                f"injected at window {self.change_point_window}."
+            )
+            lines.append(
+                "  The baseline is not exchangeable, so no detection delay can be claimed from "
+                "this stream.\n  Fix the baseline before reading anything into the "
+                "post-injection windows."
+            )
+        else:
+            lines.append(
+                f"  Drift injected at window {self.change_point_window}; coverage breached at "
+                f"window {breach} ({breach - self.change_point_window} windows later)."
+            )
         return "\n".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
