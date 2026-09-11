@@ -1415,6 +1415,7 @@ name = "penumbra-nids"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "imbalanced-learn" },
     { name = "joblib" },
     { name = "numpy" },
     { name = "orjson" },
@@ -1481,6 +1482,7 @@ requires-dist = [
     { name = "evidently", marker = "extra == 'drift'", specifier = ">=0.5" },
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'api'", specifier = ">=0.28" },
+    { name = "imbalanced-learn", specifier = ">=0.14.2" },
     { name = "imbalanced-learn", marker = "extra == 'eval'", specifier = ">=0.13" },
     { name = "joblib", specifier = ">=1.4" },
     { name = "mapie", marker = "extra == 'eval'", specifier = ">=0.9" },

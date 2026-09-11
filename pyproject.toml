@@ -22,6 +22,7 @@ dependencies = [
     "pydantic-settings>=2.7",
     "orjson>=3.10",
     "platformdirs>=4.3",
+    "imbalanced-learn>=0.14.2",
 ]
 
 [project.optional-dependencies]
