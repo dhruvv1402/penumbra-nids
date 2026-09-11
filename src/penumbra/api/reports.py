@@ -146,6 +146,14 @@ CATALOGUE: tuple[ReportSpec, ...] = (
         "at a matched false-positive budget.",
     ),
     ReportSpec(
+        "loadtest",
+        "loadtest_unsw.json",
+        "Throughput and latency",
+        "penumbra loadtest --dataset unsw",
+        "Flows per second and p99 across batch sizes, with the fixed-versus-marginal cost split "
+        "and the flows-to-Mbps conversion stated as a conversion.",
+    ),
+    ReportSpec(
         "adversarial",
         "adversarial_unsw.json",
         "Constrained evasion",

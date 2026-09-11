@@ -637,6 +637,73 @@ def pcap(
         console.print(f"    {alert.verdict:18} p_attack={alert.p_attack:.3f} priority={alert.priority}")
 
 
+@app.command("loadtest")
+def loadtest(
+    dataset: DatasetName = "unsw",
+    rows: Annotated[int, typer.Option("--rows", help="Flows to score.")] = 20_000,
+    api: Annotated[
+        str | None, typer.Option("--api", help="Also measure round-trip latency against a running API.")
+    ] = None,
+) -> None:
+    """Measure scoring throughput and latency, and convert it honestly.
+
+    Reports flows/s and p99 per batch across several batch sizes, then converts the best figure to
+    monitored Mbps with the assumption stated. Flows per second is not link speed and the output
+    says so - a link carrying long-lived connections produces far fewer flows per second than one
+    carrying a scan.
+    """
+    seed_everything()
+    from penumbra.eval import loadtest as lt
+    from penumbra.models.detector import PenumbraDetector
+
+    model_dir = settings().model_dir / dataset.lower()
+    if not (model_dir / "detector.joblib").exists():
+        console.print(f"[red]No detector at {model_dir}.[/red] Run `penumbra fit -d {dataset}` first.")
+        raise typer.Exit(1)
+
+    det = PenumbraDetector.load(model_dir)
+    ds = _load(dataset)
+    mean_bytes, median_bytes = lt.estimate_flow_bytes(ds.X_test)
+    report = lt.measure_scoring(
+        det,
+        ds.X_test,
+        max_rows=rows,
+        dataset=ds.name,
+        mean_flow_bytes=mean_bytes,
+        on_progress=lambda m: console.print(f"[dim]  {m}[/dim]"),
+    )
+    report.median_flow_bytes = median_bytes
+
+    console.print()
+    console.print(report.summary())
+
+    if api:
+        from penumbra.eval.loadtest import measure_api
+
+        console.print(f"[dim]measuring API round trip against {api}...[/dim]")
+        try:
+            import httpx
+
+            resp = httpx.post(
+                f"{api}/auth/login", json={"username": "analyst", "password": "analyst"}, timeout=10.0
+            )
+            resp.raise_for_status()
+            latency = measure_api(api, resp.json()["access_token"])
+            console.print(
+                f"  API GET /alerts  p50 {latency.p50:.1f} ms  p95 {latency.p95:.1f} ms  "
+                f"p99 {latency.p99:.1f} ms"
+            )
+            report.notes.append(
+                f"API round trip p50/p95/p99 = {latency.p50:.1f}/{latency.p95:.1f}/{latency.p99:.1f} ms, "
+                "measured sequentially against a single-process uvicorn."
+            )
+        except Exception as exc:  # noqa: BLE001 - the API being down must not lose the scoring result
+            console.print(f"[yellow]API measurement skipped:[/yellow] {type(exc).__name__}: {exc}")
+
+    out = lt.write_report(report, settings().report_dir / f"loadtest_{dataset.lower()}.json")
+    console.print(f"[green]wrote[/green] {out}")
+
+
 @app.command("reproduce-all")
 def reproduce_all(
     skip_slow: Annotated[

@@ -571,19 +571,69 @@ than a failure mode.
 
 *Reproduce: `artifacts/reports/conformal_coverage.json`.*
 
-### 10.7 Throughput
+### 10.7 Throughput, latency, and what the detector is actually for
 
-670 flows/second sustained on 8 CPU cores, single process, scoring both heads.
+`penumbra loadtest -d unsw`. 20,000 UNSW test flows, 8 CPU cores, no GPU, scoring both heads.
 
-**That is flows per second, not link speed, and the two are not interchangeable** — a flow record
-summarises many packets, so converting one to the other requires an assumption about mean flow size
-that we would rather state than bury. At CICIDS2017's observed mean flow size this corresponds very
-roughly to a few hundred Mbps of *monitored* traffic, and that figure should be treated as an
-order-of-magnitude sanity check rather than a capacity claim.
+| batch | flows/s | p50 ms | p95 ms | p99 ms | batches |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 7 | 139.1 | 169.7 | 192.3 | 200 |
+| 32 | 199 | 157.5 | 187.7 | 228.5 | 200 |
+| 256 | 1,350 | 184.6 | 237.6 | 255.1 | 78 |
+| 2,048 | **7,296** | 271.5 | 312.0 | 312.0 | 9 |
 
-The first measurement was 38 flows/s. The cause was `_importances()` rebuilding and re-sorting the
-model's global feature-importance dictionary once per scored row — a quantity that depends on the
-fitted model and not on the row. Caching it gave an 18× speedup with no change to output.
+Batch size is swept rather than fixed, because the answer moves by three orders of magnitude across
+it and quoting the best one without saying which is how a throughput figure becomes marketing.
+
+#### The headline is not 7,296 flows/s. It is that this is a batch scorer.
+
+**About 139 ms of every call is fixed**, against **0.065 ms of marginal cost per flow**. A one-flow
+call and a two-thousand-flow call cost nearly the same. That single fact explains the whole table:
+throughput at batch 2,048 is a thousand times batch 1 not because the model got faster but because
+the fixed cost got amortised.
+
+It has a consequence worth stating plainly:
+
+> Scoring one flow at a time costs about **139 ms**. No inline enforcement decision can be made on
+> that budget, whatever the policy said.
+
+So **ADR-0001 is a performance fact as well as an ethical one**. We do not block, and it turns out
+we could not have blocked inline even if we had wanted to. Saying that is stronger than the ethical
+argument alone, because it cannot be waved away as a preference.
+
+#### Flows per second is not link speed
+
+| assumption | conversion |
+|---|---:|
+| 21,227-byte **mean** flow | ~1,239 Mbps monitored |
+| 880-byte **median** flow | ~51 Mbps monitored |
+
+**Those differ by 24×**, because UNSW-NB15's flow sizes are violently skewed — a handful of very
+large transfers carry most of the bytes. The mean is the arithmetically correct multiplier for total
+bandwidth (`total = flows × mean`) and it is also the one a reader will silently interpret as
+typical, which it is not. The tool prints both and refuses to pick.
+
+Either figure is a conversion with an assumption attached, not a capacity measurement. A link
+carrying long-lived connections produces far fewer flows per second than one carrying a scan, so the
+same throughput covers wildly different bandwidths depending on what the traffic is doing. And none
+of it says anything about the flow assembler upstream, which on a real deployment is usually the
+actual bottleneck.
+
+#### Measurement conditions, because a p99 from one laptop is not a benchmark
+
+Measured on a developer machine that was not otherwise idle, so these are a useful smoke test and a
+poor benchmark. Scoring only — no HTTP, no database write, no alert construction. Two warm-up
+batches are discarded per batch size, because the first call pays for lazy imports and thread-pool
+creation and counting it would badly understate steady state at small batch sizes.
+
+#### The 18× bug, kept for the record
+
+The first throughput measurement of the replay path was **38 flows/s**. The cause was
+`_importances()` rebuilding and re-sorting the model's global feature-importance dictionary once per
+scored row — a quantity that depends on the fitted model and not on the row. Caching it gave an 18×
+speedup with no change to output. The figures above are higher again because they measure scoring
+alone, without alert construction; the replay path number in `penumbra replay` is the end-to-end one
+and remains the right figure to quote for the demo.
 
 ### 10.7b Mined detection rules — the model writes signatures for the SIEM
 
@@ -891,6 +941,7 @@ uv run penumbra eval  --dataset unsw        # binary + per-family, with/without 
 uv run penumbra loafo --dataset nslkdd      # the unseen-17 experiment
 uv run penumbra rules --dataset unsw        # mine + validate KQL/Sigma rules
 uv run penumbra sequence                    # E6: does sequence context buy recall?
+uv run penumbra loadtest --dataset unsw     # throughput, latency, and the honest conversion
 uv run penumbra reproduce-all               # everything, with reasons for what it skips
 ```
 
