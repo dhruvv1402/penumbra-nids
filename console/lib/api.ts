@@ -280,6 +280,28 @@ export interface RuleArm {
   test_coverage: { recall: number; precision: number; n_matched: number };
 }
 
+export interface ConformalControlEntry {
+  condition: string;
+  score_psi: number;
+  coverage: number;
+  gap: number;
+  abstention: number;
+  note: string;
+}
+
+export interface ConformalDriftReport {
+  change_point_window: number;
+  first_breach_window: number;
+  points: {
+    window: number;
+    psi: number;
+    coverage: number;
+    nominal: number;
+    gap: number;
+    abstention_rate: number;
+  }[];
+}
+
 export interface EvasionReport {
   n_attacks: number;
   threshold: number;

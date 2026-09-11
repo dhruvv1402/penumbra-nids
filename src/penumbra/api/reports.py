@@ -116,6 +116,14 @@ CATALOGUE: tuple[ReportSpec, ...] = (
         "version of the same signal.",
     ),
     ReportSpec(
+        "conformal-control",
+        "conformal_coverage.json",
+        "Conformal coverage, three-way control",
+        "penumbra eval --dataset nslkdd",
+        "Coverage and abstention under exchangeable data, under NSL-KDD's natural shift, and "
+        "under injected drift. The control is what makes the drift claim a measurement.",
+    ),
+    ReportSpec(
         "rules-unsw",
         "mined_rules_unsw.json",
         "Mined detection rules (UNSW)",

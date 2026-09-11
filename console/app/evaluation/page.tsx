@@ -101,6 +101,12 @@ export default function Evaluation() {
         <Link href="/" className="text-[11px] tracking-[0.14em] uppercase text-[var(--color-ink-dim)] hover:text-[var(--color-ink)]">
           ← queue
         </Link>
+        <Link
+          href="/drift"
+          className="text-[11px] tracking-[0.14em] uppercase text-[var(--color-ink-dim)] hover:text-[var(--color-ink)]"
+        >
+          drift
+        </Link>
         <h1 className="text-[11px] tracking-[0.14em] uppercase">evaluation</h1>
         <p className="text-[11px] text-[var(--color-ink-dim)] ml-auto">
           every number below was written by a command, not typed into this page

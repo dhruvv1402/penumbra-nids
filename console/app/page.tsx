@@ -197,6 +197,12 @@ function Header({
             evaluation
           </Link>
           <Link
+            href="/drift"
+            className="text-[11px] tracking-[0.14em] uppercase text-[var(--color-ink-dim)] hover:text-[var(--color-ink)]"
+          >
+            drift
+          </Link>
+          <Link
             href="/governance"
             className="text-[11px] tracking-[0.14em] uppercase text-[var(--color-ink-dim)] hover:text-[var(--color-ink)]"
           >
