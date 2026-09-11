@@ -207,6 +207,35 @@ uv run penumbra replay -d nslkdd --ingest --inject-drift abrupt
 
 ---
 
+## 7b — Not a CSV (45s)
+
+```bash
+uv run penumbra pcap lab.pcap --model unsw
+```
+
+> "Everything so far has been a benchmark somebody else prepared. This is a packet capture."
+
+41 flows assembled. Then the number that matters:
+
+> "**All 41 abstained.** One fired as a known attack; the model declined to commit on every one of
+> them and routed them to a human."
+
+> "That's correct, and it's the whole architecture in one screen. Conformal coverage holds under
+> exchangeability. A pcap-derived vector isn't exchangeable with UNSW-NB15 — eight of its features
+> are structurally zero because computing them would need payload inspection, which we don't do.
+> Non-exchangeability shows up as abstention. So it says *I don't know* and asks."
+
+> "A detector without an abstention lane would have emitted 41 confident verdicts about traffic it
+> has no basis to judge. That's the failure this design exists to prevent, and this is the first
+> place you can watch it work on input the model has genuinely never seen."
+
+Say the caveat out loud before anyone asks:
+
+> "That capture is synthetic — we built it packet by packet in a test. It proves the mechanism, not
+> a number about real traffic."
+
+---
+
 ## 8 — Close (30s)
 
 > "A supervised IDS labels the unknown as `normal`. We measured exactly how much — per attack

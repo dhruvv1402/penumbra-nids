@@ -841,6 +841,48 @@ Reproduce: `penumbra fit -d unsw && penumbra adversarial -d unsw`. Output:
 
 ---
 
+### 10.7e pcap input, and the abstention lane earning its place
+
+`penumbra pcap <capture>` assembles a capture into UNSW-shaped flow features and scores them with a
+detector fitted on UNSW-NB15. Six features come out as zero because computing them needs payload
+inspection, which the model card rules out (§ ETHICS_SCOPE): `service`, `trans_depth`,
+`response_body_len`, `is_ftp_login`, `ct_ftp_cmd`, `ct_flw_http_mthd`. `sloss`/`dloss` need TCP
+sequence reassembly and are zero too.
+
+On a 41-flow capture — one bidirectional conversation plus a 40-port sweep — the result was:
+
+| | |
+|---|---:|
+| flows scored | 41 |
+| fired as `KNOWN_ATTACK` | 1 |
+| **conformal abstentions** | **41 of 41** |
+| routed to the incident queue | 1 |
+| routed to the review lane | 40 |
+
+**The model declined to commit on every single flow.** That is the correct answer and it is the
+abstention lane doing precisely the job it was built for.
+
+The reasoning chain is one the rest of this document has already established. Conformal coverage
+holds under exchangeability (§10.6). A pcap-derived feature vector is not exchangeable with
+UNSW-NB15 rows — eight features are structurally zero and the capture came from different hardware
+entirely. Non-exchangeability shows up as abstention. So the system routes the traffic to a human
+instead of labelling it confidently, and `UNCERTAIN` is a reportable answer rather than a failure.
+
+Compare the alternative: a detector with no abstention lane would have emitted 41 confident verdicts
+about flows it has no basis to judge. That is the failure mode this architecture exists to avoid,
+and this is the first place in the project where it is demonstrated on input the model has genuinely
+never seen rather than on a held-out split of the same capture.
+
+**Caveat, stated plainly.** That capture is synthetic — built packet by packet by a test helper, not
+taken off a wire. It exercises the mechanism; it measures nothing about real traffic. Its "benign"
+conversation has fixed payload sizes and identical TTLs, which is not what benign traffic looks
+like. A capture from owned lab hardware has not been taken yet, and no claim here should be read as
+one.
+
+Reproduce: `penumbra fit -d unsw && penumbra pcap <capture> --model unsw`.
+
+---
+
 ### 10.8 Reproduction
 
 ```bash
