@@ -206,3 +206,32 @@ def format_curve(curve: list[BudgetComparison], *, baseline: str, candidate: str
             f"{c.recall:>22.4f} {c.recall - b.recall:>+9.4f}"
         )
     return "\n".join(lines)
+
+
+def evaluate_flags(name: str, y_true: np.ndarray, flagged: np.ndarray) -> BudgetedResult:
+    """Score a configuration from a boolean decision rather than a score + threshold.
+
+    Used when thresholds were fitted on held-out benign data and applied blind, which is the
+    deployable procedure - there are no labels at scoring time to derive a threshold from.
+    """
+    y_true = np.asarray(y_true).astype(int)
+    flagged = np.asarray(flagged).astype(bool)
+
+    tp = int(np.sum(flagged & (y_true == 1)))
+    fp = int(np.sum(flagged & (y_true == 0)))
+    fn = int(np.sum(~flagged & (y_true == 1)))
+    n_neg = int(np.sum(y_true == 0))
+    n_alerts = int(flagged.sum())
+
+    return BudgetedResult(
+        name=name,
+        threshold=float("nan"),  # fitted upstream, per head
+        n_alerts=n_alerts,
+        n_benign_flagged=fp,
+        recall=tp / (tp + fn) if (tp + fn) else float("nan"),
+        precision=tp / n_alerts if n_alerts else float("nan"),
+        fpr=fp / n_neg if n_neg else float("nan"),
+        tp=tp,
+        fp=fp,
+        fn=fn,
+    )

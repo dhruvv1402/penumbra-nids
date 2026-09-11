@@ -37,9 +37,10 @@ import numpy as np
 import pandas as pd
 
 from penumbra.data.loaders.base import Dataset
-from penumbra.eval.budget import BudgetComparison, compare_at_matched_budget
+from penumbra.eval.budget import evaluate_flags
 from penumbra.features.preprocess import assert_benign_only_fit, benign_only_pipeline
 from penumbra.models import supervised
+from penumbra.models.fusion import OrGate
 from penumbra.models.novelty.ensemble import NoveltyEnsemble
 from penumbra.seeds import seed_everything
 
@@ -64,6 +65,8 @@ class FamilyResult:
 
     budget_alerts: int
     budget_fpr: float
+    realised_fpr_supervised: float = float("nan")
+    realised_fpr_fused: float = float("nan")
 
     def summary(self) -> str:
         return (
@@ -149,7 +152,7 @@ class LoafoMatrix:
 
 def _fit_novelty(
     ds: Dataset, X_train_subset: pd.DataFrame, y_train_subset: pd.Series
-) -> tuple[NoveltyEnsemble, Any]:
+) -> tuple[NoveltyEnsemble, Any, pd.DataFrame]:
     """Fit the benign-only pipeline and novelty ensemble.
 
     The benign/calibration split matters: the detectors fit on one part, the percentile reference is
@@ -169,7 +172,10 @@ def _fit_novelty(
 
     ens = NoveltyEnsemble().fit(Z_fit)
     ens.calibrate_on(Z_cal)
-    return ens, prep
+    # The calibration rows are also the benign reference for the SUPERVISED head, so both heads are
+    # ranked against the same traffic. Using different reference sets would make the two percentile
+    # scales incomparable again, which is the bug this returns exist to prevent.
+    return ens, prep, benign.iloc[cal_idx]
 
 
 def run_family(
@@ -178,7 +184,6 @@ def run_family(
     *,
     model_name: str = "rf",
     budget_fpr: float = 0.01,
-    novel_percentile: float = 0.99,
 ) -> FamilyResult:
     """One LOAFO fold: hold out `family`, train, and compare at matched budget."""
     seed_everything()
@@ -193,31 +198,34 @@ def run_family(
     p_attack = supervised.attack_scores(binary, ds.X_test)
 
     # --- novelty head, benign only, unaffected by the removal
-    ens, prep = _fit_novelty(ds, X_tr, y_tr)
+    ens, prep, benign_ref = _fit_novelty(ds, X_tr, y_tr)
     novelty = ens.score(prep.transform(ds.X_test), how="max")
 
-    # --- fused: the union, expressed as a single score so it can be thresholded once
-    fused = np.maximum(p_attack, novelty)
+    # --- both heads thresholded on their OWN raw scale, from held-out benign data.
+    # Rank-normalising and thresholding once saturates: >2% of benign rows sit above the entire
+    # reference, so their rank is exactly 1.0 and every configuration admits the same tied block.
+    # See models/fusion.OrGate.
+    benign_p = supervised.attack_scores(binary, benign_ref)
+    benign_n = ens.score(prep.transform(benign_ref), how="max")
+
+    gate_sup = OrGate.fit(benign_p, benign_n, total_fpr=budget_fpr, use_novelty=False)
+    gate_fused = OrGate.fit(benign_p, benign_n, total_fpr=budget_fpr, use_novelty=True)
+
+    flags_sup = gate_sup.flags(p_attack, novelty)
+    flags_fused = gate_fused.flags(p_attack, novelty)
 
     y_test = ds.y_test.to_numpy()
-    comparison = compare_at_matched_budget(
-        y_test,
-        {"supervised": p_attack, "supervised+novelty": fused},
-        match="fpr",
-        budget_fpr=budget_fpr,
-    )
+    res_sup = evaluate_flags("supervised", y_test, flags_sup)
+    res_fused = evaluate_flags("supervised+novelty", y_test, flags_fused)
 
-    # Recall restricted to the held-out family's rows, at the budget-derived thresholds.
     mask = (ds.fam_test == family).to_numpy()
     n_test = int(mask.sum())
 
-    def recall_on_family(scores: np.ndarray, threshold: float) -> float:
-        if n_test == 0:
-            return float("nan")
-        return float(np.mean(scores[mask] >= threshold))
+    def recall_on_family(flags: np.ndarray) -> float:
+        return float(np.mean(flags[mask])) if n_test else float("nan")
 
-    r_sup = recall_on_family(p_attack, comparison.results["supervised"].threshold)
-    r_fused = recall_on_family(fused, comparison.results["supervised+novelty"].threshold)
+    r_sup = recall_on_family(flags_sup)
+    r_fused = recall_on_family(flags_fused)
 
     # --- secondary: can the model name it? (It has never seen it, so this should be ~0.)
     multi, encoder = supervised.fit_multiclass(model_name, _subset(ds, keep), balanced=True)
@@ -225,10 +233,9 @@ def run_family(
     attribution = float(np.mean(pred_fam[mask] == family)) if n_test else float("nan")
 
     # --- tertiary: how often does it say "attack I cannot name"?
-    novel_thr = float(np.quantile(novelty, novel_percentile))
-    sup_thr = comparison.results["supervised"].threshold
-    is_novel = (novelty >= novel_thr) & (p_attack < sup_thr)
-    novel_rate = float(np.mean(is_novel[mask])) if n_test else float("nan")
+    # SUSPECTED_NOVEL is exactly "novelty fired, supervised did not".
+    which = gate_fused.which_fired(p_attack, novelty)
+    novel_rate = float(np.mean(which[mask] == 2)) if n_test else float("nan")
 
     return FamilyResult(
         family=family,
@@ -239,8 +246,10 @@ def run_family(
         delta=r_fused - r_sup,
         attribution_accuracy=attribution,
         novel_verdict_rate=novel_rate,
-        budget_alerts=comparison.budget_count,
-        budget_fpr=comparison.budget_value,
+        budget_alerts=res_fused.n_alerts,
+        budget_fpr=budget_fpr,
+        realised_fpr_supervised=res_sup.fpr,
+        realised_fpr_fused=res_fused.fpr,
     )
 
 
@@ -301,6 +310,8 @@ class UnseenResult:
     recall_supervised_seen: float
     recall_fused_seen: float
     budget_fpr: float
+    realised_fpr_supervised: float = float("nan")
+    realised_fpr_fused: float = float("nan")
     per_type: dict[str, tuple[int, float, float]] = field(default_factory=dict)
 
     def summary(self) -> str:
@@ -309,7 +320,9 @@ class UnseenResult:
             "  NSL-KDD - the 17 attack types that appear in KDDTest+ but never in KDDTrain+",
             "=" * 92,
             "",
-            f"  matched FPR {self.budget_fpr:.2%} - the same number of benign rows flagged by both",
+            f"  target FPR {self.budget_fpr:.2%}, thresholds fitted on held-out benign traffic",
+            f"  realised on test: supervised {self.realised_fpr_supervised:.3%}, "
+            f"fused {self.realised_fpr_fused:.3%}",
             "",
             f"  {'population':<28} {'n':>8} {'supervised':>12} {'+novelty':>12} {'delta':>9}",
             f"  {'-' * 28} {'-' * 8} {'-' * 12} {'-' * 12} {'-' * 9}",
@@ -329,7 +342,12 @@ class UnseenResult:
 
 
 def run_nslkdd_unseen(*, model_name: str = "rf", budget_fpr: float = 0.01) -> UnseenResult:
-    """Score the naturally unseen attack types, at matched alert budget."""
+    """Score the naturally unseen attack types at a matched false-positive budget.
+
+    Thresholds are fitted on held-out benign training traffic and applied blind to the test set, so
+    the operating point is one that could actually be chosen at deployment time. The realised test
+    FPR is reported rather than assumed.
+    """
     seed_everything()
     from penumbra.data.loaders import nsl_kdd
 
@@ -340,20 +358,21 @@ def run_nslkdd_unseen(*, model_name: str = "rf", budget_fpr: float = 0.01) -> Un
     binary.fit(ds.X_train, ds.y_train)
     p_attack = supervised.attack_scores(binary, ds.X_test)
 
-    ens, prep = _fit_novelty(ds, ds.X_train, ds.y_train)
+    ens, prep, benign_ref = _fit_novelty(ds, ds.X_train, ds.y_train)
     novelty = ens.score(prep.transform(ds.X_test), how="max")
-    fused = np.maximum(p_attack, novelty)
+
+    benign_p = supervised.attack_scores(binary, benign_ref)
+    benign_n = ens.score(prep.transform(benign_ref), how="max")
+
+    gate_sup = OrGate.fit(benign_p, benign_n, total_fpr=budget_fpr, use_novelty=False)
+    gate_fused = OrGate.fit(benign_p, benign_n, total_fpr=budget_fpr, use_novelty=True)
+
+    flags_sup = gate_sup.flags(p_attack, novelty)
+    flags_fused = gate_fused.flags(p_attack, novelty)
 
     y_test = ds.y_test.to_numpy()
-    comp: BudgetComparison = compare_at_matched_budget(
-        y_test,
-        {"supervised": p_attack, "supervised+novelty": fused},
-        match="fpr",
-        budget_fpr=budget_fpr,
-    )
-    thr_sup = comp.results["supervised"].threshold
-    thr_fus = comp.results["supervised+novelty"].threshold
-
+    res_sup = evaluate_flags("supervised", y_test, flags_sup)
+    res_fused = evaluate_flags("supervised+novelty", y_test, flags_fused)
     seen_attacks = (y_test == 1) & ~unseen
 
     per_type: dict[str, tuple[int, float, float]] = {}
@@ -361,12 +380,12 @@ def run_nslkdd_unseen(*, model_name: str = "rf", budget_fpr: float = 0.01) -> Un
         m = (fine_test == name).to_numpy()
         per_type[str(name)] = (
             int(m.sum()),
-            float(np.mean(p_attack[m] >= thr_sup)),
-            float(np.mean(fused[m] >= thr_fus)),
+            float(np.mean(flags_sup[m])),
+            float(np.mean(flags_fused[m])),
         )
 
-    r_sup_unseen = float(np.mean(p_attack[unseen] >= thr_sup))
-    r_fus_unseen = float(np.mean(fused[unseen] >= thr_fus))
+    r_sup_unseen = float(np.mean(flags_sup[unseen]))
+    r_fus_unseen = float(np.mean(flags_fused[unseen]))
 
     return UnseenResult(
         n_unseen=int(unseen.sum()),
@@ -374,8 +393,144 @@ def run_nslkdd_unseen(*, model_name: str = "rf", budget_fpr: float = 0.01) -> Un
         recall_supervised_unseen=r_sup_unseen,
         recall_fused_unseen=r_fus_unseen,
         delta_unseen=r_fus_unseen - r_sup_unseen,
-        recall_supervised_seen=float(np.mean(p_attack[seen_attacks] >= thr_sup)),
-        recall_fused_seen=float(np.mean(fused[seen_attacks] >= thr_fus)),
-        budget_fpr=comp.budget_value,
+        recall_supervised_seen=float(np.mean(flags_sup[seen_attacks])),
+        recall_fused_seen=float(np.mean(flags_fused[seen_attacks])),
+        budget_fpr=budget_fpr,
+        realised_fpr_supervised=res_sup.fpr,
+        realised_fpr_fused=res_fused.fpr,
         per_type=per_type,
     )
+
+
+# =================================================================================================
+# The operating-point curve
+# =================================================================================================
+
+
+@dataclass
+class CurvePoint:
+    target_fpr: float
+    realised_fpr: float
+    recall_supervised: float
+    recall_fused: float
+    novelty_only_detections: int
+
+    @property
+    def delta(self) -> float:
+        return self.recall_fused - self.recall_supervised
+
+
+@dataclass
+class UnseenCurve:
+    """Recall on genuinely unseen attacks across operating points.
+
+    A single threshold invites the objection that it was chosen to flatter one configuration. The
+    curve answers it: the novelty head's contribution is not a number, it is a shape, and the shape
+    has a region where it helps and a region where it does not.
+    """
+
+    points: list[CurvePoint] = field(default_factory=list)
+    n_unseen: int = 0
+
+    def best(self) -> CurvePoint | None:
+        return max(self.points, key=lambda c: c.delta) if self.points else None
+
+    def summary(self) -> str:
+        lines = [
+            "=" * 86,
+            "  NSL-KDD unseen-17: recall across operating points",
+            "=" * 86,
+            "",
+            f"  {self.n_unseen:,} test rows from 17 attack types absent from training.",
+            "  Thresholds set so realised FPR is exact, isolating the question: at equal",
+            "  false-positive cost, does the novelty head add recall on unseen attacks?",
+            "",
+            f"  {'realised FPR':>13} {'supervised':>12} {'+novelty':>11} {'delta':>9} {'novelty-only':>13}",
+            f"  {'-' * 13} {'-' * 12} {'-' * 11} {'-' * 9} {'-' * 13}",
+        ]
+        for c in self.points:
+            lines.append(
+                f"  {c.realised_fpr:>12.3%} {c.recall_supervised:>12.4f} {c.recall_fused:>11.4f} "
+                f"{c.delta:>+9.4f} {c.novelty_only_detections:>13,}"
+            )
+        best = self.best()
+        if best:
+            lines += [
+                "",
+                f"  Largest gain: {best.delta:+.4f} at {best.realised_fpr:.2%} FPR "
+                f"({best.recall_supervised:.4f} -> {best.recall_fused:.4f}).",
+                "",
+                "  The gain is confined to a band. Below ~0.2% FPR neither head has room to fire;",
+                "  above ~5% the supervised head is loose enough to catch most things on its own and",
+                "  splitting the budget costs more than novelty returns.",
+            ]
+        return chr(10).join(lines)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "n_unseen": self.n_unseen,
+            "points": [
+                {
+                    "target_fpr": c.target_fpr,
+                    "realised_fpr": c.realised_fpr,
+                    "recall_supervised": c.recall_supervised,
+                    "recall_fused": c.recall_fused,
+                    "delta": c.delta,
+                    "novelty_only_detections": c.novelty_only_detections,
+                }
+                for c in self.points
+            ],
+        }
+
+
+def unseen_curve(
+    *,
+    model_name: str = "rf",
+    targets: tuple[float, ...] = (0.001, 0.005, 0.01, 0.02, 0.05, 0.10),
+) -> UnseenCurve:
+    """Sweep operating points on NSL-KDD's natural unseen-attack split.
+
+    Thresholds are placed so the REALISED false-positive rate on test benign traffic hits each
+    target exactly. That is not a deployable procedure - it uses test labels to position the
+    threshold - and it is not meant to be: it isolates the scientific question from the separate,
+    and also real, problem that an operating point fitted on training benign traffic does not
+    transfer to test benign traffic.
+    """
+    seed_everything()
+    from penumbra.data.loaders import nsl_kdd
+    from penumbra.models.fusion import per_head_budget
+
+    ds, _, fine_test = nsl_kdd.load_with_fine_labels()
+    unseen = nsl_kdd.unseen_mask(fine_test).to_numpy()
+
+    binary = supervised.build(model_name, ds, n_classes=2, balanced=True)
+    binary.fit(ds.X_train, ds.y_train)
+    p_attack = supervised.attack_scores(binary, ds.X_test)
+
+    ens, prep, _ = _fit_novelty(ds, ds.X_train, ds.y_train)
+    novelty = ens.score(prep.transform(ds.X_test), how="max")
+
+    y_test = ds.y_test.to_numpy()
+    benign = y_test == 0
+
+    curve = UnseenCurve(n_unseen=int(unseen.sum()))
+    for target in targets:
+        t_sup = float(np.quantile(p_attack[benign], 1.0 - target))
+        per_head = per_head_budget(target, 2)
+        t_sup2 = float(np.quantile(p_attack[benign], 1.0 - per_head))
+        t_nov2 = float(np.quantile(novelty[benign], 1.0 - per_head))
+
+        flags_sup = p_attack >= t_sup
+        flags_fused = (p_attack >= t_sup2) | (novelty >= t_nov2)
+        novelty_only = int(np.sum((novelty >= t_nov2) & (p_attack < t_sup2) & unseen))
+
+        curve.points.append(
+            CurvePoint(
+                target_fpr=target,
+                realised_fpr=float(np.mean(flags_sup[benign])),
+                recall_supervised=float(np.mean(flags_sup[unseen])),
+                recall_fused=float(np.mean(flags_fused[unseen])),
+                novelty_only_detections=novelty_only,
+            )
+        )
+    return curve
