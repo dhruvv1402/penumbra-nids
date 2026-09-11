@@ -78,6 +78,9 @@ class PenumbraDetector:
         self.gate: OrGate | None = None
         self.metadata: DetectorMetadata | None = None
         self._feature_names: list[str] = []
+        # Ranked global importances, computed once. Recomputing per row made scoring O(rows x
+        # features) and pinned replay throughput at ~38 flows/s.
+        self._ranked_importances: list[tuple[str, float]] | None = None
 
     # --- fit -------------------------------------------------------------------------------------
 
@@ -230,12 +233,11 @@ class PenumbraDetector:
         relative to training. Genuine per-row TreeSHAP lands in the explain module; this keeps the
         replay path fast enough to stream, and it is labelled for what it is.
         """
-        importances = self._importances()
-        if importances is None:
+        ranked = self._ranked(top)
+        if not ranked:
             return []
 
         row = X.iloc[pos]
-        ranked = sorted(importances.items(), key=lambda kv: kv[1], reverse=True)[:top]
         return [
             Contribution(
                 feature=name,
@@ -247,6 +249,19 @@ class PenumbraDetector:
             for name, weight in ranked
             if name in row.index
         ]
+
+    def _ranked(self, top: int) -> list[tuple[str, float]]:
+        """Top-N global importances, computed once and cached.
+
+        Feature importances are a property of the fitted model, not of the row being scored, so
+        recomputing them per row is pure waste - and it was the dominant cost in the scoring path.
+        """
+        if self._ranked_importances is None:
+            importances = self._importances()
+            self._ranked_importances = (
+                sorted(importances.items(), key=lambda kv: kv[1], reverse=True)[:16] if importances else []
+            )
+        return self._ranked_importances[:top]
 
     def _importances(self) -> dict[str, float] | None:
         try:
@@ -301,6 +316,7 @@ class PenumbraDetector:
         det.novelty = blob["novelty"]
         det.gate = blob["gate"]
         det._feature_names = blob["feature_names"]
+        det._ranked_importances = None
 
         meta_path = directory / "metadata.json"
         if meta_path.exists():
