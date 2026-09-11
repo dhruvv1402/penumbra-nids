@@ -252,6 +252,43 @@ class TestSequenceDetector:
         prepared = detector._prepare(masked)
         assert np.all(prepared[:, :3, :] == 0.0)
 
+    def test_one_extreme_row_does_not_squash_everything_else(self, learnable) -> None:
+        """Why median/IQR instead of mean/std.
+
+        CICIDS2017 has columns whose maximum is over 200 standard deviations from their own mean
+        (`Total TCP Flow Time` reaches 7.2e9). Z-scaling leaves one row at +200 and the rest piled
+        against zero, and +200 through two convolutions into a GRU saturates the network - which is
+        exactly what happened: validation AUC 0.9999 in epoch 1, then a constant 0.500 forever.
+        """
+        from penumbra.models.sequence import CLIP_SIGMAS, SequenceDetector
+
+        spiked = learnable
+        spiked.X[0, 0, 0] = 1e9
+
+        detector = SequenceDetector()
+        detector._fit_scaler(spiked)
+        prepared = detector._prepare(spiked)
+
+        assert np.abs(prepared).max() <= CLIP_SIGMAS + 1e-6
+        # The ordinary rows must keep their spread rather than collapsing onto zero.
+        assert float(prepared[1:, :, 0].std()) > 0.1
+
+    def test_a_collapsed_run_is_flagged_rather_than_reported(self) -> None:
+        """Early stopping hides divergence perfectly: best weights restored, clean exit, a number.
+
+        The first CICIDS run reported a one-epoch model as the architecture's verdict because of
+        exactly this. The flag is what stops that being publishable by accident.
+        """
+        from penumbra.models.sequence import TrainingHistory
+
+        healthy = TrainingHistory(epochs_run=6, best_val_auc=0.97, collapsed_epochs=0)
+        assert not healthy.collapsed
+        assert "WARNING" not in healthy.summary()
+
+        collapsed = TrainingHistory(epochs_run=4, best_val_auc=0.9999, collapsed_epochs=3)
+        assert collapsed.collapsed
+        assert "diverged to a constant output" in collapsed.summary()
+
     def test_scoring_before_fitting_raises(self, learnable) -> None:
         from penumbra.models.sequence import SequenceDetector
 

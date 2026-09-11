@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
+import numpy as np
+import pandas as pd
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -511,14 +513,225 @@ def sequence(
     console.print(f"[green]wrote[/green] {out}")
 
 
+@app.command()
+def adversarial(
+    dataset: DatasetName = "unsw",
+    efforts: Annotated[
+        str, typer.Option("--efforts", help="Comma-separated attacker effort levels.")
+    ] = "0,0.5,1,2,4,9",
+    rows: Annotated[int, typer.Option("--rows", help="Attack flows to perturb.")] = 20_000,
+) -> None:
+    """Measure detection decay under problem-space constrained evasion.
+
+    Two attacks are run on the same flows: one that respects what an attacker can physically do
+    (pad bytes up, stretch duration, never un-send a packet, recompute every derived feature), and
+    the unconstrained feature-space attack most of the literature reports. The gap between them is
+    the result.
+
+    Needs a fitted detector: run `penumbra fit -d <dataset>` first.
+    """
+    seed_everything()
+    from penumbra.adversarial import evasion
+    from penumbra.models.detector import PenumbraDetector
+
+    model_dir = settings().model_dir / dataset.lower()
+    if not (model_dir / "detector.joblib").exists():
+        console.print(f"[red]No detector at {model_dir}.[/red] Run `penumbra fit -d {dataset}` first.")
+        raise typer.Exit(1)
+
+    det = PenumbraDetector.load(model_dir)
+    ds = _load(dataset)
+    key = dataset.lower().replace("-", "").replace("_", "")
+
+    y_test = np.asarray(ds.y_test).astype(int)
+    attack_rows = np.flatnonzero(y_test == 1)[:rows]
+    X_attacks = ds.X_test.iloc[attack_rows].reset_index(drop=True)
+    families = pd.Series(ds.fam_test).reset_index(drop=True).iloc[attack_rows].reset_index(drop=True)
+    benign = ds.X_test.iloc[np.flatnonzero(y_test == 0)[:rows]].reset_index(drop=True)
+
+    threshold = float(det.metadata.supervised_threshold) if det.metadata else 0.5
+    console.print(
+        f"[dim]{len(X_attacks):,} attack flows, detector threshold {threshold:.4f} "
+        f"(fitted on held-out benign, not on these rows)[/dim]"
+    )
+
+    levels = tuple(float(v) for v in efforts.split(",") if v.strip())
+    report = evasion.evaluate(
+        lambda frame: det.score(frame)["p_attack"].to_numpy(),
+        X_attacks,
+        dataset=key,
+        threshold=threshold,
+        benign_reference=benign,
+        families=families,
+        efforts=levels,
+        on_progress=lambda m: console.print(f"[dim]  {m}[/dim]"),
+    )
+
+    console.print()
+    console.print(report.summary())
+    out = evasion.write_report(report, settings().report_dir / f"adversarial_{key}.json")
+    console.print(f"[green]wrote[/green] {out}")
+
+
 @app.command("reproduce-all")
 def reproduce_all(
-    out: Annotated[Path | None, typer.Option("--out", help="Directory for regenerated reports.")] = None,
+    skip_slow: Annotated[
+        bool, typer.Option("--skip-slow", help="Omit the steps measured in tens of minutes.")
+    ] = False,
+    stop_on_error: Annotated[bool, typer.Option("--stop-on-error/--keep-going")] = False,
 ) -> None:
-    """Regenerate every number in the report from scratch."""
-    _ = out
-    console.print("[yellow]Not implemented yet - lands with Phase 1.[/yellow]")
-    raise typer.Exit(1)
+    """Regenerate every number in docs/EVALUATION.md from scratch.
+
+    Each step is a real invocation of the same code path the documented run used - nothing here
+    re-reads a cached report. A step whose inputs are absent is reported as SKIPPED with the reason,
+    never silently passed: "12 of 14 regenerated, CICIDS2017 not downloaded" is a useful answer and
+    a green tick that hid two missing datasets is not.
+    """
+    import time
+
+    from penumbra.data import manifest
+
+    def have(dataset: str) -> bool:
+        """Is the dataset actually on disk? A missing one is SKIPPED, never quietly OK."""
+        specs = manifest.BY_DATASET.get(dataset, [])
+        root = settings().raw_dir
+        return bool(specs) and all((root / s.dataset / s.filename).exists() for s in specs)
+
+    def fitted(dataset: str) -> bool:
+        return (settings().model_dir / dataset / "detector.joblib").exists()
+
+    def have_keras() -> bool:
+        try:
+            import keras  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
+    # (label, callable, slow?, guard) - the guard returns None to run or a reason to skip.
+    steps: list[tuple[str, Any, bool, Any]] = [
+        # The audits are 3-9 minutes each: they fit a one-feature stump per column and sweep every
+        # value of every categorical. Slow enough to belong behind --skip-slow.
+        (
+            "audit unsw",
+            lambda: audit("unsw", save=True),
+            True,
+            lambda: None if have("unsw") else "unsw not fetched",
+        ),
+        (
+            "audit nslkdd",
+            lambda: audit("nslkdd", save=True),
+            True,
+            lambda: None if have("nslkdd") else "nslkdd not fetched",
+        ),
+        (
+            "eval unsw",
+            lambda: eval_cmd("unsw", save=True),
+            True,
+            lambda: None if have("unsw") else "unsw not fetched",
+        ),
+        (
+            "eval nslkdd",
+            lambda: eval_cmd("nslkdd", save=True),
+            True,
+            lambda: None if have("nslkdd") else "nslkdd not fetched",
+        ),
+        (
+            "ablate unsw",
+            lambda: ablate("unsw", save=True),
+            True,
+            lambda: None if have("unsw") else "unsw not fetched",
+        ),
+        ("loafo unsw", lambda: loafo("unsw"), True, lambda: None if have("unsw") else "unsw not fetched"),
+        (
+            "loafo nslkdd",
+            lambda: loafo("nslkdd"),
+            True,
+            lambda: None if have("nslkdd") else "nslkdd not fetched",
+        ),
+        ("rules unsw", lambda: rules("unsw"), True, lambda: None if have("unsw") else "unsw not fetched"),
+        (
+            "rules nslkdd",
+            lambda: rules("nslkdd"),
+            True,
+            lambda: None if have("nslkdd") else "nslkdd not fetched",
+        ),
+        ("fit unsw", lambda: fit("unsw"), True, lambda: None if have("unsw") else "unsw not fetched"),
+        (
+            "adversarial unsw",
+            lambda: adversarial("unsw"),
+            False,
+            # Depends on `fit unsw` above. Guarded on the artifact rather than assumed, so a
+            # --skip-slow run reports SKIPPED with the reason instead of FAILED with an exit code.
+            lambda: (
+                None
+                if have("unsw") and fitted("unsw")
+                else (
+                    "unsw not fetched"
+                    if not have("unsw")
+                    else "no fitted detector - run `penumbra fit -d unsw`"
+                )
+            ),
+        ),
+        (
+            "sequence cicids",
+            lambda: sequence(),
+            True,
+            lambda: (
+                None
+                if have("cicids") and have_keras()
+                else ("cicids not fetched" if not have("cicids") else "the `dl` extra is not installed")
+            ),
+        ),
+    ]
+
+    outcomes: list[tuple[str, str, float, str]] = []
+    for label, run_step, slow, guard in steps:
+        if slow and skip_slow:
+            outcomes.append((label, "SKIPPED", 0.0, "--skip-slow"))
+            continue
+        reason = guard()
+        if reason:
+            outcomes.append((label, "SKIPPED", 0.0, reason))
+            continue
+
+        console.rule(f"[bold]{label}")
+        started = time.monotonic()
+        try:
+            run_step()
+            outcomes.append((label, "OK", time.monotonic() - started, ""))
+        except Exception as exc:  # noqa: BLE001 - one broken step must not hide the other eleven
+            # typer.Exit carries only a status code, so its repr is "Exit: 1" - useless in a table
+            # whose whole job is saying why something did not run.
+            note = (
+                f"exited {getattr(exc, 'exit_code', 1)} - see the step's own output"
+                if isinstance(exc, typer.Exit)
+                else f"{type(exc).__name__}: {exc}"
+            )
+            outcomes.append((label, "FAILED", time.monotonic() - started, note))
+            if stop_on_error:
+                break
+
+    console.print()
+    table = Table(title="reproduce-all", show_lines=False)
+    table.add_column("step")
+    table.add_column("result")
+    table.add_column("seconds", justify="right")
+    table.add_column("note")
+    for label, status, seconds, note in outcomes:
+        colour = {"OK": "green", "FAILED": "red", "SKIPPED": "yellow"}[status]
+        table.add_row(label, f"[{colour}]{status}[/{colour}]", f"{seconds:.1f}" if seconds else "", note)
+    console.print(table)
+
+    failed = [o for o in outcomes if o[1] == "FAILED"]
+    skipped = [o for o in outcomes if o[1] == "SKIPPED"]
+    console.print()
+    console.print(
+        f"{len(outcomes) - len(failed) - len(skipped)} regenerated, "
+        f"{len(skipped)} skipped, {len(failed)} failed."
+    )
+    console.print(f"[dim]reports in {settings().report_dir}[/dim]")
+    if failed:
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

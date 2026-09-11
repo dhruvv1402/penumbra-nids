@@ -55,6 +55,10 @@ from penumbra.seeds import SEED
 # Keras is noisy on import and most of it is about hardware we do not have.
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
+# Scaled features are clipped to this many robust deviations. Generous enough to keep the shape of
+# a genuinely extreme flow, tight enough that one row cannot saturate the network.
+CLIP_SIGMAS = 10.0
+
 
 @dataclass
 class SequenceConfig:
@@ -83,11 +87,29 @@ class TrainingHistory:
     epochs_run: int = 0
     best_val_auc: float = 0.0
     stopped_early: bool = False
+    collapsed_epochs: int = 0
     curve: list[dict[str, float]] = field(default_factory=list)
+
+    @property
+    def collapsed(self) -> bool:
+        """Did training diverge to a constant output?
+
+        Worth its own flag because early stopping hides it perfectly: best weights are restored,
+        the run exits cleanly, and a one-epoch model gets reported as the architecture's verdict.
+        """
+        return self.collapsed_epochs > 0
 
     def summary(self) -> str:
         stop = "early-stopped" if self.stopped_early else "ran to the epoch cap"
-        return f"  {self.epochs_run} epochs ({stop}), best validation ROC-AUC {self.best_val_auc:.4f}"
+        line = f"  {self.epochs_run} epochs ({stop}), best validation ROC-AUC {self.best_val_auc:.4f}"
+        if self.collapsed:
+            line += (
+                chr(10) + "  WARNING: validation AUC sat at 0.500 for "
+                f"{self.collapsed_epochs} epoch(s) - "
+                "training diverged to a constant output. Any result below describes that, not the "
+                "architecture."
+            )
+        return line
 
 
 def _require_keras() -> Any:
@@ -119,7 +141,10 @@ def build_model(length: int, n_features: int, config: SequenceConfig | None = No
 
     model = keras.Model(inputs, outputs, name="penumbra_sequence")
     model.compile(
-        optimizer=keras.optimizers.Adam(config.learning_rate),
+        # Gradient clipping is the second line of defence behind the robust scaler. Recurrent
+        # layers on bursty traffic produce occasional enormous gradients, and one of those is
+        # enough to move the weights somewhere the model never recovers from.
+        optimizer=keras.optimizers.Adam(config.learning_rate, clipnorm=1.0),
         loss="binary_crossentropy",
         metrics=[keras.metrics.AUC(name="auc"), keras.metrics.AUC(name="pr_auc", curve="PR")],
     )
@@ -145,11 +170,29 @@ class SequenceDetector:
     # -- internals -------------------------------------------------------------------------
 
     def _fit_scaler(self, seq: Sequences) -> None:
+        """Median and IQR, not mean and standard deviation.
+
+        CICIDS2017's flow features are violently heavy-tailed: `Total TCP Flow Time` reaches 7.2e9
+        and several columns have a maximum more than 200 standard deviations from their own mean.
+        Z-scaling those leaves a handful of rows at +200 and everything else squashed against zero,
+        and +200 through two convolutions into a GRU saturates the network.
+
+        That is not hypothetical. The first run of this experiment trained to validation ROC-AUC
+        0.9999 in epoch 1, then collapsed to a constant output - val AUC exactly 0.500 for every
+        remaining epoch. Early stopping dutifully restored the epoch-1 weights and the experiment
+        reported a number, which is the dangerous version of this failure: it does not crash, it
+        just quietly reports a one-epoch model as though it were the architecture's verdict.
+        """
         real = seq.X[seq.mask]
-        self.mean_ = real.mean(axis=0, dtype=np.float64).astype(np.float32)
+        median = np.median(real, axis=0).astype(np.float32)
+        q75, q25 = np.percentile(real, [75, 25], axis=0)
+        iqr = (q75 - q25).astype(np.float32)
+        # A column with a degenerate IQR (constant, or over 75% identical) falls back to std, and
+        # then to 1.0 - a zero divisor produces NaN through the whole network.
         std = real.std(axis=0, dtype=np.float64).astype(np.float32)
-        # A constant column would divide by zero and produce NaN through the whole network.
-        self.scale_ = np.where(std > 1e-8, std, 1.0).astype(np.float32)
+        scale = np.where(iqr > 1e-8, iqr, std)
+        self.mean_ = median
+        self.scale_ = np.where(scale > 1e-8, scale, 1.0).astype(np.float32)
 
     def _prepare(self, seq: Sequences) -> np.ndarray:
         if self.mean_ is None or self.scale_ is None:
@@ -163,6 +206,9 @@ class SequenceDetector:
         np.subtract(seq.X, self.mean_, out=view)
         np.divide(view, self.scale_, out=view)
         np.nan_to_num(view, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        # Robust scaling narrows the tails; it does not remove them. A flow at 4,000 IQRs still
+        # exists, and it only has to reach the network once to saturate it.
+        np.clip(view, -CLIP_SIGMAS, CLIP_SIGMAS, out=view)
         # Padded positions must stay exactly zero. Scaling moved them off it, and a padded position
         # carrying the negative of the training mean is not padding any more.
         view *= seq.mask[..., None]
@@ -209,10 +255,15 @@ class SequenceDetector:
         )
 
         val_auc = fitted.history.get("val_auc", [])
+        # A validation AUC pinned at 0.5 means the model emits one constant value. EarlyStopping
+        # restores the best weights and the run looks fine, so this has to be surfaced explicitly
+        # or a collapsed model gets reported as an architecture result.
+        collapsed = sum(1 for a in val_auc[1:] if abs(float(a) - 0.5) < 1e-3)
         self.history = TrainingHistory(
             epochs_run=len(fitted.history.get("loss", [])),
             best_val_auc=float(max(val_auc)) if val_auc else 0.0,
             stopped_early=stopper.stopped_epoch > 0,
+            collapsed_epochs=collapsed,
             curve=[
                 {"epoch": i + 1, "loss": float(loss), "val_auc": float(auc)}
                 for i, (loss, auc) in enumerate(zip(fitted.history.get("loss", []), val_auc, strict=False))
