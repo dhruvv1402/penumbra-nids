@@ -287,6 +287,126 @@ def loafo(dataset: DatasetName = "unsw") -> None:
     console.print(f"[dim]written to {out}[/dim]")
 
 
+@app.command()
+def fit(
+    dataset: DatasetName = "unsw",
+    model: Annotated[str, typer.Option("--model", "-m")] = "rf",
+    target_fpr: Annotated[float, typer.Option("--fpr", help="Target false-positive rate.")] = 0.01,
+    out: Annotated[Path | None, typer.Option("--out")] = None,
+) -> None:
+    """Fit the full two-head detector and save it.
+
+    Thresholds are fitted on held-out benign traffic, never on test labels, so the saved operating
+    point is one that could actually be chosen at deployment time.
+    """
+    seed_everything()
+    from penumbra.models.detector import PenumbraDetector
+
+    ds = _load(dataset)
+    console.print(f"[dim]fitting on {ds.name} ({len(ds.X_train):,} rows)...[/dim]")
+    det = PenumbraDetector(target_fpr=target_fpr).fit(
+        ds, model_name=model, on_progress=lambda m: console.print(f"[dim]  {m}[/dim]")
+    )
+    path = det.save(out or settings().model_dir / dataset.lower())
+    console.print(f"\n[green]saved[/green] {path}")
+    if det.metadata:
+        console.print(
+            f"  supervised threshold {det.metadata.supervised_threshold:.4f}  "
+            f"novelty threshold {det.metadata.novelty_threshold:.4f}"
+        )
+
+
+@app.command()
+def replay(
+    dataset: DatasetName = "unsw",
+    rows: Annotated[int, typer.Option("--rows", help="Cap the stream length.")] = 5000,
+    delay: Annotated[float, typer.Option("--delay", help="Seconds between batches.")] = 0.0,
+    ingest: Annotated[bool, typer.Option("--ingest", help="POST to a running API.")] = False,
+    api: Annotated[str, typer.Option("--api")] = "http://127.0.0.1:8000",
+    inject_drift: Annotated[
+        str | None, typer.Option("--inject-drift", help="abrupt | gradual | seasonal | evasion")
+    ] = None,
+    fixture_out: Annotated[Path | None, typer.Option("--write-fixture")] = None,
+) -> None:
+    """Stream a dataset through the detector as if it were live traffic."""
+    seed_everything()
+    from penumbra.models.detector import PenumbraDetector
+    from penumbra.replay import engine
+
+    model_dir = settings().model_dir / dataset.lower()
+    if not (model_dir / "detector.joblib").exists():
+        console.print(f"[red]No detector at {model_dir}.[/red] Run `penumbra fit -d {dataset}` first.")
+        raise typer.Exit(1)
+
+    det = PenumbraDetector.load(model_dir)
+    ds = _load(dataset)
+    X = ds.X_test
+
+    if inject_drift:
+        from penumbra.drift import injector
+
+        plan = injector.scenario(inject_drift, min(rows, len(X)))
+        X = injector.inject(X.head(rows), plan, numeric_features=list(X.select_dtypes("number").columns))
+        console.print(f"[yellow]drift injected[/yellow] scenario={inject_drift} at row {plan.change_point:,}")
+
+    client = None
+    if ingest:
+        client = engine.IngestClient(api)
+        if not client.login("senior", "senior"):
+            console.print(
+                "[red]Could not authenticate to the API.[/red] Start it with PENUMBRA_ALLOW_DEMO_USERS=1."
+            )
+            raise typer.Exit(1)
+
+    def on_batch(start: int, alerts: list, stats) -> None:
+        if client and alerts:
+            client.send(alerts)
+        console.print(
+            f"[dim]  {start + len(alerts):>7,} scored  {stats.alerts_emitted:>6,} alerts[/dim]",
+            end="\n",
+        )
+
+    alerts, stats = engine.replay(
+        det,
+        X,
+        config=engine.ReplayConfig(delay=delay, max_rows=rows),
+        dataset=dataset,
+        on_batch=on_batch,
+    )
+
+    console.print()
+    incidents, skipped = engine.correlate_if_possible(alerts, dataset=dataset)
+    stats.incidents = len(incidents)
+    console.print(stats.summary())
+    if skipped:
+        console.print(f"\n[yellow]correlation skipped:[/yellow] {skipped}")
+
+    if fixture_out:
+        path = engine.write_fixture(alerts, incidents, fixture_out)
+        console.print(f"\n[dim]fixture written to {path}[/dim]")
+
+
+@app.command()
+def serve(
+    host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port")] = 8000,
+    demo_users: Annotated[bool, typer.Option("--demo-users/--no-demo-users")] = True,
+) -> None:
+    """Run the API.
+
+    The console proxies /api/* here, so `penumbra serve` plus `npm run dev` in console/ is the whole
+    demo stack.
+    """
+    import os
+
+    import uvicorn
+
+    if demo_users:
+        os.environ["PENUMBRA_ALLOW_DEMO_USERS"] = "1"
+    console.print(f"[dim]API on http://{host}:{port}  docs at /docs[/dim]")
+    uvicorn.run("penumbra.api.app:app", host=host, port=port, log_level="info")
+
+
 @app.command("reproduce-all")
 def reproduce_all(
     out: Annotated[Path | None, typer.Option("--out", help="Directory for regenerated reports.")] = None,
