@@ -89,7 +89,7 @@ warn_redundant_casts = true
 no_implicit_optional = true
 # The scientific stack ships partial or absent stubs. We type our own code, not theirs.
 [[tool.mypy.overrides]]
-module = ["pandas.*", "joblib.*", "sklearn.*", "xgboost.*", "shap.*", "imblearn.*", "river.*", "evidently.*", "mapie.*", "scipy.*", "seaborn.*", "matplotlib.*", "rank_bm25.*", "scapy.*", "dpkt.*"]
+module = ["pandas.*", "joblib.*", "sklearn.*", "xgboost.*", "shap.*", "imblearn.*", "river.*", "evidently.*", "mapie.*", "scipy.*", "seaborn.*", "matplotlib.*", "rank_bm25.*", "scapy.*", "dpkt.*", "keras.*", "tensorflow.*"]
 ignore_missing_imports = true
 
 [tool.bandit]

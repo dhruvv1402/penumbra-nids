@@ -82,6 +82,38 @@ def threshold_for_benign_count(scores: np.ndarray, y_true: np.ndarray, budget: i
     return float(np.partition(benign_scores, -budget)[-budget])
 
 
+def flags_at_benign_budget(scores: np.ndarray, y_true: np.ndarray, budget: int) -> np.ndarray:
+    """Flag the highest-scoring rows until exactly `budget` BENIGN rows are flagged.
+
+    A threshold cannot always deliver a matched budget, and the failure is quiet. Tree ensembles
+    put a large mass of rows at exactly the same probability - often thousands at 0.0 - so a
+    quantile lands inside a tied block and `scores > threshold` flags far fewer benign rows than
+    asked for. Two arms then get compared at 0.2% and 1.0% FPR while the report says both are at
+    1%, and the one with the coarser score distribution looks better for a reason that has nothing
+    to do with detection.
+
+    Selecting by rank instead makes the match exact for every arm. Ties are broken by row order,
+    which is deterministic and arbitrary - the fairest available treatment of rows a model says are
+    indistinguishable.
+
+    This uses labels to pick the operating point, so it is an evaluation-time comparison device and
+    not a deployable threshold. Deployment thresholds are fitted on held-out benign traffic; see
+    `models/detector.py`.
+    """
+    scores = np.asarray(scores, dtype=float)
+    y_true = np.asarray(y_true).astype(int)
+    flagged = np.zeros(len(scores), dtype=bool)
+    if budget <= 0:
+        return flagged
+
+    order = np.argsort(-scores, kind="stable")
+    benign_seen = np.cumsum(y_true[order] == 0)
+    # Keep every row down to and including the one that spends the last unit of budget.
+    keep = int(np.searchsorted(benign_seen, budget, side="left")) + 1
+    flagged[order[:keep]] = True
+    return flagged
+
+
 def evaluate_at_threshold(
     name: str, y_true: np.ndarray, scores: np.ndarray, threshold: float
 ) -> BudgetedResult:

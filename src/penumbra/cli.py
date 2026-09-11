@@ -461,6 +461,56 @@ def rules(
     )
 
 
+@app.command()
+def sequence(
+    fpr: Annotated[float, typer.Option("--fpr", help="Matched false-positive budget.")] = 0.01,
+    window: Annotated[int, typer.Option("--window", "-k", help="Flows per causal window.")] = 16,
+    epochs: Annotated[int, typer.Option("--epochs")] = 12,
+    rows_per_day: Annotated[
+        int | None,
+        typer.Option(
+            "--rows-per-day",
+            help="Cap rows read per CICIDS day. Smoke tests only - it reads each day's HEAD, "
+            "which on Monday is 371k flows with zero attacks.",
+        ),
+    ] = None,
+    train_stride: Annotated[
+        int, typer.Option("--train-stride", help="Materialise every Nth training window.")
+    ] = 4,
+    test_stride: Annotated[int, typer.Option("--test-stride")] = 3,
+) -> None:
+    """Run E6: does sequence context buy recall per-flow features cannot?
+
+    Three arms on identical rows at a matched benign-flag budget - per-flow, per-flow plus causal
+    entity-graph features, and the CNN/BiGRU sequence head. The hypothesis is registered in
+    docs/EXPERIMENTS.md and was committed before this ever ran.
+
+    CICIDS2017 only: it is the one dataset here carrying source IPs and timestamps.
+    """
+    seed_everything()
+    from penumbra.data.loaders import cicids
+    from penumbra.eval import sequence_experiment
+
+    console.print("[dim]loading CICIDS2017 (temporal split, Mon-Wed / Thu-Fri)...[/dim]")
+    ds = cicids.load(nrows_per_day=rows_per_day)
+    console.print(f"[dim]  {len(ds.X_train):,} train / {len(ds.X_test):,} test flows[/dim]")
+
+    result = sequence_experiment.run(
+        ds,
+        fpr_budget=fpr,
+        window_length=window,
+        train_stride=train_stride,
+        test_stride=test_stride,
+        epochs=epochs,
+        on_progress=lambda m: console.print(f"[dim]  {m}[/dim]"),
+    )
+
+    console.print()
+    console.print(result.summary())
+    out = sequence_experiment.write_report(result, settings().report_dir / "sequence_cicids.json")
+    console.print(f"[green]wrote[/green] {out}")
+
+
 @app.command("reproduce-all")
 def reproduce_all(
     out: Annotated[Path | None, typer.Option("--out", help="Directory for regenerated reports.")] = None,
