@@ -1,0 +1,18 @@
+# Default ruleset, plus allowlist entries for identifiers that generic-api-key misreads as secrets.
+#
+# Push runs only scan the pushed range, so these passed for weeks; the weekly scheduled run scans
+# the whole history and failed on all five. Each entry matches the flagged VALUE, never a path, so
+# a real key committed into the same file is still caught.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Identifiers, not credentials"
+regexes = [
+  # Mined detection-rule IDs. The rule text contains `service == "auth"`, and "auth" next to a
+  # quoted token is what the generic rule keys on.
+  '''penumbra-mined-\d+''',
+  # Dataset keys in data/manifest.py (`key="nslkdd_train_20pct"`).
+  '''^(unsw|nslkdd|cicids)_[a-z0-9_]+$''',
+]

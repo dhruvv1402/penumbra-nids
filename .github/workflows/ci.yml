@@ -249,8 +249,15 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8000/health
 
+      # The ZAP image runs as uid 1000; the runner checks out as 1001. Without this ZAP cannot
+      # write its report into the mounted workspace and the step fails after a clean scan.
+      - name: Let the ZAP container write its report
+        run: chmod -R a+rwX "$GITHUB_WORKSPACE"
+
       - name: ZAP baseline scan
-        uses: zaproxy/action-baseline@v0.12.0
+        # v0.12.0 uploaded its report through the retired v3 artifact API and failed every run
+        # regardless of what the scan found.
+        uses: zaproxy/action-baseline@v0.15.0
         with:
           target: http://127.0.0.1:8000
           rules_file_name: .zap/rules.tsv
@@ -263,6 +270,7 @@ jobs:
           # check that cries wolf on every PR gets switched off within a month.
           fail_action: false
           allow_issue_writing: false
+          artifact_name: zap-baseline-report
 
       - name: Stop
         if: always()
