@@ -31,6 +31,7 @@ from starlette.responses import Response
 from penumbra import __version__
 from penumbra.alerts import suppression
 from penumbra.alerts.models import Alert, Incident
+from penumbra.alerts.schemas import asim
 from penumbra.api import reports
 from penumbra.api.security import rbac
 from penumbra.api.security.audit import ACTION_SUPPRESS, AuditLog
@@ -38,6 +39,8 @@ from penumbra.api.security.auth import InvalidToken, UserStore, decode_token, is
 from penumbra.api.security.rbac import Permission, Principal
 from penumbra.config import settings
 from penumbra.feedback import active, integrity
+from penumbra.integrations.siem import SiemConnector
+from penumbra.integrations.siem import connector as siem_connector
 from penumbra.storage.sqlite import SqliteRepository
 
 # --- metrics --------------------------------------------------------------------------------------
@@ -57,6 +60,9 @@ class AppState:
         self.users.seed_demo_users()
         self.audit = AuditLog(settings().artifact_root / "audit.jsonl")
         self.subscribers: set[WebSocket] = set()
+        # PENUMBRA_SIEM=mock (default) | sentinel | none. A misconfigured `sentinel` fails here, at
+        # startup, rather than on the first alert.
+        self.siem: SiemConnector | None = siem_connector(settings().artifact_root)
 
     async def broadcast(self, message: dict[str, Any]) -> None:
         """Push to every connected console. A dead socket is dropped, never fatal."""
@@ -463,7 +469,27 @@ async def ingest(body: IngestRequest, principal: CurrentUser) -> dict[str, Any]:
     suppressed = 0
     for alert in body.alerts:
         suppressed += await publish_alert(alert, rules=rules)
-    return {"ingested": len(body.alerts), "suppressed": suppressed}
+    out: dict[str, Any] = {"ingested": len(body.alerts), "suppressed": suppressed}
+    if state.siem is not None and body.alerts:
+        # Forwarded after suppression, so the SIEM sees BENIGN_BY_POLICY with its rule id rather than
+        # a detection Penumbra has already decided is policy. Suppressed is not deleted there either.
+        sent = state.siem.send([asim.to_asim(a) for a in body.alerts])
+        out["siem"] = {"connector": state.siem.name, "accepted": sent.accepted, "rejected": sent.rejected}
+    return out
+
+
+@app.get("/siem/status", tags=["governance"])
+async def siem_status(principal: CurrentUser) -> dict[str, Any]:
+    """Which SIEM connector is live. The mock says it is a mock."""
+    require(principal, Permission.READ_AUDIT)
+    if state.siem is None:
+        return {"connector": "none", "forwarding": False}
+    status_: dict[str, Any] = {"connector": state.siem.name, "forwarding": True}
+    count = getattr(state.siem, "count", None)
+    if callable(count):
+        status_["records_written"] = count()
+        status_["note"] = "local mock: records are validated against ASIM and written to a file, not sent"
+    return status_
 
 
 @app.post("/incidents/bulk", tags=["incidents"])

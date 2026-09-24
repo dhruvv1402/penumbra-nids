@@ -148,25 +148,28 @@ the table.
 
 ```
 src/penumbra/
-  data/         loaders · schema (every dataset trap encoded) · splits · audit (leak detection)
-  features/     transforms · entity_graph · causal windows · pii
-  models/       supervised · novelty/ · sequence · fusion · calibration · conformal · registry
-  eval/         metrics · prevalence · budget · bootstrap · significance · curves · cost · loafo
+  data/         loaders/ · schema (every dataset trap encoded) · manifest · download · audit (leaks)
+  features/     preprocess (benign-only for novelty) · entity_graph · windows (causal)
+  models/       supervised · novelty/ · sequence · fusion · calibration · conformal · detector
+                registry · onnx_export
+  eval/         metrics · prevalence · budget · bootstrap · cost · loafo · runner · loadtest
+                canary · shadow · retraining · regression (CI gate) · poisoning (E7) · sequence_experiment
   imbalance/    strategies · ablation
-  drift/        psi · tests · streaming · monitor · injector
-  explain/      shap · narrative · attack_map (hand-curated)
+  drift/        detectors (PSI with frozen bins, KS + BH, JS) · streaming (ADWIN, Page-Hinkley) · injector
+  explain/      attack_map (hand-curated)
   rules/        mining (leaf extraction) · emit (KQL/Sigma) · runner (validate + compare)
-  rag/          corpus · index · retrieve · generate
-  alerts/       scoring · correlate · suppression · queue · feedback
+  rag/          corpus · copilot (BM25, cited, offline)
+  alerts/       models · scoring · builder · correlate · suppression · schemas/{asim,ocsf,ecs}
+  feedback/     integrity (verdict flags) · active (uncertainty-sampling queue)
   integrations/ siem/{base,mock,sentinel}
-  api/          app · security/{auth,rbac,pii,audit} · routers · ws
-  storage/      repository (Protocol) · sqlite · postgres
-  replay/       engine · drift_injector
+  api/          app · reports · security/{auth,rbac,pii,audit}
+  storage/      repository (Protocol) · sqlite
+  replay/       engine (live replay, fixture fallback, drift-injected replay)
   adversarial/  evasion (problem-space constrained; the strawman runs alongside it)
   pcap/         assemble  (read-only; never transmits)
 ```
 
-Enforced by an import-linter rule in CI:
+Enforced by a grep-based import check in CI (`.github/workflows/ci.yml`, job `invariant`):
 
 - `models/`, `eval/` and `rules/` never import `api/`, `alerts/` or `storage/`. The science must
   run headless, and a mined rule pack has to be reproducible without the product layer.
@@ -213,13 +216,33 @@ Models are trained **on the host**, never inside Docker, and versioned artifacts
 the image. Training in a container on a 16 GB machine that is also running Next, FastAPI, and a
 browser is how a demo dies.
 
+## The feedback loop
+
+```
+ analyst verdict ──► verdict_queue ──► second senior promotes ──► promoted_training_rows
+  (alert or incident;   (integrity flags    (two-person rule, in the        │
+   rate-limited,         shown, never        SQL UPDATE; audited)           ▼
+   audited)              dropped)                                  eval/retraining.augment
+                                                                            │
+ benign_by_policy ──► suppression rule (scoped, ≤ 90 days)                  ▼
+                      applied at /ingest; reclassify, never drop    challenger fit ──► canary gate
+                      NEVER a training label                        (per attack type) │
+                                                                                      ▼
+                        registry: hash-verified load ◄── promote (CLI, gate required) ◄── shadow
+                                  rollback = pointer change, refuses a tampered target
+```
+
+Every arrow that changes what the model learns needs a second human, and every one writes to the
+audit chain. E7 measured the attack this whole path exists to resist; see `docs/EXPERIMENTS.md`.
+
 ## Security posture of the system itself
 
 The analyst-feedback loop is a poisoning vector we introduced ourselves: a compromised analyst account
 can teach the model that its own traffic is benign. Mitigations are in `docs/THREAT_MODEL.md` —
-senior approval before a verdict enters the training pool, verdict provenance in the hash-chained
-audit log, a canary evaluation gate before promotion, and per-account rate limits. Referenced against
-**MITRE ATLAS**, not just ATT&CK.
+a second senior's approval before a verdict enters the training pool (never the recorder's own),
+verdict provenance in the hash-chained audit log, integrity flags on pending verdicts, a per-family
+canary gate before promotion, and per-account rate limits. Each is implemented, and E7 measures
+which of them actually catch the attack. Referenced against **MITRE ATLAS**, not just ATT&CK.
 
 IP addresses are pseudonymised with a keyed HMAC. That is pseudonymisation, not anonymisation — IPv4
 is 2³² values and trivially enumerable by anyone holding the key — so under GDPR Art. 4(5) the output

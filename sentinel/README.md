@@ -32,6 +32,14 @@ read it straight off the payload.
 
 ## Ingestion
 
+`src/penumbra/integrations/siem/`: `/ingest` forwards every alert, suppressed ones included, as an
+ASIM record through a `SiemConnector`. `PENUMBRA_SIEM=mock` (the default) validates each record and
+appends it to `artifacts/siem/PenumbraAlerts_CL.jsonl`, which is exactly what Sentinel would
+receive. `PENUMBRA_SIEM=sentinel` posts to the Logs Ingestion API and refuses to start without
+`PENUMBRA_SENTINEL_ENDPOINT`, `PENUMBRA_SENTINEL_DCR_ID` and the three `PENUMBRA_AZURE_*` values.
+It never falls back to the mock silently. The Sentinel client is tested against a fake transport;
+it has not been run against a live workspace.
+
 Logs Ingestion API through a `"kind": "Direct"` data collection rule:
 
 ```

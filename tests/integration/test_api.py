@@ -21,15 +21,17 @@ from penumbra.alerts.models import Incident, Lane, NetworkContext, Severity  # n
 from penumbra.alerts.scoring import ScoringPolicy, build_alert  # noqa: E402
 from penumbra.api.app import app, state  # noqa: E402
 from penumbra.api.security.audit import AuditLog  # noqa: E402
+from penumbra.integrations.siem.mock import LocalMockSiem  # noqa: E402
 from penumbra.storage.sqlite import SqliteRepository  # noqa: E402
 
 
 @pytest.fixture(scope="module")
-def client() -> TestClient:
+def client(tmp_path_factory) -> TestClient:
     # Hermetic: an in-memory repository and a fresh audit log, so the suite does not inherit
     # whatever a previous run left in artifacts/penumbra.db.
     state.repo = SqliteRepository(":memory:")
     state.audit = AuditLog()
+    state.siem = LocalMockSiem(tmp_path_factory.mktemp("siem"))
 
     policy = ScoringPolicy()
     alerts = []

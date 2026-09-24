@@ -20,6 +20,7 @@ from penumbra.alerts.scoring import ScoringPolicy, build_alert  # noqa: E402
 from penumbra.api import app as app_module  # noqa: E402
 from penumbra.api.app import app, state  # noqa: E402
 from penumbra.api.security.audit import AuditLog  # noqa: E402
+from penumbra.integrations.siem.mock import LocalMockSiem  # noqa: E402
 from penumbra.storage.sqlite import SqliteRepository  # noqa: E402
 
 
@@ -37,9 +38,10 @@ def _alert(i: int, *, p: float = 0.95, service: str = "private", segment: str = 
 
 
 @pytest.fixture()
-def client() -> TestClient:
+def client(tmp_path) -> TestClient:
     state.repo = SqliteRepository(":memory:")
     state.audit = AuditLog()
+    state.siem = LocalMockSiem(tmp_path / "siem")
     return TestClient(app)
 
 
@@ -197,7 +199,10 @@ class TestSuppression:
             json={"alerts": [hit.model_dump(mode="json"), miss.model_dump(mode="json")]},
             headers=_token(client, "senior"),
         )
-        assert resp.json() == {"ingested": 2, "suppressed": 1}
+        body = resp.json()
+        assert (body["ingested"], body["suppressed"]) == (2, 1)
+        # Both reach the SIEM: the suppressed one as BENIGN_BY_POLICY with its rule id, not dropped.
+        assert body["siem"] == {"connector": "local-mock", "accepted": 2, "rejected": 0}
 
         senior = _token(client, "senior")
         stored = {a["alert_id"]: a for a in client.get("/alerts", headers=senior).json()}
@@ -279,3 +284,9 @@ def test_model_registry_is_readable_and_scoped(client: TestClient, tmp_path, mon
     assert empty == {"dataset": "nslkdd", "champion": None, "history": [], "versions": []}
     assert client.get("/models/..%2F..%2Fetc", headers=analyst).status_code == 404
     assert client.get("/models/nslkdd").status_code == 401
+
+
+def test_siem_status_says_the_mock_is_a_mock(client: TestClient) -> None:
+    body = client.get("/siem/status", headers=_token(client, "senior")).json()
+    assert body["connector"] == "local-mock" and "not sent" in body["note"]
+    assert client.get("/siem/status", headers=_token(client, "analyst")).status_code == 403
