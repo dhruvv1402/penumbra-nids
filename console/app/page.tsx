@@ -19,11 +19,14 @@ import Link from "next/link";
 import {
   ApiError,
   type Alert,
+  type Incident,
   type Lane,
   type Session,
   type Stats,
   type TriageNote,
   getAlerts,
+  getIncident,
+  getIncidents,
   createSuppression,
   getStats,
   getTriage,
@@ -52,7 +55,9 @@ export default function Console() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [stats, setStats] = useState<Stats>({});
   const [selected, setSelected] = useState<Alert | null>(null);
-  const [lane, setLane] = useState<Lane>("known_threat");
+  const [lane, setLane] = useState<Lane | "incidents">("known_threat");
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
   const [live, setLive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const socket = useRef<WebSocket | null>(null);
@@ -63,13 +68,17 @@ export default function Console() {
     try {
       // One request per lane. A single top-N by priority starves the review lane: abstentions sit
       // near p = 0.5, below every known-threat alert, so "review 0" was showing over 1,046 items.
-      const [known, hunting, review, s] = await Promise.all([
+      const [known, hunting, review, s, inc] = await Promise.all([
         getAlerts(token, "known_threat", 300),
         getAlerts(token, "hunting", 300),
         getAlerts(token, "review", 300),
         getStats(token),
+        getIncidents(token, 200),
       ]);
       setAlerts([...known, ...hunting, ...review]);
+      // Largest first within priority: two incidents at equal priority are not equally urgent when
+      // one is 41,866 flows and the other is one.
+      setIncidents([...inc].sort((a, b) => b.priority - a.priority || b.event_count - a.event_count));
       setStats(s);
       setError(null);
     } catch (err) {
@@ -88,6 +97,7 @@ export default function Console() {
 
     const ws = openStream(session.token, (msg) => {
       if (msg.type === "connected") setLive(true);
+      if (msg.type === "incidents") void refresh(session.token);
       if (msg.type === "alert") {
         // Prepend and cap, so a long demo does not grow the DOM without bound.
         setAlerts((prev) => [msg.alert, ...prev].slice(0, 1200));
@@ -110,7 +120,7 @@ export default function Console() {
     return { known, hunting, review };
   }, [alerts]);
 
-  const visible = lane === "known_threat" ? lanes.known : lane === "hunting" ? lanes.hunting : lanes.review;
+  const visible = lane === "known_threat" ? lanes.known : lane === "hunting" ? lanes.hunting : lane === "review" ? lanes.review : [];
   const overflow = lane === "hunting" ? Math.max(0, lanes.hunting.length - HUNTING_BUDGET) : 0;
   const shown = lane === "hunting" ? visible.slice(0, HUNTING_BUDGET) : visible;
 
@@ -131,7 +141,7 @@ export default function Console() {
           title="queue"
           right={
             <div className="flex gap-1">
-              {(["known_threat", "hunting", "review"] as Lane[]).map((l) => (
+              {(["incidents", "known_threat", "hunting", "review"] as const).map((l) => (
                 <button
                   key={l}
                   onClick={() => setLane(l)}
@@ -141,13 +151,57 @@ export default function Console() {
                       : "border-[var(--color-border)] text-[var(--color-ink-faint)] hover:text-[var(--color-ink-dim)]"
                   }`}
                 >
-                  {l === "known_threat" ? `known ${lanes.known.length}` : l === "hunting" ? `hunting ${lanes.hunting.length}` : `review ${lanes.review.length}`}
+                  {l === "incidents"
+                    ? `incidents ${incidents.length}`
+                    : l === "known_threat"
+                      ? `known ${lanes.known.length}`
+                      : l === "hunting"
+                        ? `hunting ${lanes.hunting.length}`
+                        : `review ${lanes.review.length}`}
                 </button>
               ))}
             </div>
           }
         >
-          {shown.length === 0 ? (
+          {lane === "incidents" ? (
+            incidents.length === 0 ? (
+              <Empty>
+                No incidents. Correlation needs source IPs, which only CICIDS2017 has. Build a fixture
+                with{" "}
+                <code className="text-[var(--color-ink-dim)]">penumbra correlate --write-fixture incidents.json</code>{" "}
+                then{" "}
+                <code className="text-[var(--color-ink-dim)]">penumbra replay --from-fixture incidents.json --ingest</code>
+              </Empty>
+            ) : (
+              <ul className="divide-y divide-[var(--color-border)]">
+                {incidents.map((inc) => (
+                  <li
+                    key={inc.incident_id}
+                    onClick={() => {
+                      setSelectedIncident(inc);
+                      setSelected(null);
+                    }}
+                    className={`px-3 py-2 cursor-pointer transition-colors ${
+                      selectedIncident?.incident_id === inc.incident_id ? "bg-[var(--color-panel-2)]" : "hover:bg-[var(--color-panel-2)]/60"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <SeverityDot severity={inc.severity} />
+                      <span className="text-[11px] text-[var(--color-ink)] truncate">{inc.title}</span>
+                      <span className="ml-auto text-[11px] tabular-nums text-[var(--color-ink-faint)]">
+                        {inc.event_count.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-[10px] text-[var(--color-ink-faint)]">
+                      {inc.distinct_destinations.toLocaleString()} destinations · {inc.distinct_ports.toLocaleString()} ports ·{" "}
+                      {inc.status}
+                      {inc.analyst_verdict ? ` · ${inc.analyst_verdict.replaceAll("_", " ")}` : ""}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : shown.length === 0 ? (
             <Empty>
               Nothing in this lane. Start the replay with{" "}
               <code className="text-[var(--color-ink-dim)]">penumbra replay</code> to stream alerts in.
@@ -167,7 +221,10 @@ export default function Console() {
                     key={a.alert_id}
                     alert={a}
                     active={selected?.alert_id === a.alert_id}
-                    onSelect={() => setSelected(a)}
+                    onSelect={() => {
+                      setSelected(a);
+                      setSelectedIncident(null);
+                    }}
                   />
                 ))}
               </ul>
@@ -175,7 +232,16 @@ export default function Console() {
           )}
         </Panel>
 
-        <Detail alert={selected} token={session.token} role={session.role} />
+        {selectedIncident && !selected ? (
+          <IncidentDetail
+            incident={selectedIncident}
+            token={session.token}
+            role={session.role}
+            onOpenAlert={(a) => setSelected(a)}
+          />
+        ) : (
+          <Detail alert={selected} token={session.token} role={session.role} />
+        )}
       </div>
     </main>
   );
@@ -680,5 +746,87 @@ function Field({
         className="w-full mt-0.5 bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1 text-[12px] text-[var(--color-ink)] focus:outline-none focus:border-[var(--color-ink-dim)]"
       />
     </label>
+  );
+}
+
+/**
+ * One incident: the unit an analyst actually works. The event count is the whole point - a 41,866-
+ * flow scan is one row here, not 41,866 tickets. Its verdict applies to every alert in it.
+ */
+function IncidentDetail({
+  incident,
+  token,
+  role,
+  onOpenAlert,
+}: {
+  incident: Incident;
+  token: string;
+  role: string;
+  onOpenAlert: (a: Alert) => void;
+}) {
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setNote(null);
+    getIncident(token, incident.incident_id)
+      .then((r) => live && setAlerts(r.alerts))
+      .catch(() => live && setAlerts([]));
+    return () => {
+      live = false;
+    };
+  }, [incident.incident_id, token]);
+
+  const submit = async (verdict: string) => {
+    try {
+      await recordVerdict(token, incident.incident_id, verdict);
+      setNote("Verdict recorded on the whole incident and queued. A different senior must promote it.");
+    } catch (err) {
+      setNote(
+        err instanceof ApiError && err.isPermissionDenied
+          ? `Your role (${role}) cannot do that.`
+          : err instanceof ApiError && err.status === 409
+            ? "This incident's verdict is already promoted into training; it cannot be changed."
+            : err instanceof Error
+              ? err.message
+              : String(err),
+      );
+    }
+  };
+
+  return (
+    <Panel title="incident" right={<span className="text-[10px] text-[var(--color-ink-faint)]">{incident.incident_id.slice(0, 8)}</span>}>
+      <div className="p-3 space-y-3">
+        <p className="text-[12px] text-[var(--color-ink)]">{incident.title}</p>
+        <div className="grid grid-cols-3 border border-[var(--color-border)] rounded">
+          <Stat label="events" value={incident.event_count.toLocaleString()} />
+          <Stat label="destinations" value={incident.distinct_destinations.toLocaleString()} />
+          <Stat label="ports" value={incident.distinct_ports.toLocaleString()} />
+        </div>
+        <p className="text-[11px] text-[var(--color-ink-dim)] leading-snug">
+          {incident.family
+            ? `The model names this ${incident.family}. That is its closest trained family, not an identification; the fan-out above is measured.`
+            : "The model could not name a family. The grouping is by source and time window; the fan-out above is measured."}{" "}
+          {new Date(incident.opened_at).toLocaleString()} → {new Date(incident.last_seen_at).toLocaleString()}
+        </p>
+        <div className="flex gap-2 flex-wrap">
+          <VerdictButton label="True positive" onClick={() => submit("true_positive")} disabled={false} tone="var(--color-sev-high)" />
+          <VerdictButton label="False positive" onClick={() => submit("false_positive")} disabled={false} tone="var(--color-ok)" />
+          <VerdictButton label="Benign by policy" onClick={() => submit("benign_by_policy")} disabled={false} tone="var(--color-sev-low)" />
+        </div>
+        {note && <p className="text-[11px] text-[var(--color-ink-dim)]">{note}</p>}
+        <div>
+          <h3 className="text-[10px] uppercase tracking-wider text-[var(--color-ink-faint)] mb-1">
+            sample of its alerts ({alerts.length} of {incident.event_count.toLocaleString()})
+          </h3>
+          <ul className="divide-y divide-[var(--color-border)] border border-[var(--color-border)] rounded">
+            {alerts.map((a) => (
+              <AlertRow key={a.alert_id} alert={a} active={false} onSelect={() => onOpenAlert(a)} />
+            ))}
+          </ul>
+        </div>
+      </div>
+    </Panel>
   );
 }

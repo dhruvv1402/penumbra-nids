@@ -454,4 +454,5 @@ export type StreamMessage =
   | { type: "heartbeat" }
   | { type: "alert"; alert: Alert; at: string }
   | { type: "verdict"; incident_id?: string; alert_id?: string; verdict: string }
-  | { type: "suppression"; rule_id: string };
+  | { type: "suppression"; rule_id: string }
+  | { type: "incidents"; count: number };
