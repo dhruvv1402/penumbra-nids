@@ -61,8 +61,10 @@ improve is the same mechanism that makes it corruptible.
   change that also refuses a tampered target.
 - **Benign-by-policy never trains the model.** It becomes an expiring suppression rule instead, so a
   policy exception cannot be laundered into a permanent blind spot in the weights.
-- Not built: a ≥ 7-day shadow-scoring period before promotion. The runbook requires it; the code
-  has no shadow mode.
+- **Shadow scoring** (`penumbra registry shadow`, `eval/shadow.py`): champion and challenger score
+  the same stream with nothing alerting; alert volume per head, Cohen's kappa, and what the
+  challenger drops or adds are attached to its manifest. The ≥ 7-day duration in the runbook is a
+  policy for live traffic; the code runs over whatever stream it is given.
 
 ATLAS: `AML.T0020` Poison Training Data · `AML.T0018` Backdoor ML Model.
 

@@ -499,6 +499,67 @@ Both heads trained on the same poisoned label.
 *Reproduce: `penumbra poison-drill` (≈ 13 minutes, six full two-head fits) →
 `artifacts/reports/poisoning_nslkdd.json`.*
 
+#### Addendum — two revisions to `family_campaign`, made AFTER seeing the result
+
+Everything above this line is the pre-registered flag and its result, unedited. This addendum is
+post hoc, and its numbers are **in-sample**: the revised flag was designed on the same drill it is
+scored on. It is labelled `family_skew` and runs *alongside* the registered flag rather than
+replacing it, so the registered result stays reproducible.
+
+**Revision 1: compare per family against peers, not against a fixed 80%.** "You clear r2l alerts
+at 45%; your colleagues clear r2l alerts at 3%." Cover work on *other* families cannot dilute that
+comparison. Result: **9% of flips flagged.** Better than zero, and still nearly blind.
+
+**Why so low:** 244 of the 269 targeted `warezmaster` alerts carried **no predicted family**. The
+family classifier said `normal`, and the alert fired on the novelty or abstention path instead. The
+flag skipped family-less verdicts, so it could see at most 25 of 269.
+
+**Revision 2: "the model could not name it" is a bucket of its own.** The analyst sees an alert
+with no family, so the flag groups those like any other family. Peers clear family-less alerts 23%
+of the time; the attacker cleared hers 100% of the time.
+
+| dose | flipped | `actor_outlier` | `family_skew` (rev. 2) | honest-account clearances flagged by `family_skew` |
+|---|---:|---:|---:|---:|
+| 10% | 27 | 0% | 0% | 0% |
+| 25% | 67 | 100% | 87% | 0% |
+| 50% | 134 | 100% | 100% | 0% |
+| 100% | 269 | 100% | 100% | 0% |
+
+`family_skew` is the more *specific* of the two. `actor_outlier` flags every clearance the
+attacker makes, cover work included. `family_skew` flags the targeted bucket and touched 1.2% of
+her honest cover verdicts. For an approver reviewing a queue, that is the difference between
+"distrust this account" and "distrust these verdicts".
+
+**What would make this a finding rather than a fitted curve:** a second drill with a different
+target type and seed, run before anyone looks at it. Not done; `penumbra poison-drill --flags-only`
+runs one in minutes.
+
+*Reproduce: `penumbra poison-drill --flags-only` → `artifacts/reports/poisoning_flags_nslkdd.json`.*
+
+---
+
+### E7b — replication, registered before it runs
+
+The addendum's revised flag was fitted to the drill that scores it. This is the out-of-sample test.
+
+**Design:** identical to E7, with two changes fixed now: the target rule runs with `warezmaster`
+excluded, so it selects the next-smallest-support type with ≥ 50 champion alerts (we expect
+`guess_passwd`, 53 training rows, without having checked), and every seed (split and verdict
+assignment) is 7 instead of 42. `penumbra poison-drill --exclude-target warezmaster --seed 7 --tag _rep`.
+
+**Predictions:**
+1. `family_skew` flags **≥ 80%** of flipped verdicts at the 50% and 100% doses, and **≤ 2%** of the
+   honest accounts' clearances.
+2. `actor_outlier` flags **≥ 90%** of flips at every dose ≥ 25%.
+3. `confident_contradiction` flags **< 10%** of flips: the rule picks a thin type, so the model is
+   not confident about it.
+4. The damage is again a cliff: target recall at 50% dose stays within 0.10 of the honest retrain,
+   and at 100% falls by ≥ 0.30 against the champion.
+5. The gate fails the 100% arm on G2 naming the target, and passes the honest arm.
+
+**Falsification:** prediction 1 failing means `family_skew` was fitted to one drill and does not
+generalise; the addendum's numbers then describe E7 only, and we say so.
+
 ---
 
 ## Standing rules for all experiments

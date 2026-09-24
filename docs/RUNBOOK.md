@@ -27,8 +27,8 @@ sample-size dependent. Treat them as a prompt to look, not as a verdict.
 1. Train the challenger on the extended dataset. Fixed seed, recorded.
 2. **Canary gate.** The challenger must clear a frozen held-out evaluation set and beat the champion's
    committed PR-AUC floor. A model poisoned to ignore a traffic pattern fails here.
-3. **Shadow scoring.** Run the challenger alongside the champion on live traffic for ≥ 7 days, scoring
-   without alerting. Compare alert volume, agreement rate, and per-family recall on anything the
+3. **Shadow scoring** (`penumbra registry shadow`). Run the challenger alongside the champion on live
+   traffic for ≥ 7 days, scoring without alerting. Compare alert volume, agreement rate, and per-family recall on anything the
    analysts confirm.
 4. **Promote** only with sign-off recorded in the audit log. The registry keeps both artifacts with
    SHA-256 digests.
@@ -162,7 +162,10 @@ penumbra replay --inject-drift          # drift injector for the live demo
 penumbra serve                          # API + WebSocket
 penumbra registry init -d nslkdd        # the fitted model becomes the first (ungated) champion
 penumbra retrain -d nslkdd              # challenger from PROMOTED verdicts + canary gate
+penumbra registry shadow <version> -d nslkdd   # challenger beside champion, nothing alerts
 penumbra registry list|promote|rollback|verify -d nslkdd
+penumbra gate                           # ML regression gate against ci/baseline_nslkdd.json
+penumbra correlate                      # CICIDS alert->incident correlation on real source IPs
 penumbra poison-drill                   # E7: the feedback-loop poisoning drill
 penumbra drift -d nslkdd [--inject abrupt]  # per-feature PSI + BH-corrected KS
 penumbra reproduce-all                  # regenerates every number in the report

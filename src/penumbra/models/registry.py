@@ -163,6 +163,12 @@ class ModelRegistry:
         info.gate = report
         self._write_manifest(info)
 
+    def attach_shadow(self, version: str, report: dict[str, Any]) -> None:
+        """Record a shadow-scoring comparison. Evidence for the promoter, not a gate."""
+        info = self.info(version)
+        info.training = {**info.training, "shadow": report}
+        self._write_manifest(info)
+
     def promote(self, version: str, *, approver: str, allow_without_gate: bool = False) -> dict[str, Any]:
         """Make `version` the champion.
 
