@@ -192,6 +192,45 @@ EventSeverity    = "High"
 
 ---
 
+## 6b — The human in the loop, and the attack on it (90s — cut 4b or 7b to stay at eight minutes)
+
+Sign in as **analyst**. Pick any alert on the queue page.
+
+1. Click **Benign by policy**.
+
+   > "Our internal vulnerability scanner fires the port-scan detector every night. It isn't a false
+   > positive: it *is* a port scan. It just isn't a threat. That's a policy decision, so it's
+   > recorded as one."
+
+2. Sign out, sign in as **senior**, same alert, **Benign by policy** again. The suppression form
+   appears, pre-filled with the narrowest match the alert supports. Type a reason, pick 30 days,
+   **Create rule**.
+
+   > "It has to be narrower than a whole attack family, and it expires in at most 90 days. A
+   > permanent suppression is a permanent blind spot: the scanner you allowlist in March is the C2
+   > channel you miss in September. And it never becomes a training label, because teaching the
+   > model that a port scan is benign would blind it to the next real one."
+
+3. Re-run the fixture ingest. The header's **suppressed** counter climbs; matching alerts leave the
+   queue but stay in the record. Show the rule in `/governance`'s audit log.
+
+4. Open **/feedback**. Point at a pending verdict carrying a flag, and at the drill table below it.
+
+   > "Here's the attack we built into our own system. Analyst verdicts retrain the model, so a
+   > stolen analyst account can teach it that its own traffic is benign. We ran that attack. One
+   > account clearing its own attack type took recall on it from 0.84 to 0.19, but only when it
+   > cleared *every* alert. Below that, the honest verdicts outvoted it. The flag that caught it
+   > compares each account's clearance rate on each family against its peers. It caught every
+   > damaging dose on two different targets, and never flagged an honest analyst. And the approver
+   > can never be the person who recorded the verdict: that's enforced in the SQL, not the UI."
+
+5. If there's time: `penumbra registry list`, and name the gate.
+
+   > "No model reaches production without passing a per-family canary gate. An aggregate gate
+   > would have promoted the poisoned model, because overall recall went *up*."
+
+---
+
 ## 7 — Drift, live (45s)
 
 ```bash
@@ -290,6 +329,20 @@ Say the caveat out loud before anyone asks:
 > of Backdoor flows — the families overlap enough that removing a label doesn't remove the
 > behaviour. We report it as a control, and it's why the NSL-KDD natural split is the load-bearing
 > experiment.
+
+**"Your human-in-the-loop can be poisoned. Did you think about that?"**
+> We built the attack and measured it (E7, pre-registered, then replicated on a second target). One
+> compromised account can erase detection of the attack type the model knows least about, but only
+> by clearing every one of its alerts, and a per-family peer comparison flags that with no false
+> flags on honest analysts. Promotion needs a second senior, and the retrained model has to pass a
+> per-family gate. The aggregate numbers go *up* under this attack, which is why the gate is
+> per-family.
+
+**"How many alerts would a SOC actually see?"**
+> On CICIDS2017's Thursday–Friday, 94,115 alerts collapse into 203 incidents, and 99.93% of attack
+> flows reach an analyst. Almost none arrive as "known attack": every Thursday–Friday family is
+> unseen in Monday–Wednesday, so the model abstains and routes them to review. The biggest incident
+> is one PortScan: 41,862 flows, 1,001 ports, one row in the queue.
 
 **"What's the false positive rate?"**
 > At the deployed threshold, and on which data? On held-out benign, 1% by construction. On the test

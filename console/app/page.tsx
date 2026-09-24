@@ -59,8 +59,15 @@ export default function Console() {
 
   const refresh = useCallback(async (token: string) => {
     try {
-      const [a, s] = await Promise.all([getAlerts(token, undefined, 400), getStats(token)]);
-      setAlerts(a);
+      // One request per lane. A single top-N by priority starves the review lane: abstentions sit
+      // near p = 0.5, below every known-threat alert, so "review 0" was showing over 1,046 items.
+      const [known, hunting, review, s] = await Promise.all([
+        getAlerts(token, "known_threat", 300),
+        getAlerts(token, "hunting", 300),
+        getAlerts(token, "review", 300),
+        getStats(token),
+      ]);
+      setAlerts([...known, ...hunting, ...review]);
       setStats(s);
       setError(null);
     } catch (err) {
@@ -81,7 +88,7 @@ export default function Console() {
       if (msg.type === "connected") setLive(true);
       if (msg.type === "alert") {
         // Prepend and cap, so a long demo does not grow the DOM without bound.
-        setAlerts((prev) => [msg.alert, ...prev].slice(0, 500));
+        setAlerts((prev) => [msg.alert, ...prev].slice(0, 1200));
         setStats((prev) => ({ ...prev, alerts_total: (prev.alerts_total ?? 0) + 1 }));
       }
     });
