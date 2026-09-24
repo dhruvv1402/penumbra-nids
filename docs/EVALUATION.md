@@ -550,6 +550,20 @@ measuring the same shift, agreeing.
 
 **C escalates it further**, as it should.
 
+#### Per-feature drift under-reads the same shift
+
+`penumbra drift -d nslkdd` ranks all 37 numeric features on the same train→test shift as condition
+B. **No feature crosses the PSI 0.25 retrain threshold.** The largest is `serror_rate` at 0.196,
+and only four exceed 0.1. A monitor that watched inputs one at a time would call this shift
+"moderate". Meanwhile the model's score PSI is 0.65, and coverage falls 30 points.
+
+KS after Benjamini-Hochberg flags 26 of 37, against 1.9 expected by chance. At 126k-versus-20k
+samples KS rejects nearly anything, so it ranks features but cannot deliver the verdict.
+
+The lesson is the same one condition B teaches from the other side. Monitor what the model
+*outputs* (the score distribution, and the abstention rate), not only what it is fed. Moderate
+movements in many correlated inputs add up to a shift no single-feature test sees.
+
 #### Why this matters operationally
 
 Coverage needs labels to compute, so it is not directly available in production. But look at the
@@ -933,6 +947,59 @@ Reproduce: `penumbra fit -d unsw && penumbra pcap <capture> --model unsw`.
 
 ---
 
+### 10.7f Poisoning the feedback loop from one analyst account (E7)
+
+The human-in-the-loop is the one attack surface this project built itself. An attacker who holds an
+analyst account, and whose traffic is being detected, marks their own alerts `false_positive`; if
+the labels are promoted, the next model learns the attack is benign. Pre-registered as E7 in
+`EXPERIMENTS.md`, where the full design, the five predictions and the two that were wrong are
+recorded.
+
+`KDDTest+` is split three ways with a fixed seed: canary (the gate decides on these only),
+feedback (the champion alerts, four analyst accounts record verdicts), evaluation (every number
+below). The pre-registered rule picked `warezmaster`: 20 training rows, 269 alerts in the feedback
+pool.
+
+| arm | flipped | target recall [95% CI] | overall recall | FPR | gate | flipped verdicts flagged |
+|---|---:|---|---:|---:|---|---:|
+| champion | — | 0.843 [0.800, 0.878] | 0.8311 | 0.1018 | — | — |
+| honest retrain | 0 | **0.979** [0.957, 0.990] | **0.9352** | **0.0432** | pass | — |
+| poisoned 10% | 27 | 0.979 [0.957, 0.990] | 0.9358 | 0.0438 | pass | 0% |
+| poisoned 25% | 67 | 0.970 [0.945, 0.984] | 0.9107 | 0.0374 | pass | 100% |
+| poisoned 50% | 134 | 0.952 [0.923, 0.970] | 0.9100 | 0.0382 | pass | 100% |
+| poisoned 100% | 269 | **0.193** [0.154, 0.239] | 0.8859 | 0.0435 | **FAIL** | 100% |
+
+**The attack works, and only at full strength.** One account clearing every `warezmaster` alert
+takes that type's recall from 0.84 to 0.19, and the novelty head does not catch what the
+supervised head lost: both were fitted on the same poisoned label. At a quarter or half dose the
+remaining honest verdicts on the same type outvote the flips. The damage is a cliff, not a slope.
+
+**The one flag that worked is the simplest.** A clearance-rate outlier test against leave-one-out
+peers flagged 100% of flipped verdicts at every dose that did any damage, and never flagged one of
+the three honest accounts. The other two flags failed, in instructive ways:
+
+- `confident_contradiction` flagged **none** of the 269. The attack succeeds on the attack type the
+  model knows least about, so the model is never confident about it. Meanwhile the flag fired on
+  22.9% of honest clearances. It is a review cue for honest mistakes, not a poisoning control.
+- `family_campaign` never fired. The attacker's honest cover work dilutes her concentration below a
+  fixed 80% threshold. A concentration test has to be relative to peers.
+
+**The canary gate caught the damaging model and passed the honest one.** It failed the 100% arm on
+the per-family criterion, naming `warezmaster` (canary recall 0.802 → 0.233 on 283 rows), while
+overall recall moved only 0.83 → 0.89. **An aggregate-metric gate would have promoted it.** Overall
+recall *rose*, because the honest verdicts on every other type improved the model at the same time.
+That is also the gate's limit: it compares against the champion, so poisoning that rides alongside
+honest improvement is partly hidden by it. The 50% arm lost 0.027 target recall against the honest
+retrain and still beat the champion by 0.11.
+
+**The honest arm is its own finding.** Truthful verdicts on 4,028 alerts cut FPR from 10.2% to 4.3%
+and lift recall by ten points. Part of that is the loop adapting to the shifted `KDDTest+`
+distribution (§10.4c), which is its job, but the magnitude does not transfer as a number.
+
+*Reproduce: `penumbra poison-drill` (≈ 13 min, six full two-head fits).*
+
+---
+
 ### 10.8 Reproduction
 
 ```bash
@@ -942,6 +1009,7 @@ uv run penumbra loafo --dataset nslkdd      # the unseen-17 experiment
 uv run penumbra rules --dataset unsw        # mine + validate KQL/Sigma rules
 uv run penumbra sequence                    # E6: does sequence context buy recall?
 uv run penumbra loadtest --dataset unsw     # throughput, latency, and the honest conversion
+uv run penumbra poison-drill                # E7: poison the feedback loop, measure the controls
 uv run penumbra reproduce-all               # everything, with reasons for what it skips
 ```
 

@@ -43,15 +43,26 @@ feeds retraining. A compromised analyst account — or a malicious insider — c
 traffic benign repeatedly and teach the model to ignore it. The feedback loop that makes the system
 improve is the same mechanism that makes it corruptible.
 
-**Mitigations:**
+**Mitigations — each implemented, tested, and measured in E7 (`penumbra poison-drill`):**
 - A verdict does not enter the training pool on an analyst's authority. **Senior approval is required
-  for promotion**, and the two roles are separated.
-- Full verdict provenance — who, when, from where — in the hash-chained audit log.
-- **Canary gate:** a candidate model must clear a held-out evaluation set before promotion. A model
-  taught to ignore one traffic pattern fails the canary.
-- Per-account verdict rate limits, and anomaly detection over verdict patterns (an account whose
-  false-positive rate diverges sharply from its peers is itself a signal).
-- Champion/challenger — a new model shadow-scores before it replaces anything.
+  for promotion, and never by the account that recorded the verdict** — a two-person rule enforced in
+  the repository's `UPDATE` statement, so no route can skip it (`storage/sqlite.py`).
+- Full verdict provenance — who, when, what the model said — in the hash-chained audit log.
+- **Per-account verdict rate limit** (120/hour), throttled with 429 and audit-logged. Bulk relabelling
+  is how a stolen session poisons a model.
+- **Integrity flags** on every pending verdict (`feedback/integrity.py`): clearance-rate outlier
+  against leave-one-out peers, family concentration, and clearing a confident detection. They flag;
+  they never drop. E7 measured which of the three actually works — only the outlier check did.
+- **Canary gate** (`eval/canary.py`): a challenger must not lose more than 0.10 recall on *any*
+  attack type with ≥ 20 frozen canary rows. A targeted poisoning attack is a per-family regression by
+  construction, so an aggregate gate would wave it through.
+- **Registry** (`models/registry.py`): promotion requires a passed gate report stored in the version's
+  manifest; artifacts are SHA-256-verified before they are unpickled; rollback is a recorded pointer
+  change that also refuses a tampered target.
+- **Benign-by-policy never trains the model.** It becomes an expiring suppression rule instead, so a
+  policy exception cannot be laundered into a permanent blind spot in the weights.
+- Not built: a ≥ 7-day shadow-scoring period before promotion. The runbook requires it; the code
+  has no shadow mode.
 
 ATLAS: `AML.T0020` Poison Training Data · `AML.T0018` Backdoor ML Model.
 

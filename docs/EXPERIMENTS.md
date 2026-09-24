@@ -425,6 +425,82 @@ the flipped verdicts at *d* = 1.0 are flagged. **Every refutation gets published
 
 ---
 
+### RESULT — H7a, H7b, H7c all survive; two of five predictions were wrong
+
+Recorded after the run. The predictions above were committed first (`f653ee9`) and are not edited.
+
+The rule selected **`warezmaster`**: 20 training rows, 269 champion alerts in the feedback pool, 331
+rows in the evaluation split. KDDTest+ split 6,764 canary / 7,893 feedback / 7,887 evaluation; the
+champion alerted on 4,028 feedback rows and every one of them received a verdict.
+
+| arm | flipped | target recall [95% CI] | overall recall | FPR | gate | flipped verdicts flagged |
+|---|---:|---|---:|---:|---|---:|
+| champion | — | 0.843 [0.800, 0.878] | 0.8311 | 0.1018 | — | — |
+| honest | 0 | **0.979** [0.957, 0.990] | **0.9352** | **0.0432** | pass | — |
+| poisoned 10% | 27 | 0.979 [0.957, 0.990] | 0.9358 | 0.0438 | pass | **0%** |
+| poisoned 25% | 67 | 0.970 [0.945, 0.984] | 0.9107 | 0.0374 | pass | 100% |
+| poisoned 50% | 134 | 0.952 [0.923, 0.970] | 0.9100 | 0.0382 | pass | 100% |
+| poisoned 100% | 269 | **0.193** [0.154, 0.239] | 0.8859 | 0.0435 | **FAIL** (G2) | 100% |
+
+Evaluation-split numbers throughout; the gate saw only the canary. Two runs, identical to the
+fourth decimal.
+
+**Prediction 1 — honest feedback helps: confirmed, and by more than expected.** Target recall
+0.843 → 0.979, overall 0.831 → 0.935, and FPR falls from 10.2% to 4.3%: the `false_positive`
+verdicts teach the model what this network's benign traffic looks like. Read the size with care.
+The feedback pool is drawn from the same shifted `KDDTest+` distribution as the evaluation split, so
+this is the loop doing domain adaptation, which is its job, but the magnitude reflects how far
+`KDDTest+` sits from `KDDTrain+` (§10.4c). It does not transfer as a number.
+
+**Prediction 2 — dose-response: confirmed, but the shape is a cliff, not a slope.** 0.979, 0.970,
+0.952, then **0.193** at 100%, a loss of 0.65 against the champion. Flipping a quarter or half of the
+target's verdicts barely registers, because the *remaining honest* `true_positive` verdicts on the
+same attack type outvote the flipped ones. The attack only works if the attacker clears
+essentially **every** alert of their own traffic. That is what makes it visible (prediction 4).
+
+**Prediction 3 — the gate fails 50% and 100%: wrong on 50%.** It failed only the 100% arm, on G2,
+naming `warezmaster` (canary recall 0.802 → 0.233 on 283 rows). The 50% arm passed, but it did no
+damage *relative to the champion*: 0.952 against 0.843. It lost 0.027 relative to the honest
+retrain, and no deployment has that counterfactual to compare against. **This is a structural limit
+of champion-relative gating: poisoning that rides alongside honest improvement is hidden by it.**
+Here that coincides with poisoning that does little harm. We have not shown it always will.
+
+**Prediction 4 — flags: confirmed on the headline, wrong on the mechanism.**
+- ≥ 90% of flipped verdicts flagged at *d* = 1.0: **100%**. Also 100% at 25% and 50%.
+- **All of it came from `actor_outlier`**, which never fired on any of the three honest accounts in
+  any arm. Mallory's clearance rate rose from 9.2% to 28.1% against a peer rate of 8.4–8.9%
+  (z = 0.9 at 10%, 5.0 at 25%, 11.4 at 50%, 23.2 at 100%).
+- **`family_campaign` never fired.** Predicted to drive detection; it contributed nothing. Mallory's
+  honest cover work adds benign clearances of her own, and at 100% even a single predicted family
+  across all 269 flips would cap her share at 269 / ≈340 ≈ 79%, just under the 80% threshold. Cover
+  work is cheap and defeats a fixed concentration threshold.
+- **`confident_contradiction` flagged 0 of the 269 flipped verdicts** and 22.9% of the honest
+  accounts' clearances (predicted > 30%; it was lower). The attack succeeds on the attack type the
+  model knows least about, so the model is never confident about it, so this flag cannot fire.
+  **The cheapest flag is blind in exactly the case that matters.**
+- At 10% nothing was flagged: 27 flips moved her clearance rate by less than noise. That dose also
+  did no measurable damage. **In this drill, detection and damage have the same floor.**
+
+**Prediction 5 — the novelty head does not rescue the poisoned model: confirmed.** At 100%, 80.7%
+of `warezmaster` rows go undetected. The novelty-only share rises from 3.6% (champion) to 12.4%,
+because the flipped rows also enter the benign-only reference the novelty head is fitted on.
+Both heads trained on the same poisoned label.
+
+#### What this changes
+
+- The outlier check is the control that earns its place. It is also the easiest to evade by
+  spreading flips across accounts, which is what the two-person rule and account security are for.
+  The drill models one compromised account, not a coordinated insider group.
+- `family_campaign` should be judged relative to peers, not against an absolute 80%. It is kept
+  as registered here, and any revision will be reported as a revision.
+- `confident_contradiction` stays as a review cue for honest mistakes. It is not a poisoning
+  control, and the review screen should not present it as one.
+
+*Reproduce: `penumbra poison-drill` (≈ 13 minutes, six full two-head fits) →
+`artifacts/reports/poisoning_nslkdd.json`.*
+
+---
+
 ## Standing rules for all experiments
 
 - **Prevalence is stated with every precision-family number.** UNSW-NB15's test set is ~55% attack;

@@ -50,8 +50,10 @@ They look identical on a dashboard and have opposite responses.
 
 1. **Check for a network event first.** New subnet, new application, a migration, a scanner deployment,
    an office reopening. Most PSI spikes are the business doing something, not the model failing.
-2. **Identify which features moved.** `penumbra drift report --since <window>` ranks by PSI with
-   Benjamini-Hochberg correction. Note that ~2 features flag spuriously per window at α = 0.05, which
+2. **Identify which features moved.** `penumbra drift -d <dataset>` ranks by PSI with
+   reference-frozen bins and Benjamini-Hochberg-corrected KS; the drift console page shows the
+   ranking. **Then check the score PSI too** — on NSL-KDD no feature crosses 0.25 while the score
+   distribution moves by 0.65 (EVALUATION §10.6). Note that ~2 features flag spuriously per window at α = 0.05, which
    is why the correction and the observed-vs-expected count exist.
 3. **Check whether prediction distribution moved with it.** Feature drift without prediction drift is
    often benign. Both moving together is the concerning case.
@@ -156,8 +158,12 @@ penumbra audit --dataset unsw           # artifact audit; run before trusting an
 penumbra train --dataset unsw
 penumbra eval  --dataset unsw --report
 penumbra loafo --dataset unsw           # the pre-registered experiment
-penumbra drift report --since 7d
 penumbra replay --inject-drift          # drift injector for the live demo
 penumbra serve                          # API + WebSocket
+penumbra registry init -d nslkdd        # the fitted model becomes the first (ungated) champion
+penumbra retrain -d nslkdd              # challenger from PROMOTED verdicts + canary gate
+penumbra registry list|promote|rollback|verify -d nslkdd
+penumbra poison-drill                   # E7: the feedback-loop poisoning drill
+penumbra drift -d nslkdd [--inject abrupt]  # per-feature PSI + BH-corrected KS
 penumbra reproduce-all                  # regenerates every number in the report
 ```
