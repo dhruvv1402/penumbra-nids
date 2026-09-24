@@ -23,6 +23,7 @@ import {
   type Suppression,
   getLabellingQueue,
   getPending,
+  getReport,
   getSuppressions,
   loadSession,
   promoteVerdicts,
@@ -36,6 +37,7 @@ export default function Feedback() {
   const [pendingDenied, setPendingDenied] = useState(false);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [rules, setRules] = useState<Suppression[]>([]);
+  const [drill, setDrill] = useState<PoisoningReport | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,6 +48,11 @@ export default function Feedback() {
       const [q, r] = await Promise.all([getLabellingQueue(token, 20), getSuppressions(token)]);
       setQueue(q.items);
       setRules(r);
+      try {
+        setDrill((await getReport<PoisoningReport>(token, "poisoning")).data);
+      } catch {
+        setDrill(null);
+      }
       setError(null);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
@@ -243,6 +250,8 @@ export default function Feedback() {
             removes them from the queue, not from the record.
           </Caption>
         </Panel>
+
+        <DrillPanel report={drill} />
       </div>
     </main>
   );
@@ -253,5 +262,90 @@ function Caption({ children }: { children: React.ReactNode }) {
     <p className="px-3 py-2 text-[11px] leading-relaxed text-[var(--color-ink-dim)] border-t border-[var(--color-border)]">
       {children}
     </p>
+  );
+}
+
+interface PoisoningArm {
+  dose?: number;
+  n_flipped?: number;
+  evaluation: { recall: number; fpr: number; target_recall: number; target_recall_ci95: [number, number] };
+  gate?: { passed: boolean; reasons: string[] };
+  integrity?: { poisoned_flagged_any: number; honest_accounts_clearances_flagged_any?: number };
+}
+
+interface PoisoningReport {
+  target: string;
+  target_train_support: number;
+  arms: Record<string, PoisoningArm>;
+}
+
+/**
+ * E7, measured: what the controls on this page actually catch. Pre-registered in EXPERIMENTS.md.
+ * The page shows the drill next to the controls because a control without a measurement is a claim.
+ */
+function DrillPanel({ report }: { report: PoisoningReport | null }) {
+  if (!report) {
+    return (
+      <Panel title="poisoning drill (E7)">
+        <Empty>
+          Not generated yet. <code>penumbra poison-drill</code> (about 13 minutes).
+        </Empty>
+      </Panel>
+    );
+  }
+  return (
+    <Panel
+      title={`poisoning drill (E7) — one account flips its own ${report.target} alerts`}
+      right={<Stat label="training rows" value={String(report.target_train_support)} />}
+    >
+      <table className="w-full text-[11px]">
+        <thead className="text-[var(--color-ink-dim)]">
+          <tr className="border-b border-[var(--color-border)]">
+            <th className="text-left font-normal px-3 py-1.5">arm</th>
+            <th className="text-right font-normal px-3 py-1.5">flipped</th>
+            <th className="text-right font-normal px-3 py-1.5">target recall</th>
+            <th className="text-right font-normal px-3 py-1.5">FPR</th>
+            <th className="text-center font-normal px-3 py-1.5">gate</th>
+            <th className="text-right font-normal px-3 py-1.5">flips flagged</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(report.arms).map(([name, arm]) => {
+            const [lo, hi] = arm.evaluation.target_recall_ci95;
+            const flagged = arm.integrity?.poisoned_flagged_any;
+            return (
+              <tr key={name} className="border-b border-[var(--color-border)]">
+                <td className="px-3 py-1.5">{name.replaceAll("_", " ")}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{arm.n_flipped ?? "—"}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">
+                  {arm.evaluation.target_recall.toFixed(3)}{" "}
+                  <span className="text-[var(--color-ink-faint)]">
+                    [{lo.toFixed(2)}, {hi.toFixed(2)}]
+                  </span>
+                </td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{arm.evaluation.fpr.toFixed(4)}</td>
+                <td
+                  className={`px-3 py-1.5 text-center ${
+                    arm.gate ? (arm.gate.passed ? "text-[var(--color-ok)]" : "text-[var(--color-sev-high)]") : ""
+                  }`}
+                >
+                  {arm.gate ? (arm.gate.passed ? "pass" : "FAIL") : "—"}
+                </td>
+                <td className="px-3 py-1.5 text-right tabular-nums">
+                  {flagged == null || Number.isNaN(flagged) ? "—" : `${(flagged * 100).toFixed(0)}%`}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <Caption>
+        The attack works only at full strength: while some honest verdicts on the same attack type
+        remain, they outvote the flipped ones. The clearance-rate outlier flag caught every flip at
+        every dose that did damage and never flagged an honest account. The canary gate failed the
+        damaging model by name, and passed the honest retrain, which cut false positives by more
+        than half.
+      </Caption>
+    </Panel>
   );
 }

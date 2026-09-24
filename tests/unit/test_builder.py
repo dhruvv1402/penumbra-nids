@@ -75,3 +75,17 @@ def test_fixture_round_trip_keeps_features(tmp_path) -> None:
     back, incidents = engine.read_fixture(path)
     assert [a.raw_features for a in back] == [a.raw_features for a in alerts]
     assert incidents == []
+
+
+class _NoDeepCopy:
+    def __deepcopy__(self, memo):  # pragma: no cover - reaching it is the failure
+        raise AssertionError("builder deep-copied DataFrame.attrs on a row access")
+
+
+def test_builder_never_deep_copies_frame_attrs() -> None:
+    # CICIDS keeps a 1.2M-row entity frame in X.attrs; pandas deep-copies attrs on every .iloc,
+    # which turned a 240k-flow replay into a 30-minute stall.
+    X = frame()
+    X.attrs["meta"] = _NoDeepCopy()
+    assert len(alerts_with_positions(StubDetector(), X)) == 5
+    assert "meta" in X.attrs  # the caller's frame is untouched

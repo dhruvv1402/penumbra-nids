@@ -8,7 +8,7 @@ Analytic Rules/   scheduled KQL detection rules, plus the mined rule packs
 Parsers/          ASIM normalizing + filtering parsers
 Data Connectors/  the DCR and connector definition
 Sigma/            mined rules that Sigma can express honestly
-Workbooks/        (not built)
+Workbooks/        PenumbraOverview.json: lanes, verdict mix, suppressions, abstention, ADR-0001 check
 ```
 
 ## The claim worth making

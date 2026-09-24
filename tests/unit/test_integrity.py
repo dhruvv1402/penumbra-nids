@@ -62,3 +62,36 @@ def test_campaign_flag_only_on_the_campaign_family() -> None:
     )
     assert "family_campaign" in flagged[0]["flags"]
     assert "family_campaign" not in flagged[1]["flags"]
+
+
+def test_family_skew_survives_cover_work() -> None:
+    # The E7 failure of family_campaign: lots of honest clearances on other families dilute the
+    # attacker's concentration below 80%. family_skew compares per family against peers instead.
+    history = honest_history()
+    # Peers see r2l alerts too, and mostly confirm them. Skew is only measurable against peers who
+    # have judged the same family.
+    history += [_v(a, "true_positive", family="r2l") for a in ("alice", "bob", "carol") for _ in range(8)]
+    history += [_v("mallory", "false_positive", family=f) for f in ("dos", "probe", "u2r") * 5]  # cover
+    history += [_v("mallory", "true_positive", family="dos") for _ in range(30)]
+    history += [_v("mallory", "false_positive", family="r2l") for _ in range(20)]  # the campaign
+    profile = integrity.actor_profiles(history)["mallory"]
+    assert "family_campaign" not in profile.flags  # the registered flag misses it
+    assert "r2l" in profile.skewed_families
+    flagged = integrity.flag_verdicts([_v("mallory", "false_positive", family="r2l")], history)
+    assert "family_skew" in flagged[0]["flags"]
+
+
+def test_family_skew_quiet_on_honest_triage() -> None:
+    profiles = integrity.actor_profiles(honest_history())
+    assert all(not p.skewed_families for p in profiles.values())
+
+
+def test_family_less_verdicts_form_their_own_bucket() -> None:
+    # E7: 244 of 269 targeted alerts had no predicted family. Skipping them made the flag blind.
+    history = honest_history()
+    history += [_v(a, "true_positive", family=None) for a in ("alice", "bob", "carol") for _ in range(10)]
+    history += [_v("mallory", "false_positive", family=None) for _ in range(15)]
+    history += [_v("mallory", "true_positive", family="dos") for _ in range(40)]
+    assert integrity.UNRECOGNISED in integrity.actor_profiles(history)["mallory"].skewed_families
+    flagged = integrity.flag_verdicts([_v("mallory", "false_positive", family=float("nan"))], history)
+    assert "family_skew" in flagged[0]["flags"]

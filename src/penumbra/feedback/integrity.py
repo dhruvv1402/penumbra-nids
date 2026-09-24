@@ -47,6 +47,8 @@ class ActorProfile:
     top_family: str | None
     top_family_share: float
     flags: list[str] = field(default_factory=list)
+    # Families on which this account clears far more often than its peers clear the SAME family.
+    skewed_families: dict[str, float] = field(default_factory=dict)
 
 
 def _clears(v: Mapping[str, Any]) -> bool:
@@ -97,7 +99,56 @@ def actor_profiles(history: Iterable[Mapping[str, Any]]) -> dict[str, ActorProfi
             profile.flags.append("actor_outlier")
         if top_n >= MIN_CAMPAIGN_CLEARANCES and share >= CAMPAIGN_SHARE:
             profile.flags.append("family_campaign")
+        profile.skewed_families = _family_skew(mine, [r for r in rows if str(r.get("actor")) != actor])
         out[actor] = profile
+    return out
+
+
+UNRECOGNISED = "(no family)"
+
+
+def _bucket(v: Mapping[str, Any]) -> str:
+    """The family the analyst saw, with "none" as a bucket of its own.
+
+    Second revision after E7: 244 of the 269 targeted alerts carried no predicted family (novelty
+    and abstention alerts), and a flag that skipped family-less verdicts could only ever see 9% of
+    the attack. "The model could not name it" is something an analyst sees, so it groups like one.
+    """
+    family = v.get("family")
+    if (
+        family is None
+        or (isinstance(family, float) and family != family)
+        or str(family) in {"", "nan", "None"}
+    ):
+        return UNRECOGNISED
+    return str(family)
+
+
+def _family_skew(mine: list[Mapping[str, Any]], peers: list[Mapping[str, Any]]) -> dict[str, float]:
+    """Per family: does this account clear it more often than its peers clear the same family?
+
+    REVISION after E7, reported as one. The registered `family_campaign` compares an account's
+    concentration against a fixed 80% and never fired: the attacker's honest cover work diluted
+    her share. This asks the question per family and against peers - "you clear r2l alerts at 45%,
+    your colleagues clear r2l alerts at 3%" - which cover work on OTHER families cannot dilute.
+    Returns {family: z} for families at or beyond OUTLIER_Z with enough clearances to mean anything.
+    """
+    out: dict[str, float] = {}
+    families = {_bucket(r) for r in mine}
+    for fam in families:
+        own = [r for r in mine if _bucket(r) == fam]
+        other = [r for r in peers if _bucket(r) == fam]
+        k = sum(_clears(r) for r in own)
+        if k < MIN_CAMPAIGN_CLEARANCES or not other:
+            continue
+        peer_rate = sum(_clears(r) for r in other) / len(other)
+        # A floor on the peer rate: if peers never clear this family, any clearance is infinite z.
+        # Half a clearance over the peer sample keeps the statistic finite and still decisive.
+        peer_rate = min(max(peer_rate, 0.5 / len(other)), 1 - 0.5 / len(other))
+        rate = k / len(own)
+        z = (rate - peer_rate) / math.sqrt(peer_rate * (1 - peer_rate) / len(own))
+        if z >= OUTLIER_Z:
+            out[fam] = z
     return out
 
 
@@ -117,6 +168,8 @@ def flag_verdicts(
             flags.extend(profile.flags)
             if "family_campaign" in flags and v.get("family") != profile.top_family:
                 flags.remove("family_campaign")
+            if _bucket(v) in profile.skewed_families:
+                flags.append("family_skew")
         out.append({**v, "flags": flags})
     return out
 
@@ -125,6 +178,7 @@ def explain(flag: str) -> str:
     return {
         "confident_contradiction": f"clears a detection the model scored >= {CONFIDENT:.2f}",
         "actor_outlier": f"this account clears detections at a rate >= {OUTLIER_Z:.0f} SE above its peers",
+        "family_skew": "this account clears this attack family far more often than its peers clear it",
         "family_campaign": (
             f"over {CAMPAIGN_SHARE:.0%} of this account's clearances target one attack family"
         ),

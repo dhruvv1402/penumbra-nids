@@ -1,0 +1,203 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "## Penumbra — network detection overview\nAlerts from Penumbra's two heads. **Penumbra never blocks**: every row carries `DvcAction = \"Allow\"`, however confident the model was. `ThreatConfidence` is the calibrated probability ×100; `Priority` is a sort key and **not** a probability; novelty is a percentile against known-benign traffic."
+      },
+      "name": "intro"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "6c0f7a3e-2b4d-4f8a-9c1e-3a5b7d9e1f20",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "type": 4,
+            "isRequired": true,
+            "value": {
+              "durationMs": 86400000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                {
+                  "durationMs": 3600000
+                },
+                {
+                  "durationMs": 86400000
+                },
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 2592000000
+                }
+              ]
+            },
+            "label": "Time range"
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PenumbraAlerts_CL\n| extend Verdict = tostring(AdditionalFields.Verdict), Lane = tostring(AdditionalFields.Lane),\n         Novelty = todouble(AdditionalFields.NoveltyPercentile), Suppression = tostring(AdditionalFields.SuppressionRuleId),\n         Model = tostring(AdditionalFields.ModelVersion)\n| summarize Alerts = count() by Lane, bin(TimeGenerated, {TimeRange:grain})",
+        "size": 0,
+        "title": "Alerts by lane",
+        "timeContext": {
+          "durationMs": 86400000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart"
+      },
+      "name": "by-lane"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PenumbraAlerts_CL\n| extend Verdict = tostring(AdditionalFields.Verdict), Lane = tostring(AdditionalFields.Lane),\n         Novelty = todouble(AdditionalFields.NoveltyPercentile), Suppression = tostring(AdditionalFields.SuppressionRuleId),\n         Model = tostring(AdditionalFields.ModelVersion)\n| summarize Alerts = count() by Verdict | order by Alerts desc",
+        "size": 0,
+        "title": "Verdict mix (BENIGN_BY_POLICY = matched an expiring suppression rule)",
+        "timeContext": {
+          "durationMs": 86400000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "piechart",
+        "customWidth": "50"
+      },
+      "name": "verdicts"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PenumbraAlerts_CL\n| extend Verdict = tostring(AdditionalFields.Verdict), Lane = tostring(AdditionalFields.Lane),\n         Novelty = todouble(AdditionalFields.NoveltyPercentile), Suppression = tostring(AdditionalFields.SuppressionRuleId),\n         Model = tostring(AdditionalFields.ModelVersion)\n| where Verdict == 'BENIGN_BY_POLICY'\n| summarize Suppressed = count(), LastSeen = max(TimeGenerated) by Suppression\n| order by Suppressed desc",
+        "size": 0,
+        "title": "What was suppressed, by rule — suppression reclassifies, it never deletes",
+        "timeContext": {
+          "durationMs": 86400000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "customWidth": "50"
+      },
+      "name": "suppressed"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PenumbraAlerts_CL\n| extend Verdict = tostring(AdditionalFields.Verdict), Lane = tostring(AdditionalFields.Lane),\n         Novelty = todouble(AdditionalFields.NoveltyPercentile), Suppression = tostring(AdditionalFields.SuppressionRuleId),\n         Model = tostring(AdditionalFields.ModelVersion)\n| where Lane == 'known_threat' and Verdict == 'KNOWN_ATTACK'\n| summarize Alerts = count(), MaxConfidence = max(ThreatConfidence), Techniques = make_set(tostring(AdditionalFields.AttackTechnique), 5) by SrcIpAddr, ThreatCategory\n| order by Alerts desc | take 20",
+        "size": 0,
+        "title": "Known-threat lane: top sources (pseudonymised)",
+        "timeContext": {
+          "durationMs": 86400000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      },
+      "name": "top-sources"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PenumbraAlerts_CL\n| extend Verdict = tostring(AdditionalFields.Verdict), Lane = tostring(AdditionalFields.Lane),\n         Novelty = todouble(AdditionalFields.NoveltyPercentile), Suppression = tostring(AdditionalFields.SuppressionRuleId),\n         Model = tostring(AdditionalFields.ModelVersion)\n| where Lane == 'hunting'\n| top 50 by Novelty desc\n| project TimeGenerated, SrcIpAddr, DstIpAddr, DstPortNumber, Novelty, DetectorAgreement = toint(AdditionalFields.DetectorAgreement), EventMessage",
+        "size": 0,
+        "title": "Hunting lane: the fixed daily budget, most unusual first (Precision@k, not FPR)",
+        "timeContext": {
+          "durationMs": 86400000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      },
+      "name": "hunting"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PenumbraAlerts_CL\n| extend Verdict = tostring(AdditionalFields.Verdict), Lane = tostring(AdditionalFields.Lane),\n         Novelty = todouble(AdditionalFields.NoveltyPercentile), Suppression = tostring(AdditionalFields.SuppressionRuleId),\n         Model = tostring(AdditionalFields.ModelVersion)\n| summarize Flows = count(), Abstained = countif(Lane == 'review') by bin(TimeGenerated, {TimeRange:grain})\n| extend AbstentionRate = todouble(Abstained) / Flows\n| project TimeGenerated, AbstentionRate",
+        "size": 0,
+        "title": "Abstention rate — the label-free drift signal (rises when the model's calibration assumption breaks)",
+        "timeContext": {
+          "durationMs": 86400000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart"
+      },
+      "name": "abstention"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PenumbraAlerts_CL\n| extend Verdict = tostring(AdditionalFields.Verdict), Lane = tostring(AdditionalFields.Lane),\n         Novelty = todouble(AdditionalFields.NoveltyPercentile), Suppression = tostring(AdditionalFields.SuppressionRuleId),\n         Model = tostring(AdditionalFields.ModelVersion)\n| summarize Alerts = count() by Model, bin(TimeGenerated, {TimeRange:grain})",
+        "size": 0,
+        "title": "Alerts by model version — a promotion or rollback shows up here",
+        "timeContext": {
+          "durationMs": 86400000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "barchart"
+      },
+      "name": "models"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PenumbraAlerts_CL\n| summarize Rows = count(), Blocking = countif(DvcAction != 'Allow')",
+        "size": 0,
+        "title": "ADR-0001 check: rows with any action other than Allow (must be 0)",
+        "timeContext": {
+          "durationMs": 86400000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": {
+            "columnMatch": "Blocking",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Rows",
+            "formatter": 12
+          },
+          "showBorder": true
+        }
+      },
+      "name": "adr0001"
+    }
+  ],
+  "fallbackResourceIds": [],
+  "fromTemplateId": "sentinel-PenumbraOverview",
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

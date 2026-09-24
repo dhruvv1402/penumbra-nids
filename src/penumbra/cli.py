@@ -803,6 +803,14 @@ def reproduce_all(
     def fitted(dataset: str) -> bool:
         return (settings().model_dir / dataset / "detector.joblib").exists()
 
+    def have_onnx() -> bool:
+        import importlib.util
+
+        return (
+            importlib.util.find_spec("skl2onnx") is not None
+            and importlib.util.find_spec("onnxruntime") is not None
+        )
+
     def have_keras() -> bool:
         try:
             import keras  # noqa: F401
@@ -904,6 +912,22 @@ def reproduce_all(
             lambda: drift_cmd("nslkdd"),
             False,
             lambda: None if have("nslkdd") else "nslkdd not fetched",
+        ),
+        (
+            "correlate cicids",
+            lambda: correlate_cmd(),
+            True,  # fit on 400k flows + replay 240k, ~12 minutes
+            lambda: None if have("cicids") else "cicids not fetched",
+        ),
+        (
+            "export-onnx nslkdd",
+            lambda: export_onnx("nslkdd"),
+            False,
+            lambda: (
+                None
+                if have("nslkdd") and fitted("nslkdd") and have_onnx()
+                else ("the `onnx` extra is not installed" if not have_onnx() else "no fitted nslkdd detector")
+            ),
         ),
         (
             "poison-drill nslkdd",
@@ -1044,6 +1068,197 @@ def gate_cmd(
         raise typer.Exit(1)
 
 
+@app.command("correlate")
+def correlate_cmd(
+    train_rows: Annotated[
+        int, typer.Option("--train-rows", help="Mon-Wed rows to fit on (strided).")
+    ] = 400_000,
+    rows: Annotated[int, typer.Option("--rows", help="Thu-Fri flows to replay (strided).")] = 240_000,
+    save: Annotated[bool, typer.Option("--save/--no-save")] = True,
+) -> None:
+    """Alert-to-incident correlation on CICIDS2017's real source IPs, end to end.
+
+    Fit the two-head detector on Mon-Wed, replay Thu-Fri with the capture's own timestamps and
+    pseudonymised source addresses, and group alerts by (source, family, 15-minute window).
+
+    Both sides are thinned by STRIDE over time order, not by taking the first N rows: the first N
+    rows of Monday contain no attacks at all, and the first N of Thursday would be one morning.
+    """
+    seed_everything()
+    from dataclasses import replace
+
+    from penumbra.alerts.correlate import Correlator
+    from penumbra.data.loaders import cicids
+    from penumbra.models.detector import PenumbraDetector
+
+    ds = cicids.load()
+    ents, stamps = cicids.entities(ds, "test"), cicids.timestamps(ds, "test")
+
+    def stride(n_total: int, n_keep: int) -> np.ndarray:
+        return np.unique(np.linspace(0, n_total - 1, min(n_keep, n_total)).astype(int))
+
+    tr = stride(len(ds.X_train), train_rows)
+    fit_ds = replace(
+        ds,
+        X_train=ds.X_train.iloc[tr].reset_index(drop=True),
+        y_train=ds.y_train.iloc[tr].reset_index(drop=True),
+        fam_train=ds.fam_train.iloc[tr].reset_index(drop=True),
+    )
+    console.print(f"[dim]fitting on {len(fit_ds.X_train):,} Mon-Wed flows (strided)...[/dim]")
+    det = PenumbraDetector(target_fpr=0.01).fit(
+        fit_ds, on_progress=lambda m: console.print(f"[dim]  {m}[/dim]")
+    )
+
+    # Time order first, then stride, so the replayed stream spans both days.
+    order = np.argsort(pd.to_datetime(pd.Series(stamps)).to_numpy(), kind="stable")
+    keep = order[stride(len(order), rows)]
+    X = ds.X_test.iloc[keep].reset_index(drop=True)
+    X.attrs.clear()  # the entity frame rides in attrs and pandas deep-copies it on every slice
+    kept_ents = [ents[i] for i in keep]
+    # Destination address and port travel as alert context, never as model features (the port is a
+    # quarantined leak column). Without them every incident title read "0 destinations, 0 ports",
+    # which hides the one thing that makes a scan a scan: fan-out.
+    dests = cicids.destinations(ds, "test")
+    kept_dests = [dests[i] for i in keep] if dests else []
+    kept_stamps = [pd.Timestamp(stamps[i]).tz_localize("UTC").to_pydatetime() for i in keep]
+
+    console.print(f"[dim]replaying {len(X):,} Thu-Fri flows...[/dim]")
+    from penumbra.alerts.builder import alerts_with_positions
+
+    alerts, row_of = [], {}
+    for start in range(0, len(X), 5000):
+        chunk = X.iloc[start : start + 5000]
+        for pos, alert in alerts_with_positions(
+            det, chunk, dataset="cicids", entities=kept_ents[start : start + 5000]
+        ):
+            alert.timestamp = kept_stamps[start + pos]
+            row_of[alert.alert_id] = start + pos
+            if kept_dests:
+                alert.network.dst_ip, alert.network.dst_port = kept_dests[start + pos]
+            alerts.append(alert)
+    result = Correlator().correlate(alerts, dataset="cicids")
+    console.print(result.summary())
+
+    # The family on an incident is the model's PREDICTION. Ground truth is attached alongside, so
+    # a mislabelled incident (e.g. Friday's DDoS called by a Wednesday class name) is visible.
+    truth = ds.fam_test.iloc[keep].reset_index(drop=True)
+    y_kept = ds.y_test.iloc[keep].to_numpy()
+
+    def composition(inc) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for aid in inc.alert_ids:
+            label = str(truth.iloc[row_of[aid]])
+            counts[label] = counts.get(label, 0) + 1
+        return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+
+    top = [
+        {
+            "title": inc.title,
+            "events": inc.event_count,
+            "destinations": inc.distinct_destinations,
+            "ports": inc.distinct_ports,
+            "severity": inc.severity.value,
+            "family_predicted": inc.family,
+            "ground_truth": composition(inc),
+        }
+        for inc in sorted(result.incidents, key=lambda i: i.event_count, reverse=True)[:25]
+    ]
+
+    biggest = max(result.incidents, key=lambda i: i.event_count) if result.incidents else None
+    report = {
+        "dataset": "cicids2017",
+        "split": "train Mon-Wed, replay Thu-Fri",
+        "train_rows": int(len(fit_ds.X_train)),
+        "replayed_flows": int(len(X)),
+        "window_minutes": 15,
+        "group_by": ["source (pseudonymised)", "predicted family", "15-minute window"],
+        "n_alerts": result.n_alerts,
+        "n_incidents": len(result.incidents),
+        "compression_ratio": result.compression_ratio,
+        "largest": None
+        if biggest is None
+        else {
+            "title": biggest.title,
+            "events": biggest.event_count,
+            "destinations": biggest.distinct_destinations,
+            "ports": biggest.distinct_ports,
+            "family_predicted": biggest.family,
+            "ground_truth": composition(biggest),
+        },
+        "attack_rows_replayed": int(ds.y_test.iloc[keep].sum()),
+        "alerts_by_verdict": {
+            v: sum(a.verdict.value == v for a in alerts) for v in {a.verdict.value for a in alerts}
+        },
+        # What each lane actually received, against ground truth. The lane an attack lands in is a
+        # routing decision; whether it reached a human at all is the detection question.
+        "verdict_truth": {
+            v: {
+                "attack": sum(
+                    1 for a in alerts if a.verdict.value == v and int(y_kept[row_of[a.alert_id]]) == 1
+                ),
+                "benign": sum(
+                    1 for a in alerts if a.verdict.value == v and int(y_kept[row_of[a.alert_id]]) == 0
+                ),
+            }
+            for v in {a.verdict.value for a in alerts}
+        },
+        "attack_rows_reaching_an_analyst": sum(1 for a in alerts if int(y_kept[row_of[a.alert_id]]) == 1),
+        "benign_rows_reaching_an_analyst": sum(1 for a in alerts if int(y_kept[row_of[a.alert_id]]) == 0),
+        "benign_rows_replayed": int((ds.y_test.iloc[keep] == 0).sum()),
+        "top": top,
+    }
+    if save:
+        out = settings().report_dir / "correlation_cicids.json"
+        out.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+        console.print(f"[dim]written to {out}[/dim]")
+
+
+@app.command("export-onnx")
+def export_onnx(
+    dataset: DatasetName = "nslkdd",
+    save: Annotated[bool, typer.Option("--save/--no-save")] = True,
+) -> None:
+    """Export the supervised head to ONNX and measure parity against scikit-learn on every test row.
+
+    Needs the `onnx` extra. The .onnx file is written next to the detector with its SHA-256.
+    """
+    try:
+        from penumbra.models import onnx_export
+    except ImportError as exc:  # pragma: no cover - depends on the extra
+        console.print("[red]Install the extra first:[/red] uv sync --extra onnx")
+        raise typer.Exit(1) from exc
+
+    det = _deployed_detector(dataset)
+    ds = _load(dataset)
+    blob = onnx_export.export(det.supervised_model, ds.X_test.head(10), ds.categorical)
+    scorer = onnx_export.OnnxScorer(
+        blob, ds.categorical, onnx_export.category_map(det.supervised_model, ds.categorical)
+    )
+    report = onnx_export.parity(
+        det.supervised_model, scorer, ds.X_test, threshold=det.gate.supervised_threshold if det.gate else 0.5
+    )
+
+    import hashlib
+
+    out = settings().model_dir / dataset.lower() / "supervised.onnx"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(blob)
+    report["bytes"] = len(blob)
+    report["sha256"] = hashlib.sha256(blob).hexdigest()
+    report["path"] = str(out)
+
+    console.print(
+        f"ONNX {len(blob) / 1e6:.1f} MB  max |dp| {report['max_abs_diff']:.2e}  "
+        f"decisions flipped {report['decisions_flipped']} of {report['n_rows']:,}  "
+        f"latency {report['sklearn_ms_per_batch']:.1f} -> {report['onnx_ms_per_batch']:.1f} ms per "
+        f"{report['latency_batch']:,} rows (x{report['speedup']:.1f})"
+    )
+    if save:
+        rp = settings().report_dir / f"onnx_{dataset.lower()}.json"
+        rp.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        console.print(f"[dim]written to {rp}[/dim]")
+
+
 # =================================================================================================
 # Model registry, retraining from promoted verdicts, and the poisoning drill
 # =================================================================================================
@@ -1162,6 +1377,45 @@ def registry_rollback(
     console.print(f"champion is now [green]{state['version']}[/green].")
 
 
+@registry_app.command("shadow")
+def registry_shadow(
+    version: Annotated[str, typer.Argument()],
+    dataset: DatasetName = "nslkdd",
+    rows: Annotated[int, typer.Option("--rows")] = 10_000,
+) -> None:
+    """Score a challenger beside the champion on the same stream, alerting on nothing.
+
+    Alert volume per head, agreement and Cohen's kappa, and what the challenger drops or adds. The
+    report is attached to the challenger's manifest, next to its gate report.
+    """
+    from penumbra.eval import shadow
+
+    reg = _registry(dataset)
+    champion = reg.champion()
+    if champion is None or champion == version:
+        console.print("[red]Need a champion, and a different version to shadow it with.[/red]")
+        raise typer.Exit(1)
+    ds = _load(dataset)
+    # The live-traffic slice: the canary never sees production scoring, so shadow on feedback rows.
+    from penumbra.eval import canary
+
+    _, live, _ = canary.live_split(_canary_labels(dataset, ds))
+    live = live[:rows]
+    X, y = ds.X_test.iloc[live], ds.y_test.iloc[live].to_numpy()
+    from penumbra.models.registry import RegistryError
+
+    try:
+        report = shadow.compare(reg.load(champion).score(X), reg.load(version).score(X), y)
+    except RegistryError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+    report["champion"] = champion
+    console.print(shadow.summary(report))
+
+    reg.attach_shadow(version, report)
+    console.print(f"[dim]attached to {version}'s manifest[/dim]")
+
+
 @registry_app.command("verify")
 def registry_verify(dataset: DatasetName = "nslkdd") -> None:
     """Re-hash every artifact against its manifest. Exit 2 if anything was modified."""
@@ -1274,6 +1528,15 @@ def retrain(
 def poison_drill(
     model: Annotated[str, typer.Option("--model", "-m")] = "rf",
     save: Annotated[bool, typer.Option("--save/--no-save")] = True,
+    flags_only: Annotated[
+        bool, typer.Option("--flags-only", help="Measure the integrity flags only; skip the six refits.")
+    ] = False,
+    exclude_target: Annotated[
+        list[str] | None,
+        typer.Option("--exclude-target", help="Skip a type the rule would pick (replication)."),
+    ] = None,
+    seed: Annotated[int, typer.Option("--seed")] = 42,
+    tag: Annotated[str, typer.Option("--tag", help="Suffix for the report file name.")] = "",
 ) -> None:
     """E7: poison the feedback loop from one analyst account and measure what the controls catch."""
     seed_everything()
@@ -1282,8 +1545,34 @@ def poison_drill(
 
     ds, fine_train, fine_test = nsl_kdd.load_with_fine_labels()
     report = poisoning.run(
-        ds, fine_train, fine_test, model_name=model, on_progress=lambda m: console.print(f"[dim]  {m}[/dim]")
+        ds,
+        fine_train,
+        fine_test,
+        model_name=model,
+        flags_only=flags_only,
+        exclude=tuple(exclude_target or ()),
+        seed=seed,
+        on_progress=lambda m: console.print(f"[dim]  {m}[/dim]"),
     )
+    if flags_only:
+        for name, arm in report["arms"].items():
+            if "integrity" not in arm:
+                continue
+            i = arm["integrity"]
+            console.print(
+                f"{name:<18} flipped {arm['n_flipped']:>4}  poisoned flagged {i['poisoned_flagged_any']:.1%}  "
+                f"honest-account clearances flagged {i['honest_accounts_clearances_flagged_any']:.1%}  "
+                + "  ".join(
+                    f"{k}={v['poisoned']:.0%}"
+                    for k, v in i["by_flag"].items()
+                    if v["poisoned"] == v["poisoned"]
+                )
+            )
+        if save:
+            out = settings().report_dir / f"poisoning_flags_nslkdd{tag}.json"
+            out.write_text(json.dumps(report, indent=2, default=float), encoding="utf-8")
+            console.print(f"[dim]written to {out}[/dim]")
+        return
 
     table = Table(
         title=f"E7 poisoning drill - target {report['target']} ({report['target_train_support']} train rows)"
@@ -1319,7 +1608,7 @@ def poison_drill(
     console.print(table)
 
     if save:
-        out = settings().report_dir / "poisoning_nslkdd.json"
+        out = settings().report_dir / f"poisoning_nslkdd{tag}.json"
         out.write_text(json.dumps(report, indent=2, default=float), encoding="utf-8")
         console.print(f"[dim]written to {out}[/dim]")
 

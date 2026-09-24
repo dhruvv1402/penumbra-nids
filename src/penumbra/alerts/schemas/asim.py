@@ -144,6 +144,10 @@ def to_asim(alert: Alert, *, device: str = "penumbra-sensor-01") -> dict[str, An
     record["AdditionalFields"] = {
         "Verdict": alert.verdict.value,
         "Lane": alert.lane.value,
+        # Set when an analyst-authored, expiring suppression rule reclassified the alert. Stored and
+        # forwarded rather than dropped, so "what did we suppress last quarter?" is answerable in
+        # the SIEM as well as in Penumbra.
+        "SuppressionRuleId": alert.suppression_rule_id,
         # Explicitly NOT ThreatConfidence: a percentile is not a probability.
         "NoveltyPercentile": round(alert.novelty_percentile, 4),
         "Priority": alert.priority,

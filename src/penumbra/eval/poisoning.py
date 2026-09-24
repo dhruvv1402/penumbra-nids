@@ -57,10 +57,12 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return (max(0.0, centre - half), min(1.0, centre + half))
 
 
-def choose_target(fine_train: pd.Series, alerted_fine: pd.Series) -> str:
+def choose_target(fine_train: pd.Series, alerted_fine: pd.Series, exclude: tuple[str, ...] = ()) -> str:
     support = fine_train.value_counts()
     alerts = alerted_fine[alerted_fine != "normal"].value_counts()
-    eligible = [t for t, n in alerts.items() if n >= MIN_TARGET_ALERTS and support.get(t, 0) > 0]
+    eligible = [
+        t for t, n in alerts.items() if n >= MIN_TARGET_ALERTS and support.get(t, 0) > 0 and t not in exclude
+    ]
     if not eligible:
         raise RuntimeError("no attack type meets the pre-registered target rule")
     return str(min(eligible, key=lambda t: (support[t], t)))
@@ -121,7 +123,7 @@ def flag_rates(records: list[dict[str, Any]]) -> dict[str, Any]:
         hit = [r for r in rows if (r["flags"] if flag is None else flag in r["flags"])]
         return len(hit) / len(rows)
 
-    names = ("confident_contradiction", "actor_outlier", "family_campaign")
+    names = ("confident_contradiction", "actor_outlier", "family_campaign", "family_skew")
     profiles = integrity.actor_profiles(records)
     # The attacker's cover work is truthful but done from the flagged account, so it is flagged
     # too - correctly. The false-flag rate that matters is on the honest ACCOUNTS.
@@ -187,6 +189,9 @@ def run(
     model_name: str = "rf",
     target_fpr: float = 0.01,
     doses: tuple[float, ...] = DOSES,
+    flags_only: bool = False,
+    exclude: tuple[str, ...] = (),
+    seed: int = SEED,
     on_progress: Any = None,
 ) -> dict[str, Any]:
     def step(msg: str) -> None:
@@ -194,7 +199,7 @@ def run(
             on_progress(msg)
 
     fine_test = fine_test.astype(str).reset_index(drop=True)
-    can_idx, fb_idx, ev_idx = canary.live_split(fine_test)
+    can_idx, fb_idx, ev_idx = canary.live_split(fine_test, seed=seed)
 
     step("champion")
     champion = PenumbraDetector(target_fpr=target_fpr).fit(ds, model_name=model_name, fit_family_model=True)
@@ -211,7 +216,7 @@ def run(
             "pred_family": scored_fb["family"].to_numpy()[alert_mask],
         }
     )
-    target = choose_target(fine_train.astype(str), alerted["fine"])
+    target = choose_target(fine_train.astype(str), alerted["fine"], exclude)
     step(f"target: {target} ({int((fine_train == target).sum())} training rows)")
 
     X_can, y_can, f_can = (
@@ -247,7 +252,16 @@ def run(
     plan = [("honest", 0.0), *[(f"poisoned_{int(d * 100)}pct", d) for d in doses]]
     for name, dose in plan:
         step(f"challenger: {name}")
-        records = verdicts(alerted, target=target, dose=dose)
+        records = verdicts(alerted, target=target, dose=dose, seed=seed)
+        if flags_only:
+            # The flags need only the verdicts, not a retrained model: minutes instead of the
+            # six full fits, for iterating on the integrity checks.
+            arms[name] = {
+                "dose": dose,
+                "n_flipped": sum(r["poisoned"] for r in records),
+                "integrity": flag_rates(records),
+            }
+            continue
         challenger = PenumbraDetector(target_fpr=target_fpr).fit(
             augmented(ds, X_fb, records, coarse_fb), model_name=model_name, fit_family_model=True
         )
@@ -268,7 +282,8 @@ def run(
         "dataset": ds.name,
         "model": model_name,
         "target_fpr": target_fpr,
-        "seed": SEED,
+        "seed": seed,
+        "excluded_targets": list(exclude),
         "target": target,
         "target_train_support": int((fine_train == target).sum()),
         "split": {"canary": len(can_idx), "feedback": len(fb_idx), "evaluation": len(ev_idx)},

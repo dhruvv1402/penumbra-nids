@@ -19,6 +19,7 @@ single most common way a read-only endpoint becomes an arbitrary-file-read endpo
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -234,5 +235,22 @@ def load(name: str) -> dict[str, Any] | None:
         "description": spec.description,
         "command": spec.command,
         "generated_at": path.stat().st_mtime,
-        "data": payload,
+        "data": finite(payload),
     }
+
+
+def finite(obj: Any) -> Any:
+    """NaN and inf become None.
+
+    The CLI writes reports with Python's json, which emits bare `NaN` for undefined values (a recall
+    over zero rows, a rate with no denominator). That is not JSON: Starlette refuses to serialise it
+    and the route returns 500, and a browser's JSON.parse rejects it outright. `null` is the honest
+    encoding of "undefined", and every console panel already renders it as a dash.
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: finite(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [finite(v) for v in obj]
+    return obj

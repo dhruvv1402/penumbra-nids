@@ -61,6 +61,37 @@ def alerts_with_positions(
     alerts back up with per-row data (timestamps, entities) needs the position, and indexing by the
     alert's place in the list silently attaches row 3's timestamp to row 40's alert.
     """
+    # pandas deep-copies `attrs` on every row access and on most operations. The CICIDS loader keeps
+    # a ~1.2M-row entity frame there, so each `X.iloc[pos]` copied the whole thing: a 240k-flow
+    # replay ran 30+ minutes pinned in `DataFrame.__deepcopy__`. Even `X.copy(deep=False)` copies
+    # attrs, so they are detached in place for the duration and restored afterwards. Entities arrive
+    # as an argument; nothing here needs the metadata.
+    saved = dict(X.attrs)
+    X.attrs.clear()
+    try:
+        return _build_positioned(
+            detector,
+            X,
+            scored,
+            policy=policy,
+            dataset=dataset,
+            entities=entities,
+            include_benign=include_benign,
+        )
+    finally:
+        X.attrs.update(saved)
+
+
+def _build_positioned(
+    detector: Any,
+    X: pd.DataFrame,
+    scored: pd.DataFrame | None,
+    *,
+    policy: ScoringPolicy | None,
+    dataset: str,
+    entities: list[str] | None,
+    include_benign: bool,
+) -> list[tuple[int, Alert]]:
     scored = scored if scored is not None else detector.score(X)
     policy = policy or getattr(detector, "policy", None) or ScoringPolicy()
     ranked = _ranked_importances(detector)

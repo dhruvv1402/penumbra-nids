@@ -59,6 +59,8 @@ rag = ["rank-bm25>=0.2.2"]
 dl = ["tensorflow>=2.18"]
 # Read-only pcap parsing. This package never transmits a packet; see docs/ETHICS_SCOPE.md.
 pcap = ["scapy>=2.6", "dpkt>=1.9.8"]
+# ONNX export of the supervised head. Scoring from an ONNX graph needs no pickle; see models/onnx_export.py.
+onnx = ["skl2onnx>=1.17", "onnxruntime>=1.19"]
 
 [project.scripts]
 penumbra = "penumbra.cli:app"
@@ -89,7 +91,7 @@ warn_redundant_casts = true
 no_implicit_optional = true
 # The scientific stack ships partial or absent stubs. We type our own code, not theirs.
 [[tool.mypy.overrides]]
-module = ["pandas.*", "joblib.*", "sklearn.*", "xgboost.*", "shap.*", "imblearn.*", "river.*", "evidently.*", "mapie.*", "scipy.*", "seaborn.*", "matplotlib.*", "rank_bm25.*", "scapy.*", "dpkt.*", "keras.*", "tensorflow.*"]
+module = ["pandas.*", "joblib.*", "sklearn.*", "xgboost.*", "shap.*", "imblearn.*", "river.*", "evidently.*", "mapie.*", "scipy.*", "seaborn.*", "matplotlib.*", "rank_bm25.*", "scapy.*", "dpkt.*", "keras.*", "tensorflow.*", "skl2onnx.*", "onnxruntime.*", "onnx.*"]
 ignore_missing_imports = true
 
 [tool.bandit]
