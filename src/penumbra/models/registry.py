@@ -30,7 +30,9 @@ writes the audit entry around each promotion.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,6 +42,19 @@ from penumbra.models.detector import PenumbraDetector
 
 MANIFEST = "manifest.json"
 CHAMPION = "champion.json"
+# A manifest that omits the artifact would verify vacuously. These must always be listed.
+REQUIRED_FILES = ("detector.joblib",)
+SIGNING_KEY_ENV = "PENUMBRA_MODEL_SIGNING_KEY"
+
+
+def _signing_key() -> bytes | None:
+    key = os.environ.get(SIGNING_KEY_ENV, "")
+    return key.encode("utf-8") if key else None
+
+
+def _signature(key: bytes, version: str, files: dict[str, str]) -> str:
+    payload = json.dumps({"version": version, "files": dict(sorted(files.items()))}, sort_keys=True).encode()
+    return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
 
 class RegistryError(RuntimeError):
@@ -67,6 +82,10 @@ class VersionInfo:
     files: dict[str, str]
     training: dict[str, Any] = field(default_factory=dict)
     gate: dict[str, Any] | None = None
+    # HMAC over (version, files) with a key held OUTSIDE the registry (PENUMBRA_MODEL_SIGNING_KEY).
+    # Without it, anyone who can write the version directory can rewrite the manifest to match a
+    # swapped artifact; with it, they would also need the key.
+    signature: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
@@ -107,15 +126,35 @@ class ModelRegistry:
         return self._version_dir(version)
 
     def verify(self, version: str) -> list[str]:
-        """Files whose digest no longer matches the manifest. Empty means intact."""
+        """Everything wrong with a version's integrity. Empty means intact.
+
+        Four checks, because a digest comparison alone verifies only what the manifest chooses to
+        list, and the manifest sits in the same writable directory as the artifact:
+          - the artifact must BE listed (an emptied manifest verifies vacuously otherwise)
+          - no unlisted file may sit in the version directory
+          - every listed digest must match
+          - when PENUMBRA_MODEL_SIGNING_KEY is set, the manifest must carry a valid signature, so a
+            rewritten manifest fails even when its digests match the swapped file
+        """
         info = self.info(version)
         directory = self._version_dir(version)
-        bad = []
+        bad = [f"{name} (not in manifest)" for name in REQUIRED_FILES if name not in info.files]
+        on_disk = {p.name for p in directory.iterdir() if p.is_file() and p.name != MANIFEST}
+        bad += [f"{name} (unlisted file)" for name in sorted(on_disk - set(info.files))]
         for name, digest in info.files.items():
             f = directory / name
             if not f.exists() or sha256(f) != digest:
                 bad.append(name)
+        key = _signing_key()
+        if key is not None and (
+            not info.signature
+            or not hmac.compare_digest(info.signature, _signature(key, version, info.files))
+        ):
+            bad.append("manifest signature")
         return bad
+
+    def signed(self, version: str) -> bool:
+        return bool(self.info(version).signature)
 
     def load(self, version: str | None = None) -> PenumbraDetector:
         """Load a version (default: the champion), refusing anything whose hashes do not match."""
@@ -155,6 +194,9 @@ class ModelRegistry:
             files=files,
             training=training or {},
         )
+        key = _signing_key()
+        if key is not None:
+            info.signature = _signature(key, version, files)
         self._write_manifest(info)
         return info
 
@@ -204,14 +246,28 @@ class ModelRegistry:
         self._write_champion(state)
         return state
 
+    @staticmethod
+    def lineage(history: list[dict[str, Any]]) -> list[str]:
+        """The stack of champions, oldest first, replayed from the history.
+
+        A promotion pushes, a rollback pops. Looking up "the entry whose version is current" instead
+        finds the previous ROLLBACK when rolling back twice, and its `previous` is the bad model:
+        v1 -> v2 -> v3, rollback -> v2, rollback -> v3 again. Replaying the stack cannot do that.
+        """
+        stack: list[str] = []
+        for h in history:
+            if h.get("action") == "promote":
+                stack.append(str(h["version"]))
+            elif h.get("action") == "rollback" and len(stack) > 1:
+                stack.pop()
+        return stack
+
     def rollback(self, *, approver: str) -> dict[str, Any]:
         """Re-point the champion at the version it replaced. A pointer change, recorded."""
         state = self.champion_state()
         current = state.get("version")
-        previous = next(
-            (h["previous"] for h in reversed(state.get("history", [])) if h["version"] == current),
-            None,
-        )
+        stack = self.lineage(state.get("history", []))
+        previous = stack[-2] if len(stack) > 1 else None
         if not previous:
             raise RegistryError("nothing to roll back to")
         # Rolling back is usually done in a hurry, which is exactly when nobody checks what they are

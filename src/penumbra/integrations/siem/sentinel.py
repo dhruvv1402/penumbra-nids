@@ -146,8 +146,15 @@ class AzureSentinelSiem:
         result = SendResult()
         for batch in batches(records):
             body = json.dumps(batch, default=str).encode()
-            status = self._post(body)
             result.batches += 1
+            try:
+                status = self._post(body)
+            except (urllib.error.URLError, OSError, NotConfigured) as exc:
+                # DNS failure, refused connection, token endpoint down: reported per batch, and the
+                # remaining batches are still attempted.
+                result.rejected += len(batch)
+                result.problems.append(f"batch of {len(batch)} not delivered: {type(exc).__name__}")
+                continue
             if status in (200, 204):
                 result.accepted += len(batch)
             else:

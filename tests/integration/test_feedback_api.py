@@ -335,3 +335,103 @@ def test_pii_key_status_is_admin_only(client: TestClient) -> None:
     assert client.get("/governance/pii-keys", headers=_token(client, "senior")).status_code == 403
     body = client.get("/governance/pii-keys", headers=_token(client, "admin")).json()
     assert set(body) == {"current", "previous", "overlap_open"}
+
+
+def test_siem_outage_does_not_fail_the_ingest(client: TestClient) -> None:
+    class Broken:
+        name = "broken"
+
+        def send(self, records):
+            raise ConnectionError("SIEM down")
+
+    state.siem = Broken()
+    a = _alert(950)
+    resp = client.post(
+        "/ingest", json={"alerts": [a.model_dump(mode="json")]}, headers=_token(client, "senior")
+    )
+    assert resp.status_code == 200
+    assert resp.json()["siem"]["error"] == "ConnectionError"
+    assert "siem.forward_failed" in [e.action for e in state.audit.tail(5)]
+
+
+class TestVerdictRaces:
+    """Review findings: a re-recorded label could slip past the approver, or out of the pool."""
+
+    def test_changed_verdict_is_not_promoted_under_a_pinned_approval(self, client: TestClient) -> None:
+        a = _alert(960)
+        state.repo.save_alert(a)
+        analyst, senior = _token(client, "analyst"), _token(client, "senior")
+        client.post(f"/alerts/{a.alert_id}/verdict", json={"verdict": "true_positive"}, headers=analyst)
+        seen = {p["target_id"]: p["verdict"] for p in client.get("/feedback/pending", headers=senior).json()}
+        client.post(f"/alerts/{a.alert_id}/verdict", json={"verdict": "false_positive"}, headers=analyst)
+        resp = client.post(
+            "/feedback/promote", json={"incident_ids": [a.alert_id], "expected": seen}, headers=senior
+        ).json()
+        assert resp["promoted"] == 0
+        assert state.repo.promoted_training_rows() == []
+
+    def test_promoted_verdict_cannot_be_re_recorded(self, client: TestClient) -> None:
+        a = _alert(961)
+        state.repo.save_alert(a)
+        analyst = _token(client, "analyst")
+        client.post(f"/alerts/{a.alert_id}/verdict", json={"verdict": "true_positive"}, headers=analyst)
+        client.post(
+            "/feedback/promote", json={"incident_ids": [a.alert_id]}, headers=_token(client, "senior")
+        )
+        again = client.post(
+            f"/alerts/{a.alert_id}/verdict", json={"verdict": "false_positive"}, headers=analyst
+        )
+        assert again.status_code == 409
+        assert state.repo.promoted_training_rows()[0]["label"] == 1
+
+
+def test_placeholder_values_cannot_scope_a_suppression(client: TestClient) -> None:
+    for value in ("-", "None", "UNKNOWN", "any"):
+        resp = client.post(
+            "/suppressions",
+            json={"match": {"service": value}, "reason": "nightly vuln scanner", "days": 7},
+            headers=_token(client, "senior"),
+        )
+        assert resp.status_code == 422, value
+
+
+def test_labelling_queue_has_no_duplicates(client: TestClient) -> None:
+    unsure = build_alert(
+        p_attack=0.5,
+        novelty_percentile=0.3,
+        policy=ScoringPolicy(),
+        conformal_ambiguous=True,
+        network=NetworkContext(),
+    )
+    unsure.raw_features = {"segment": "dmz"}
+    state.repo.save_alert(unsure)
+    ids = [
+        i["alert_id"]
+        for i in client.get("/feedback/queue", headers=_token(client, "analyst")).json()["items"]
+    ]
+    assert len(ids) == len(set(ids))
+
+
+def test_incident_segment_is_derived_and_enforced(client: TestClient) -> None:
+    # Review finding: incidents were stored with segment NULL, which passes every segment filter.
+    from penumbra.alerts.models import Incident, Lane, Severity
+
+    ot = [_alert(970 + i, segment="ot") for i in range(3)]
+    state.repo.save_alerts(ot)
+    state.repo.save_incident(
+        Incident(
+            incident_id="INC-OT",
+            title="ot incident",
+            severity=Severity.HIGH,
+            lane=Lane.KNOWN_THREAT,
+            priority=90,
+            entity="pseudo:ot",
+            alert_ids=[a.alert_id for a in ot],
+            event_count=3,
+        )
+    )
+    analyst = _token(client, "analyst")  # dmz + corp only
+    assert client.get("/incidents/INC-OT", headers=analyst).status_code == 404
+    resp = client.post("/incidents/INC-OT/verdict", json={"verdict": "false_positive"}, headers=analyst)
+    assert resp.status_code == 404
+    assert client.get("/incidents/INC-OT", headers=_token(client, "senior")).status_code == 200

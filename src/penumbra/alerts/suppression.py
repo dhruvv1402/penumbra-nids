@@ -59,8 +59,26 @@ class SuppressionRule(BaseModel):
                 f"a suppression must be scoped by at least one of {list(SCOPING_FIELDS)}; "
                 "suppressing a whole family is switching the detector off"
             )
-        if any(val in {"*", "any", "0.0.0.0/0"} for val in cleaned.values()):
-            raise ValueError("wildcards are not allowed in a suppression rule")
+        # Wildcards, and the datasets' "no value" placeholders. UNSW writes "-" for "no service" on
+        # roughly half its flows, so {"service": "-"} passed as a scoped rule and would have switched
+        # detection off across every family. A placeholder scopes nothing.
+        blocked = {
+            "*",
+            "any",
+            "all",
+            "0.0.0.0/0",
+            "::/0",
+            "-",
+            "--",
+            "none",
+            "null",
+            "nan",
+            "n/a",
+            "unknown",
+            "other",
+        }
+        if any(val.lower() in blocked for val in cleaned.values()):
+            raise ValueError("wildcards and placeholder values ('-', 'none', ...) cannot scope a suppression")
         return cleaned
 
     @model_validator(mode="after")

@@ -42,7 +42,7 @@ from penumbra.config import DEV_PII_KEY, settings
 from penumbra.feedback import active, integrity
 from penumbra.integrations.siem import SiemConnector
 from penumbra.integrations.siem import connector as siem_connector
-from penumbra.storage.sqlite import SqliteRepository
+from penumbra.storage.sqlite import SqliteRepository, VerdictLocked
 
 # --- metrics --------------------------------------------------------------------------------------
 
@@ -64,7 +64,7 @@ def refuse_default_secrets() -> None:
     """
     if os.environ.get("PENUMBRA_ALLOW_DEMO_USERS"):
         return
-    if settings().pii_hmac_key == DEV_PII_KEY:
+    if settings().pii_hmac_key.strip() in {"", DEV_PII_KEY}:
         raise RuntimeError(
             "PENUMBRA_PII_HMAC_KEY (or PENUMBRA_PII_SALT) is unset, so IP pseudonymisation would use the "
             "public development key. Set it, or run with PENUMBRA_ALLOW_DEMO_USERS=1 for a local demo."
@@ -221,9 +221,14 @@ class VerdictRequest(BaseModel):
 
 
 class PromoteRequest(BaseModel):
-    """Verdict targets to promote. Named `incident_ids` for compatibility; alert ids work too."""
+    """Verdict targets to promote. Named `incident_ids` for compatibility; alert ids work too.
+
+    `expected` maps each target to the verdict the approver saw. When given, a target whose verdict
+    changed since is not promoted. The console always sends it.
+    """
 
     incident_ids: list[str]
+    expected: dict[str, str] | None = None
 
 
 class SuppressionRequest(BaseModel):
@@ -336,7 +341,10 @@ async def record_verdict(incident_id: str, body: VerdictRequest, principal: Curr
     # Scope check first: get_incident filters by segment, record_verdict does not.
     if state.repo.get_incident(incident_id, principal) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "incident not found")
-    incident = state.repo.record_verdict(incident_id, body.verdict, principal.username, body.note)
+    try:
+        incident = state.repo.record_verdict(incident_id, body.verdict, principal.username, body.note)
+    except VerdictLocked as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if incident is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "incident not found")
 
@@ -382,7 +390,12 @@ async def record_alert_verdict(alert_id: str, body: VerdictRequest, principal: C
     """
     require(principal, Permission.RECORD_VERDICT)
     _enforce_verdict_rate(principal)
-    alert = state.repo.record_alert_verdict(alert_id, body.verdict, principal.username, principal, body.note)
+    try:
+        alert = state.repo.record_alert_verdict(
+            alert_id, body.verdict, principal.username, principal, body.note
+        )
+    except VerdictLocked as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if alert is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "alert not found")
 
@@ -406,6 +419,13 @@ async def record_alert_verdict(alert_id: str, body: VerdictRequest, principal: C
     }
 
 
+def _can_see_target(verdict: dict[str, object], principal: Principal) -> bool:
+    target = str(verdict["target_id"])
+    if verdict.get("target_kind") == "alert":
+        return state.repo.get_alert(target, principal) is not None
+    return state.repo.get_incident(target, principal) is not None
+
+
 def _enforce_verdict_rate(principal: Principal) -> None:
     recent = state.repo.verdicts_by(principal.username, datetime.now(UTC) - VERDICT_RATE_WINDOW)
     if recent >= VERDICT_RATE_LIMIT:
@@ -426,7 +446,8 @@ def _enforce_verdict_rate(principal: Principal) -> None:
 async def pending_verdicts(principal: CurrentUser) -> list[dict[str, object]]:
     """Pending verdicts, each annotated with the reasons it deserves a second look."""
     require(principal, Permission.PROMOTE_VERDICT)
-    flagged = integrity.flag_verdicts(state.repo.pending_verdicts(), state.repo.verdict_history())
+    visible = [v for v in state.repo.pending_verdicts() if _can_see_target(v, principal)]
+    flagged = integrity.flag_verdicts(visible, state.repo.verdict_history())
     for v in flagged:
         v["flag_reasons"] = [integrity.explain(f) for f in v["flags"]]
         v["self_approval"] = v.get("actor") == principal.username
@@ -456,12 +477,12 @@ async def promote_verdicts(body: PromoteRequest, principal: CurrentUser) -> dict
     is benign. The two-person rule is enforced in the repository's UPDATE, so no caller can skip it.
     """
     require(principal, Permission.PROMOTE_VERDICT)
-    own = {
-        str(v["target_id"])
-        for v in state.repo.pending_verdicts()
-        if v["actor"] == principal.username and str(v["target_id"]) in set(body.incident_ids)
-    }
-    n = state.repo.promote_verdicts(body.incident_ids, principal.username)
+    # Only targets this principal can see. A segment-restricted senior promoting by id must not
+    # reach verdicts on traffic outside their segments.
+    pending = {str(v["target_id"]): v for v in state.repo.pending_verdicts()}
+    ids = [i for i in body.incident_ids if i not in pending or _can_see_target(pending[i], principal)]
+    own = {i for i in ids if i in pending and pending[i]["actor"] == principal.username}
+    n = state.repo.promote_verdicts(ids, principal.username, body.expected)
     state.audit.append(
         actor=principal.username,
         role=principal.role.value,
@@ -524,8 +545,22 @@ async def ingest(body: IngestRequest, principal: CurrentUser) -> dict[str, Any]:
     if state.siem is not None and body.alerts:
         # Forwarded after suppression, so the SIEM sees BENIGN_BY_POLICY with its rule id rather than
         # a detection Penumbra has already decided is policy. Suppressed is not deleted there either.
-        sent = state.siem.send([asim.to_asim(a) for a in body.alerts])
-        out["siem"] = {"connector": state.siem.name, "accepted": sent.accepted, "rejected": sent.rejected}
+        # In a worker thread: the Sentinel client does blocking HTTP with retries, and running it on
+        # the event loop stalled every other request and the websocket while it waited. A SIEM
+        # failure is reported, never raised - the alerts are already stored and pushed, and an
+        # outage downstream must not turn a successful ingest into a 500.
+        records = [asim.to_asim(a) for a in body.alerts]
+        try:
+            sent = await asyncio.to_thread(state.siem.send, records)
+            out["siem"] = {"connector": state.siem.name, "accepted": sent.accepted, "rejected": sent.rejected}
+        except Exception as exc:  # noqa: BLE001 - see above
+            out["siem"] = {"connector": state.siem.name, "accepted": 0, "error": type(exc).__name__}
+            state.audit.append(
+                actor=principal.username,
+                role=principal.role.value,
+                action="siem.forward_failed",
+                detail={"error": type(exc).__name__, "records": len(records)},
+            )
     return out
 
 

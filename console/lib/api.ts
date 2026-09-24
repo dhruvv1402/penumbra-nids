@@ -210,10 +210,11 @@ export const recordAlertVerdict = (token: string, alertId: string, verdict: stri
     proposed_suppression: Record<string, string> | null;
   }>(`/alerts/${alertId}/verdict`, token, { method: "POST", body: JSON.stringify({ verdict, note }) });
 
-export const promoteVerdicts = (token: string, ids: string[]) =>
+/** `expected` pins the verdict the approver saw: if it changed since, nothing is promoted. */
+export const promoteVerdicts = (token: string, ids: string[], expected?: Record<string, string>) =>
   request<{ promoted: number; refused_self_approval: string[] }>("/feedback/promote", token, {
     method: "POST",
-    body: JSON.stringify({ incident_ids: ids }),
+    body: JSON.stringify({ incident_ids: ids, expected }),
   });
 
 export interface PendingVerdict {

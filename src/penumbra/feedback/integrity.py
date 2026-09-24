@@ -78,8 +78,11 @@ def actor_profiles(history: Iterable[Mapping[str, Any]]) -> dict[str, ActorProfi
         rate = cleared / n if n else 0.0
 
         z = 0.0
-        if peers_n and 0.0 < peer_rate < 1.0 and n:
-            z = (rate - peer_rate) / math.sqrt(peer_rate * (1.0 - peer_rate) / n)
+        if peers_n and n:
+            # Floored away from 0 and 1. Without the floor, peers who never clear anything made the
+            # most extreme outlier - an account clearing everything - score z = 0.
+            floored = min(max(peer_rate, 0.5 / peers_n), 1.0 - 0.5 / peers_n)
+            z = (rate - floored) / math.sqrt(floored * (1.0 - floored) / n)
 
         families = Counter(str(r.get("family")) for r in mine if _clears(r) and r.get("family"))
         top, top_n = families.most_common(1)[0] if families else (None, 0)

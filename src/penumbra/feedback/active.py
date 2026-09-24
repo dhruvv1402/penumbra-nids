@@ -30,7 +30,15 @@ def queue(
     alerts: Iterable[Alert], *, judged: set[str] | None = None, limit: int = 25
 ) -> list[dict[str, Any]]:
     judged = judged or set()
-    candidates = [a for a in alerts if a.alert_id not in judged and a.verdict.value != "BENIGN_BY_POLICY"]
+    seen: set[str] = set()
+    candidates = []
+    for a in alerts:
+        # Callers fetch the review lane on its own AND the top of all lanes, so the same alert can
+        # arrive twice; it must be offered once.
+        if a.alert_id in judged or a.alert_id in seen or a.verdict.value == "BENIGN_BY_POLICY":
+            continue
+        seen.add(a.alert_id)
+        candidates.append(a)
     candidates.sort(
         key=lambda a: (
             0 if a.lane.value == "review" else 1,

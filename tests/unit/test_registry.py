@@ -171,3 +171,58 @@ class TestGate:
         allidx = np.concatenate(a)
         assert len(allidx) == len(set(allidx)) == len(labels)
         assert (labels.iloc[a[0]] == "dos").sum() == 12  # 30% of 40
+
+
+class TestRegistryHardening:
+    """Findings from review: the manifest could be rewritten, and a second rollback went forward."""
+
+    def _manifest(self, registry, version):
+        import json
+
+        path = registry.path(version) / "manifest.json"
+        return path, json.loads(path.read_text())
+
+    def test_emptied_manifest_does_not_verify(self, registry, detector) -> None:
+        import json
+
+        v1 = registry.register(detector, created_by="admin")
+        path, m = self._manifest(registry, v1.version)
+        m["files"] = {}
+        path.write_text(json.dumps(m))
+        assert registry.verify(v1.version)  # an empty manifest used to verify vacuously
+
+    def test_unlisted_file_in_version_dir_is_tampering(self, registry, detector) -> None:
+        v1 = registry.register(detector, created_by="admin")
+        (registry.path(v1.version) / "extra.pkl").write_bytes(b"x")
+        assert any("unlisted" in p for p in registry.verify(v1.version))
+
+    def test_rewritten_manifest_fails_the_signature(self, registry, detector, monkeypatch) -> None:
+        import json
+
+        from penumbra.models.registry import sha256
+
+        monkeypatch.setenv("PENUMBRA_MODEL_SIGNING_KEY", "held-outside-the-registry")
+        v1 = registry.register(detector, created_by="admin")
+        assert registry.signed(v1.version) and not registry.verify(v1.version)
+        # Swap the artifact AND update the digest to match: only the signature can catch this.
+        art = registry.path(v1.version) / "detector.joblib"
+        art.write_bytes(art.read_bytes() + b"\x00")
+        path, m = self._manifest(registry, v1.version)
+        m["files"]["detector.joblib"] = sha256(art)
+        path.write_text(json.dumps(m))
+        assert registry.verify(v1.version) == ["manifest signature"]
+
+    def test_second_rollback_goes_further_back_not_forward(self, registry, detector) -> None:
+        versions = []
+        for i in range(3):
+            v = registry.register(detector, created_by="admin", parent=versions[-1] if versions else None)
+            if i:
+                registry.attach_gate(v.version, PASSED)
+            registry.promote(v.version, approver="admin", allow_without_gate=(i == 0))
+            versions.append(v.version)
+        registry.rollback(approver="admin")
+        assert registry.champion() == versions[1]
+        registry.rollback(approver="admin")
+        assert registry.champion() == versions[0]  # was versions[2]: the bad model came back
+        with pytest.raises(RegistryError):
+            registry.rollback(approver="admin")

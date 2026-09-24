@@ -78,11 +78,15 @@ export default function Feedback() {
   const promote = async (ids: string[]) => {
     if (!session) return;
     try {
-      const res = await promoteVerdicts(session.token, ids);
+      const seen = Object.fromEntries((pending ?? []).filter((p) => ids.includes(p.target_id)).map((p) => [p.target_id, p.verdict]));
+      const res = await promoteVerdicts(session.token, ids, seen);
+      const stale = ids.length - res.promoted - res.refused_self_approval.length;
       setNote(
         res.refused_self_approval.length
           ? `${res.promoted} promoted. ${res.refused_self_approval.length} refused: you recorded them, so someone else must approve them.`
-          : `${res.promoted} promoted into the training pool. Recorded in the audit log.`,
+          : stale > 0
+            ? `${stale} not promoted: the verdict changed after this page loaded. Review it again.`
+            : `${res.promoted} promoted into the training pool. Recorded in the audit log.`,
       );
       await load(session.token);
     } catch (err) {

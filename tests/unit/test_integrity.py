@@ -95,3 +95,10 @@ def test_family_less_verdicts_form_their_own_bucket() -> None:
     assert integrity.UNRECOGNISED in integrity.actor_profiles(history)["mallory"].skewed_families
     flagged = integrity.flag_verdicts([_v("mallory", "false_positive", family=float("nan"))], history)
     assert "family_skew" in flagged[0]["flags"]
+
+
+def test_outlier_is_flagged_even_when_peers_never_clear() -> None:
+    # Review finding: z was only computed for 0 < peer_rate < 1, so the most extreme case scored 0.
+    history = [_v(a, "true_positive") for a in ("alice", "bob", "carol") for _ in range(20)]
+    history += [_v("mallory", "false_positive") for _ in range(15)]
+    assert "actor_outlier" in integrity.actor_profiles(history)["mallory"].flags

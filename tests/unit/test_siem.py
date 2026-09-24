@@ -115,3 +115,14 @@ def test_connector_selection(tmp_path, monkeypatch) -> None:
         monkeypatch.delenv(key, raising=False)
     with pytest.raises(NotConfigured):
         connector(tmp_path, "sentinel")  # never falls back to the mock silently
+
+
+def test_network_failure_is_reported_not_raised() -> None:
+    import urllib.error
+
+    def down(method, url, headers, body):
+        raise urllib.error.URLError("connection refused")
+
+    siem = AzureSentinelSiem(SentinelConfig.from_env(ENV), transport=down, sleep=lambda s: None)
+    result = siem.send([record()])
+    assert result.rejected == 1 and "URLError" in result.problems[0]

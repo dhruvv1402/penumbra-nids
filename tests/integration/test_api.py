@@ -56,7 +56,8 @@ def client(tmp_path_factory) -> TestClient:
             priority=88,
             entity="pseudo:host01",
             family="Reconnaissance",
-            alert_ids=[a.alert_id for a in alerts[:12]],
+            # dmz alerts only, so the incident's derived segment is one the analyst can see.
+            alert_ids=[a.alert_id for a in alerts if a.raw_features["segment"] == "dmz"][:12],
             event_count=3812,
             distinct_destinations=254,
         )

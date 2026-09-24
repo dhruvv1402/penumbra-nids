@@ -101,6 +101,13 @@ VERDICT_QUEUE_MIGRATIONS = {
 TRAINING_LABEL = {"true_positive": 1, "false_positive": 0}
 
 
+MIXED_SEGMENT = "mixed"
+
+
+class VerdictLocked(ValueError):
+    """A promoted verdict is part of the training pool and cannot be overwritten by re-recording."""
+
+
 class SqliteRepository:
     """File-backed repository. Satisfies `Repository`."""
 
@@ -211,7 +218,28 @@ class SqliteRepository:
 
     # --- incidents -------------------------------------------------------------------------------
 
+    def _incident_segment(self, incident: Incident) -> str | None:
+        """The segment an incident belongs to, derived from its alerts.
+
+        This column used to be written as NULL for every incident, and NULL passes every segment
+        filter - so a segment-restricted analyst could open and judge any incident. One segment
+        across the alerts is that segment; several is "mixed", which no restricted principal can
+        see; none known stays NULL.
+        """
+        if not incident.alert_ids:
+            return None
+        placeholders = ",".join("?" for _ in incident.alert_ids)
+        rows = self._conn.execute(
+            f"SELECT DISTINCT segment FROM alerts WHERE alert_id IN ({placeholders}) AND segment IS NOT NULL",
+            incident.alert_ids,
+        ).fetchall()
+        segments = {str(r["segment"]) for r in rows}
+        if not segments:
+            return None
+        return segments.pop() if len(segments) == 1 else MIXED_SEGMENT
+
     def save_incident(self, incident: Incident) -> None:
+        segment = self._incident_segment(incident)
         with self._tx() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO incidents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -225,7 +253,7 @@ class SqliteRepository:
                     incident.priority,
                     incident.entity,
                     incident.family,
-                    None,
+                    segment,
                     incident.status,
                     incident.analyst_verdict,
                     incident.closed_by,
@@ -337,6 +365,13 @@ class SqliteRepository:
         p_attack: float | None,
         family: str | None,
     ) -> None:
+        existing = self._conn.execute(
+            "SELECT promoted FROM verdict_queue WHERE incident_id = ?", [target]
+        ).fetchone()
+        if existing is not None and int(existing["promoted"]):
+            # INSERT OR REPLACE would reset promoted to 0, letting any analyst quietly pull an
+            # approved label back out of the training pool by re-recording it.
+            raise VerdictLocked(f"the verdict on {target} is already promoted; it cannot be re-recorded")
         with self._tx() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO verdict_queue "
@@ -367,7 +402,9 @@ class SqliteRepository:
         )
         return [dict(r) for r in rows]
 
-    def promote_verdicts(self, incident_ids: list[str], approver: str) -> int:
+    def promote_verdicts(
+        self, incident_ids: list[str], approver: str, expected: dict[str, str] | None = None
+    ) -> int:
         """Move verdicts into the training pool. Senior only - enforced at the router.
 
         **Two-person rule:** a verdict cannot be promoted by the account that recorded it. Seniors
@@ -377,12 +414,29 @@ class SqliteRepository:
         """
         if not incident_ids:
             return 0
+        now = datetime.now(UTC).isoformat()
+        if expected is not None:
+            # Pinned: promote only if the verdict is still the one the approver saw. Without this,
+            # the recorder could re-record a different label between the approver reading the
+            # queue and clicking promote, and the approver would sign off a label they never saw.
+            promoted = 0
+            with self._tx() as conn:
+                for target in incident_ids:
+                    if target not in expected:
+                        continue
+                    cur = conn.execute(
+                        "UPDATE verdict_queue SET promoted = 1, promoted_by = ?, promoted_at = ? "
+                        "WHERE incident_id = ? AND verdict = ? AND promoted = 0 AND actor != ?",
+                        [approver, now, target, expected[target], approver],
+                    )
+                    promoted += int(cur.rowcount)
+            return promoted
         placeholders = ",".join("?" for _ in incident_ids)
         with self._tx() as conn:
             cur = conn.execute(
                 f"UPDATE verdict_queue SET promoted = 1, promoted_by = ?, promoted_at = ? "
                 f"WHERE incident_id IN ({placeholders}) AND promoted = 0 AND actor != ?",
-                [approver, datetime.now(UTC).isoformat(), *incident_ids, approver],
+                [approver, now, *incident_ids, approver],
             )
             return int(cur.rowcount)
 
