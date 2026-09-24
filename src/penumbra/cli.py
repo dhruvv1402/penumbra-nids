@@ -1004,6 +1004,46 @@ def drift_cmd(
         console.print(f"[dim]written to {out}[/dim]")
 
 
+@app.command("gate")
+def gate_cmd(
+    baseline: Annotated[Path, typer.Option("--baseline")] = Path("ci/baseline_nslkdd.json"),
+    write: Annotated[
+        bool, typer.Option("--write", help="Record the current numbers as the baseline.")
+    ] = False,
+    note: Annotated[str, typer.Option("--note")] = "",
+) -> None:
+    """ML regression gate: fit the supervised head on NSL-KDD and compare to the committed baseline.
+
+    Exit 1 on a regression beyond tolerance, and also on an improvement beyond tolerance - an
+    improvement must be recorded in the baseline in the same change, so it gets reviewed.
+    """
+    seed_everything()
+    from penumbra.data.loaders import nsl_kdd
+    from penumbra.eval import regression
+    from penumbra.models import supervised
+
+    ds, _, fine_test = nsl_kdd.load_with_fine_labels()
+    model = supervised.build("rf", ds, n_classes=2, balanced=True)
+    model.fit(ds.X_train, ds.y_train)
+    scores = supervised.attack_scores(model, ds.X_test)
+    current = regression.measure(scores, ds.y_test.to_numpy(), nsl_kdd.unseen_mask(fine_test).to_numpy())
+
+    if write:
+        regression.write_baseline(baseline, current, note=note or "recorded with `penumbra gate --write`")
+        console.print(f"[green]baseline written[/green] {baseline}")
+        for m in regression.METRICS:
+            console.print(f"  {m:<24} {current[m]:.4f}")
+        return
+
+    if not baseline.exists():
+        console.print(f"[red]No baseline at {baseline}.[/red] Record one with --write.")
+        raise typer.Exit(1)
+    outcome = regression.compare(current, json.loads(baseline.read_text(encoding="utf-8")))
+    console.print(outcome.summary())
+    if not outcome.passed:
+        raise typer.Exit(1)
+
+
 # =================================================================================================
 # Model registry, retraining from promoted verdicts, and the poisoning drill
 # =================================================================================================

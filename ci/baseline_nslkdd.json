@@ -1,0 +1,20 @@
+{
+  "dataset": "nslkdd",
+  "model": "rf",
+  "note": "RF supervised head, NSL-KDD KDDTrain+ -> KDDTest+, seed-fixed",
+  "metrics": {
+    "roc_auc": 0.966848,
+    "recall_at_1pct": 0.464428,
+    "unseen_recall_at_1pct": 0.052533
+  },
+  "context": {
+    "realised_fpr": 0.009988672639275048,
+    "n_test": 22544,
+    "n_unseen": 3750
+  },
+  "tolerance": {
+    "roc_auc": 0.005,
+    "recall_at_1pct": 0.02,
+    "unseen_recall_at_1pct": 0.03
+  }
+}

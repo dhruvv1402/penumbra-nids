@@ -12,7 +12,7 @@
 #              not have to change in order to become vulnerable, and a check that only runs on
 #              push never finds that.
 #   model      the ML regression gate. Model quality is a merge blocker here, like a failing test.
-#              Skipped until Phase 2 commits a baseline to compare against.
+#              Fits on NSL-KDD and compares to ci/baseline_nslkdd.json; see eval/regression.py.
 #   image      docker build, and then the container actually starting and answering /health. A
 #              build that succeeds and a container that exits on boot are different things.
 #   dast       ZAP baseline against the running container. bandit and semgrep read the source;
@@ -151,19 +151,24 @@ jobs:
   model:
     name: ML regression gate
     runs-on: ubuntu-latest
-    # Enabled once Phase 2 commits a baseline. Until then there is nothing to regress against, and
-    # a gate that always passes teaches people to ignore it.
-    if: false
+    # Baseline committed at ci/baseline_nslkdd.json. NSL-KDD is ~20 MB from raw GitHub and the fit
+    # takes seconds, so the gate runs on every push rather than nightly.
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
       - run: |
           uv python install 3.12
-          uv sync --frozen --extra eval
+          uv sync --frozen --extra eval --extra api --extra rag --extra drift
+      - name: Fetch NSL-KDD (size-checked against the manifest)
+        run: uv run penumbra data fetch --dataset nslkdd
       - name: Model quality must not regress
-        # Fails the build if PR-AUC falls below the committed floor. Model quality is a merge
-        # blocker, not a dashboard.
-        run: uv run penumbra eval --dataset unsw --gate artifacts/baseline_metrics.json
+        # ROC-AUC, recall at exactly 1% benign FPR, and recall on the 17 attack types absent from
+        # training. Not PR-AUC: it moves with prevalence, so it would fire on data changes and stay
+        # quiet on model changes. An improvement beyond tolerance also fails, until the baseline is
+        # updated in the same change - improvements are claims, and claims get reviewed.
+        run: uv run penumbra gate --baseline ci/baseline_nslkdd.json
 
   image:
     name: the image builds
