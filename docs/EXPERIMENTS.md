@@ -347,6 +347,84 @@ Neither failure raised an exception. Both produced a plausible table.
 
 ---
 
+## E7 — Can one analyst account poison the model through the feedback loop, and do our controls notice?
+
+**Registered before the run. Nothing below was written after seeing a number.**
+
+The human-in-the-loop is the one attack surface this project created itself (THREAT_MODEL T1). An
+attacker whose traffic is being detected, and who holds one analyst account, records
+`false_positive` on their own alerts. If those labels are promoted, the next model learns the attack
+is benign. The controls are: a second senior account must promote every verdict (procedural, not
+measurable offline), integrity flags on pending verdicts, and a canary gate on the retrained model.
+This experiment measures the last two, and the damage they are meant to prevent.
+
+### Hypotheses
+
+> **H7a — the attack works, and it works where support is thin.** Retraining on flipped verdicts
+> lowers recall on the targeted attack type in proportion to the dose, because the model has little
+> honest evidence about that type to outvote the flipped labels.
+
+> **H7b — the canary gate refuses the poisoned model and accepts the honest one.** A targeted
+> poisoning attack is a per-family regression by construction; an aggregate gate would miss it, a
+> per-family gate should not.
+
+> **H7c — the integrity flags notice the attacker, and the cheapest flag is the noisiest.**
+
+### Design
+
+- **NSL-KDD.** `KDDTrain+` fits the champion. `KDDTest+` is split three ways, stratified by attack
+  type with a fixed seed: **canary** 30% (frozen trusted labels; the gate decides on these and
+  nothing else), **feedback** 35% (live traffic: the champion alerts, analysts record verdicts),
+  **evaluation** 35% (every reported number). No reported number comes from the rows that chose a
+  model.
+- **Only alerted rows get verdicts.** An analyst never sees what did not fire, and the attacker can
+  only poison a detection that fires — which is exactly their situation.
+- **Target, by a rule fixed now:** the attack type with the **smallest training support** among
+  those the champion alerts on at least 50 times in the feedback pool. We have not looked at which
+  type that selects; we expect `warezmaster` (20 training rows) or `guess_passwd` (53).
+- **Four accounts**, round-robin: three honest analysts and `mallory`, who also does her share of
+  honest triage as cover. On top of that she marks a fraction *d* of the target's alerts
+  `false_positive`, for *d* ∈ {0.10, 0.25, 0.50, 1.00}.
+- **Arms:** champion; **honest** challenger (all verdicts truthful, *d* = 0); four poisoned
+  challengers. Every challenger is `KDDTrain+` plus the verdict-labelled feedback rows, fitted with
+  the same full two-head pipeline — so flipped rows also enter the **benign-only** training set of
+  the novelty head.
+- **Gate** (`eval/canary.py`), each at the model's own deployed threshold: G1 overall recall may not
+  drop > 0.02; G2 no attack type with ≥ 20 canary rows may lose > 0.10 recall; G3 benign FPR may
+  not rise > 0.01.
+- **Flags** (`feedback/integrity.py`): `confident_contradiction` (clears a detection scored
+  ≥ 0.90), `actor_outlier` (clearance rate ≥ 3 SE above leave-one-out peers), `family_campaign`
+  (≥ 80% of an account's clearances on one predicted family). The analyst sees the *predicted*
+  family, not ground truth, so that is what the flags see too.
+
+### Predicted outcome, recorded in advance
+
+1. **Honest feedback helps.** The honest challenger passes the gate, and its target recall on the
+   evaluation split is at least the champion's — more labelled examples of a thin type.
+2. **Dose-response.** Target recall falls as *d* rises. At *d* = 1.0 it falls by **≥ 0.30** absolute
+   against the champion.
+3. **The gate has a floor.** It fails the 50% and 100% arms on **G2, naming the target type**, and
+   passes the 10% arm, whose damage we expect to be below the 0.10 tolerance. A gate that cannot see
+   a small attack is still worth having; we will report where the floor sits rather than implying
+   there is none.
+4. **Flags.** At *d* = 1.0, **≥ 90%** of flipped verdicts carry at least one flag, driven by
+   `family_campaign` and `actor_outlier`. `confident_contradiction` will **also** fire on a large
+   share (> 30%) of *honest* clearances: `KDDTest+` is shifted, so the model is often confidently
+   wrong about benign traffic. It is a review cue, not a detector, and the numbers should show why.
+5. **The novelty head does not rescue the poisoned model.** Flipped rows are labelled benign, so
+   they also enter the novelty head's benign reference. We expect the novelty-only share of target
+   detections not to rise enough to compensate. Both heads are exposed to the same poisoned label.
+
+### Falsification
+
+H7a is refuted if the 100% arm loses less than 0.10 target recall — the attack would then be
+ineffective against this model, and that is the finding. H7b is refuted if the honest challenger
+fails the gate (a gate that blocks honest improvement gets switched off), or if any poisoned arm
+that lost ≥ 0.10 target recall on the evaluation split passes. H7c is refuted if fewer than half
+the flipped verdicts at *d* = 1.0 are flagged. **Every refutation gets published.**
+
+---
+
 ## Standing rules for all experiments
 
 - **Prevalence is stated with every precision-family number.** UNSW-NB15's test set is ~55% attack;
