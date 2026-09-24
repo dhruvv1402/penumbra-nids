@@ -170,6 +170,21 @@ CATALOGUE: tuple[ReportSpec, ...] = (
         "Reference-frozen PSI and Benjamini-Hochberg-corrected KS per feature, train versus test.",
     ),
     ReportSpec(
+        "calibration-unsw",
+        "calibration_unsw.json",
+        "Calibration, in-distribution and under shift (UNSW-NB15)",
+        "penumbra calibrate -d unsw",
+        "Brier, ECE and reliability bins for uncalibrated, isotonic and Platt, on a held-out training "
+        "slice and on the shifted test split.",
+    ),
+    ReportSpec(
+        "calibration-nslkdd",
+        "calibration_nslkdd.json",
+        "Calibration, in-distribution and under shift (NSL-KDD)",
+        "penumbra calibrate -d nslkdd",
+        "The same comparison on NSL-KDD, whose test split is far more shifted.",
+    ),
+    ReportSpec(
         "poisoning",
         "poisoning_nslkdd.json",
         "Feedback-loop poisoning drill (E7)",

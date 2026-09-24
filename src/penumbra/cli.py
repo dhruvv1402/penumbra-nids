@@ -908,6 +908,18 @@ def reproduce_all(
             ),
         ),
         (
+            "calibrate unsw",
+            lambda: calibrate_cmd("unsw"),
+            False,
+            lambda: None if have("unsw") else "unsw not fetched",
+        ),
+        (
+            "calibrate nslkdd",
+            lambda: calibrate_cmd("nslkdd"),
+            False,
+            lambda: None if have("nslkdd") else "nslkdd not fetched",
+        ),
+        (
             "drift nslkdd",
             lambda: drift_cmd("nslkdd"),
             False,
@@ -1257,6 +1269,65 @@ def export_onnx(
         rp = settings().report_dir / f"onnx_{dataset.lower()}.json"
         rp.write_text(json.dumps(report, indent=2), encoding="utf-8")
         console.print(f"[dim]written to {rp}[/dim]")
+
+
+@app.command("calibrate")
+def calibrate_cmd(
+    dataset: DatasetName = "unsw",
+    model: Annotated[str, typer.Option("--model", "-m")] = "rf",
+    save: Annotated[bool, typer.Option("--save/--no-save")] = True,
+) -> None:
+    """Brier and reliability before and after calibration, in-distribution AND under shift.
+
+    Train is split into fit / calibration / held-out slices. The held-out slice is exchangeable with
+    the calibration data, so it shows what calibration can achieve; the test split is the dataset's
+    own shifted split, which shows what survives. Reporting only the first is how a calibration
+    claim gets made that deployment does not honour.
+    """
+    seed_everything()
+    from sklearn.model_selection import train_test_split
+
+    from penumbra.models import calibration, supervised
+    from penumbra.seeds import SEED
+
+    ds = _load(dataset, drop_artifacts=True)
+    X_rest, X_hold, y_rest, y_hold = train_test_split(
+        ds.X_train, ds.y_train, test_size=0.15, stratify=ds.y_train, random_state=SEED
+    )
+    X_fit, X_cal, y_fit, y_cal = calibration.split_for_calibration(X_rest, y_rest.to_numpy())
+    est = supervised.build(model, ds, n_classes=2, balanced=True)
+    est.fit(X_fit, y_fit)
+
+    report: dict[str, Any] = {"dataset": ds.name, "model": model, "artifacts_quarantined": True}
+    for label, X_eval, y_eval in (
+        ("held_out_train", X_hold, y_hold.to_numpy()),
+        ("test_split", ds.X_test, ds.y_test.to_numpy()),
+    ):
+        methods = calibration.compare_methods(est, X_cal, y_cal, X_eval, y_eval)
+        report[label] = {
+            name: {
+                **rep.to_dict(),
+                "decomposition": calibration.brier_decomposition(
+                    y_eval,
+                    (
+                        est
+                        if name == "uncalibrated"
+                        else calibration.calibrate(est, X_cal, y_cal, method=name)
+                    ).predict_proba(X_eval)[:, 1],
+                ),
+            }
+            for name, rep in methods.items()
+        }
+        console.print(f"\n[bold]{label}[/bold]  (n={len(y_eval):,}, prevalence {float(np.mean(y_eval)):.3f})")
+        for name, rep in methods.items():
+            console.print(
+                f"  {name:<13} Brier {rep.brier:.5f}   ECE {rep.expected_calibration_error:.5f}   MCE {rep.max_calibration_error:.5f}"
+            )
+
+    if save:
+        out = settings().report_dir / f"calibration_{dataset.lower()}.json"
+        out.write_text(json.dumps(report, indent=2, default=float), encoding="utf-8")
+        console.print(f"[dim]written to {out}[/dim]")
 
 
 # =================================================================================================

@@ -140,6 +140,7 @@ system we do not own. `penumbra.pcap` parses capture files read-only and never t
 
 ```bash
 uv sync --extra eval --extra api --extra rag --extra drift
+# optional: --extra pcap (penumbra pcap) · --extra onnx (export-onnx) · --extra dl (the E6 sequence head)
 
 uv run penumbra data fetch                 # downloads + verifies SHA256 against data/manifest.json
 uv run penumbra audit  --dataset unsw      # run this BEFORE trusting any model number

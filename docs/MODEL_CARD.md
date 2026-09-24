@@ -104,7 +104,7 @@ measured**, because they are.
 | **Binary ROC-AUC (artifact features removed)** | **UNSW rf 0.9833 [0.9828, 0.9839]** — **this is the number we stand behind**; NSL-KDD rf 0.9668 |
 | Recall @ 1% FPR | UNSW rf 0.8302 · NSL-KDD rf 0.4644 · NSL-KDD unseen-17 **0.0525** (supervised), 0.346 with the novelty head |
 | Macro-F1 across 10 classes | UNSW 0.5086 · NSL-KDD (5 classes) 0.5474 |
-| Brier score | UNSW rf 0.0698 (artifact-free). **Pre/post-isotonic comparison not measured**; the calibration module exists but no report compares the two |
+| Brier score, pre/post isotonic | UNSW held-out 0.0299 → 0.0289 (ECE 0.0150 → 0.0036). **On the shifted test split isotonic makes it worse**: 0.0703 → 0.0813. NSL-KDD test 0.1625 → 0.1725. EVALUATION §7 |
 | Per-family recall matrix | EVALUATION §10.2: UNSW DoS 0.125, Backdoor 0.093, Analysis 0.090; NSL-KDD r2l 0.059 |
 | LOAFO ΔRecall at matched alert budget | UNSW: control, mean −0.011 (families overlap; EVALUATION §10.3b). NSL-KDD unseen-17: +0.29 at 1% FPR, −0.09 at 10% |
 
@@ -164,7 +164,7 @@ headline number is reported with and without the quarantined set.
 Per-family recall, the LOAFO matrix, the unseen-17 curve and the with/without-artifact comparison
 are in `docs/EVALUATION.md` §2 and §10. **Not produced:** disaggregation by protocol, service,
 volume or duration regime (§3 lists them as intended factors; no report computes them yet) and a
-calibration reliability diagram.
+calibration reliability *diagram* (the bins are in `calibration_*.json`; no figure is drawn).
 
 Expected in advance and published regardless: **U2R and R2L recall on NSL-KDD will be poor** (52 U2R
 instances in test). That is reported with an explanation rather than omitted.

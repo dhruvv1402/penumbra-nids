@@ -133,8 +133,10 @@ def reliability(
 def calibrate(estimator: Any, X_cal: Any, y_cal: np.ndarray, *, method: str = "isotonic") -> Any:
     """Wrap a fitted estimator in a calibrator fitted on held-out data.
 
-    `cv="prefit"` is the important argument: it tells sklearn the estimator is already trained and
-    that `X_cal`/`y_cal` are calibration data it has not seen.
+    Wrapping in `FrozenEstimator` tells sklearn the estimator is already trained and that
+    `X_cal`/`y_cal` are calibration data it has not seen. (This used `cv="prefit"`, which
+    scikit-learn 1.8 deprecated and 1.9 removed; nothing called this function until `penumbra
+    calibrate`, so the breakage went unnoticed. A test now calls it.)
 
     isotonic is non-parametric and generally better with enough calibration data; sigmoid (Platt) is
     a two-parameter fit that is more stable when calibration data is scarce. Both are reported by
@@ -142,7 +144,9 @@ def calibrate(estimator: Any, X_cal: Any, y_cal: np.ndarray, *, method: str = "i
     """
     if method not in {"isotonic", "sigmoid"}:
         raise ValueError(f"unknown calibration method {method!r}")
-    calibrated = CalibratedClassifierCV(estimator, method=method, cv="prefit")
+    from sklearn.frozen import FrozenEstimator
+
+    calibrated = CalibratedClassifierCV(FrozenEstimator(estimator), method=method)
     calibrated.fit(X_cal, y_cal)
     return calibrated
 

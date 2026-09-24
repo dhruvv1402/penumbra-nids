@@ -277,6 +277,34 @@ Isotonic and Platt compared, reported by Brier score and a reliability diagram. 
 **`p_attack` only** — `priority` is a sort key and `novelty_percentile` is a percentile, and neither is
 a probability. Conflating them would be the same category error as calling a fused score calibrated.
 
+### Result: calibration fitted on training data does not survive the shift, and can make it worse
+
+`penumbra calibrate` splits the training data into fit, calibration and a held-out slice. The
+held-out slice is exchangeable with the calibration data; the test split is the dataset's own
+shifted split. RF, artifact features quarantined:
+
+| | | uncalibrated | isotonic | Platt |
+|---|---|---|---|---|
+| **UNSW** held-out train (n = 26,302) | Brier / ECE | 0.0299 / 0.0150 | **0.0289 / 0.0036** | 0.0302 / 0.0097 |
+| **UNSW** test split (n = 82,332) | Brier / ECE | **0.0703 / 0.0713** | 0.0813 / 0.0901 | 0.0870 / 0.0919 |
+| **NSL-KDD** held-out train (n = 18,896) | Brier / ECE | 0.0012 / 0.0047 | 0.0008 / **0.0004** | **0.0007** / 0.0006 |
+| **NSL-KDD** test split (n = 22,544) | Brier / ECE | **0.1625 / 0.1900** | 0.1725 / 0.1915 | 0.1886 / 0.2011 |
+
+**In-distribution, isotonic does its job:** UNSW ECE falls fourfold, NSL-KDD's more than tenfold.
+**On the shifted split, both calibrators make things worse on both datasets.** They fit a mapping
+to the training distribution's score-to-frequency relationship, and when that relationship moves
+they carry the old one into the new data with more confidence than the raw scores had. NSL-KDD's
+test Brier is ~135× its held-out value, whatever the calibrator.
+
+This is §10.6 again, from the probability side. Conformal coverage and calibrated probabilities
+both rest on the test data resembling the calibration data, and both fail the same way on the same
+split. So `p_attack` is reported as "calibrated on held-out training data", never as "calibrated".
+The monitored abstention rate (§10.6) is the deployable warning that the calibration no longer
+holds. The MCE column in the JSON is dominated by sparse high-confidence bins; read it with the
+`n` column beside it.
+
+*Reproduce: `penumbra calibrate -d unsw`, `penumbra calibrate -d nslkdd`.*
+
 ## 8. Drift
 
 - **PSI with fixed reference bin edges.** Recomputing bins per window is a common bug that makes PSI
@@ -1088,6 +1116,7 @@ uv run penumbra poison-drill                # E7: poison the feedback loop, meas
 uv run penumbra correlate                   # CICIDS alert->incident correlation, real source IPs
 uv run penumbra export-onnx -d nslkdd       # ONNX export with full-test-set parity
 uv run penumbra gate                        # the CI regression gate, locally
+uv run penumbra calibrate -d unsw           # Brier/ECE before and after calibration, in and out of distribution
 uv run penumbra reproduce-all               # everything, with reasons for what it skips
 ```
 
