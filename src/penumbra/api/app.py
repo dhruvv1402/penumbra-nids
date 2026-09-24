@@ -501,6 +501,58 @@ async def rbac_matrix(principal: CurrentUser) -> dict[str, Any]:
     }
 
 
+KNOWN_DATASETS = frozenset({"nslkdd", "unsw", "cicids"})
+
+
+@app.get("/models/{dataset}", tags=["governance"])
+async def model_registry(dataset: str, principal: CurrentUser) -> dict[str, Any]:
+    """The registry, read-only: which version is champion, why, and whether its bytes are intact.
+
+    Promotion stays a CLI action by design - it is rare, deliberate, and needs the gate report on
+    disk. What the console needs is to SHOW the evidence: every version's gate verdict, its shadow
+    comparison, and a fresh hash check, so "is production running what we evaluated?" is answered
+    by the page rather than by trust.
+    """
+    require(principal, Permission.READ_ALERTS)
+    if dataset not in KNOWN_DATASETS:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, f"unknown dataset; expected one of {sorted(KNOWN_DATASETS)}"
+        )
+    from penumbra.models.registry import ModelRegistry
+
+    reg = ModelRegistry(settings().artifact_root / "registry", dataset)
+    champion = reg.champion_state()
+    versions = []
+    for v in reg.versions():
+        shadow = v.training.get("shadow") or {}
+        versions.append(
+            {
+                "version": v.version,
+                "created_at": v.created_at,
+                "created_by": v.created_by,
+                "parent": v.parent,
+                "feedback_rows": v.training.get("feedback_rows"),
+                "approvers": v.training.get("approvers", []),
+                "gate": None
+                if v.gate is None
+                else {"passed": v.gate.get("passed"), "reasons": v.gate.get("reasons", [])},
+                "shadow": None
+                if not shadow
+                else {k: shadow.get(k) for k in ("alert_volume_ratio", "cohen_kappa", "agreement", "n_rows")},
+                "intact": not reg.verify(v.version),
+                "champion": v.version == champion.get("version"),
+            }
+        )
+    return reports.finite(
+        {
+            "dataset": dataset,
+            "champion": champion.get("version"),
+            "history": champion.get("history", []),
+            "versions": versions,
+        }
+    )
+
+
 @app.get("/reports", tags=["reports"])
 async def list_reports(principal: CurrentUser) -> dict[str, Any]:
     """Every evaluation report the console knows how to render, present or not.

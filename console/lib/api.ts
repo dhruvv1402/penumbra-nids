@@ -255,6 +255,29 @@ export const getAudit = (token: string, limit = 50) =>
     token,
   );
 
+export interface ModelVersion {
+  version: string;
+  created_at: string;
+  created_by: string;
+  parent: string | null;
+  feedback_rows: number | null;
+  approvers: string[];
+  gate: { passed: boolean; reasons: string[] } | null;
+  shadow: { alert_volume_ratio: number | null; cohen_kappa: number | null; agreement: number | null; n_rows: number } | null;
+  intact: boolean;
+  champion: boolean;
+}
+
+export interface ModelRegistry {
+  dataset: string;
+  champion: string | null;
+  history: { action: string; version: string; previous: string | null; by: string; at: string }[];
+  versions: ModelVersion[];
+}
+
+export const getModels = (token: string, dataset = "nslkdd") =>
+  request<ModelRegistry>(`/models/${dataset}`, token);
+
 export const getRbac = (token: string) =>
   request<{ matrix: string; roles: Record<string, string[]> }>("/governance/rbac", token);
 

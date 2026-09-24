@@ -265,3 +265,17 @@ def test_labelling_queue_reaches_the_review_lane_under_load(client: TestClient) 
     state.repo.save_alerts([*confident, unsure])
     items = client.get("/feedback/queue", headers=_token(client, "analyst")).json()["items"]
     assert items[0]["alert_id"] == unsure.alert_id
+
+
+def test_model_registry_is_readable_and_scoped(client: TestClient, tmp_path, monkeypatch) -> None:
+    from penumbra.api import app as app_mod
+
+    class S:
+        artifact_root = tmp_path
+
+    monkeypatch.setattr(app_mod, "settings", lambda: S())
+    analyst = _token(client, "analyst")
+    empty = client.get("/models/nslkdd", headers=analyst).json()
+    assert empty == {"dataset": "nslkdd", "champion": None, "history": [], "versions": []}
+    assert client.get("/models/..%2F..%2Fetc", headers=analyst).status_code == 404
+    assert client.get("/models/nslkdd").status_code == 401

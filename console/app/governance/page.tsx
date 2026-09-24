@@ -20,8 +20,10 @@ import Link from "next/link";
 import {
   ApiError,
   type AuditEntry,
+  type ModelRegistry,
   type Session,
   getAudit,
+  getModels,
   getRbac,
   loadSession,
   saveSession,
@@ -40,6 +42,7 @@ export default function Governance() {
   const [audit, setAudit] = useState<AuditState | null>(null);
   const [rbac, setRbac] = useState<{ matrix: string; roles: Record<string, string[]> } | null>(null);
   const [denied, setDenied] = useState(false);
+  const [models, setModels] = useState<ModelRegistry | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => setSession(loadSession()), []);
@@ -54,6 +57,11 @@ export default function Governance() {
         return;
       }
       setError(err instanceof Error ? err.message : String(err));
+    }
+    try {
+      setModels(await getModels(token, "nslkdd"));
+    } catch {
+      setModels(null);
     }
     try {
       setAudit((await getAudit(token, 100)) as AuditState);
@@ -103,6 +111,12 @@ export default function Governance() {
         >
           drift
         </Link>
+        <Link
+          href="/feedback"
+          className="text-[11px] tracking-[0.14em] uppercase text-[var(--color-ink-dim)] hover:text-[var(--color-ink)]"
+        >
+          feedback
+        </Link>
         <h1 className="text-[11px] tracking-[0.14em] uppercase">governance</h1>
         <p className="text-[11px] text-[var(--color-ink-dim)] ml-auto">
           signed in as {session.role}
@@ -119,6 +133,7 @@ export default function Governance() {
         <NoBlockPanel />
         <RbacPanel roles={rbac?.roles ?? null} role={session.role} />
         <AuditPanel audit={audit} denied={denied} role={session.role} />
+        <ModelsPanel registry={models} />
       </div>
     </main>
   );
@@ -328,6 +343,71 @@ function AuditPanel({
         chain on this request, and it names the entry where verification failed. Every
         re-identification of a pseudonymised address and every suppression rule lands here with who
         and why.
+      </Caption>
+    </Panel>
+  );
+}
+
+/**
+ * The model registry, read-only. Promotion is a CLI action by design; the page shows the evidence:
+ * which version is champion, the gate verdict and shadow comparison behind every version, and a
+ * fresh hash check of the bytes on disk.
+ */
+function ModelsPanel({ registry }: { registry: ModelRegistry | null }) {
+  if (!registry || registry.versions.length === 0) {
+    return (
+      <Panel title="model registry — nslkdd">
+        <Empty>
+          No registered versions. <code>penumbra registry init -d nslkdd</code>, then{" "}
+          <code>penumbra retrain -d nslkdd</code> after verdicts are promoted.
+        </Empty>
+      </Panel>
+    );
+  }
+  return (
+    <Panel title="model registry — nslkdd" right={<Stat label="champion" value={registry.champion ?? "—"} />}>
+      <table className="w-full text-[11px]">
+        <thead className="text-[var(--color-ink-dim)]">
+          <tr className="border-b border-[var(--color-border)]">
+            <th className="text-left font-normal px-3 py-1.5">version</th>
+            <th className="text-right font-normal px-3 py-1.5">feedback rows</th>
+            <th className="text-center font-normal px-3 py-1.5">gate</th>
+            <th className="text-right font-normal px-3 py-1.5">shadow κ · volume</th>
+            <th className="text-center font-normal px-3 py-1.5">hashes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {registry.versions.map((v) => (
+            <tr key={v.version} className="border-b border-[var(--color-border)]" title={v.gate?.reasons.join("\n")}>
+              <td className="px-3 py-1.5 font-mono text-[10px]">
+                {v.version}
+                {v.champion && <span className="ml-2 text-[var(--color-ok)]">champion</span>}
+              </td>
+              <td className="px-3 py-1.5 text-right tabular-nums">{v.feedback_rows ?? "—"}</td>
+              <td
+                className={`px-3 py-1.5 text-center ${
+                  v.gate == null ? "" : v.gate.passed ? "text-[var(--color-ok)]" : "text-[var(--color-sev-high)]"
+                }`}
+              >
+                {v.gate == null ? "initial" : v.gate.passed ? "pass" : "FAIL"}
+              </td>
+              <td className="px-3 py-1.5 text-right tabular-nums">
+                {v.shadow?.cohen_kappa != null
+                  ? `${v.shadow.cohen_kappa.toFixed(3)} · ×${(v.shadow.alert_volume_ratio ?? 0).toFixed(2)}`
+                  : "—"}
+              </td>
+              <td className={`px-3 py-1.5 text-center ${v.intact ? "text-[var(--color-ok)]" : "text-[var(--color-sev-high)]"}`}>
+                {v.intact ? "intact" : "TAMPERED"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Caption>
+        A version reaches production only with a passed per-family canary gate, and its artifact is
+        SHA-256-verified before it is ever unpickled. A pickle is code. Rollback re-points the
+        champion and is refused if the target fails its hash check. Hover a failed gate for the family
+        that failed it.
       </Caption>
     </Panel>
   );
