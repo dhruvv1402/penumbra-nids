@@ -49,12 +49,14 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PENUMBRA_DATA_ROOT=/app/data \
-    PENUMBRA_ARTIFACT_ROOT=/app/artifacts
+    PENUMBRA_ARTIFACT_ROOT=/app/artifacts     PENUMBRA_STATE_ROOT=/app/state
 
 # Bind-mount a trained model in here. Empty is a valid state: the API starts, /health answers, and
 # scoring endpoints report that no detector is loaded.
-RUN mkdir -p /app/data /app/artifacts && chown -R penumbra:penumbra /app/data /app/artifacts
-VOLUME ["/app/artifacts"]
+# Models and reports are read from /app/artifacts (compose mounts it read-only); everything the API
+# writes - SQLite, the audit chain, the SIEM mock - goes to /app/state.
+RUN mkdir -p /app/data /app/artifacts /app/state && chown -R penumbra:penumbra /app/data /app/artifacts /app/state
+VOLUME ["/app/artifacts", "/app/state"]
 
 USER penumbra
 EXPOSE 8000

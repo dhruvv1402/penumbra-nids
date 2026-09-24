@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -37,7 +38,7 @@ from penumbra.api.security import rbac
 from penumbra.api.security.audit import ACTION_SUPPRESS, AuditLog
 from penumbra.api.security.auth import InvalidToken, UserStore, decode_token, issue_token
 from penumbra.api.security.rbac import Permission, Principal
-from penumbra.config import settings
+from penumbra.config import DEV_PII_KEY, settings
 from penumbra.feedback import active, integrity
 from penumbra.integrations.siem import SiemConnector
 from penumbra.integrations.siem import connector as siem_connector
@@ -53,16 +54,34 @@ ALERTS_EMITTED = Counter("penumbra_alerts_total", "Alerts emitted", ["lane", "ve
 # --- app state ------------------------------------------------------------------------------------
 
 
+def refuse_default_secrets() -> None:
+    """Outside demo mode, refuse to start with the public development PII key.
+
+    The key is what stands between a pseudonymised address and the real one. docker-compose used to
+    set PENUMBRA_PII_SALT while the code read PENUMBRA_PII_HMAC_KEY, so a compose deployment ran on
+    the key published in this repository and nothing noticed. Failing at startup is how it gets
+    noticed.
+    """
+    if os.environ.get("PENUMBRA_ALLOW_DEMO_USERS"):
+        return
+    if settings().pii_hmac_key == DEV_PII_KEY:
+        raise RuntimeError(
+            "PENUMBRA_PII_HMAC_KEY (or PENUMBRA_PII_SALT) is unset, so IP pseudonymisation would use the "
+            "public development key. Set it, or run with PENUMBRA_ALLOW_DEMO_USERS=1 for a local demo."
+        )
+
+
 class AppState:
     def __init__(self) -> None:
-        self.repo = SqliteRepository(settings().artifact_root / "penumbra.db")
+        refuse_default_secrets()
+        self.repo = SqliteRepository(settings().state_dir / "penumbra.db")
         self.users = UserStore()
         self.users.seed_demo_users()
-        self.audit = AuditLog(settings().artifact_root / "audit.jsonl")
+        self.audit = AuditLog(settings().state_dir / "audit.jsonl")
         self.subscribers: set[WebSocket] = set()
         # PENUMBRA_SIEM=mock (default) | sentinel | none. A misconfigured `sentinel` fails here, at
         # startup, rather than on the first alert.
-        self.siem: SiemConnector | None = siem_connector(settings().artifact_root)
+        self.siem: SiemConnector | None = siem_connector(settings().state_dir)
 
     async def broadcast(self, message: dict[str, Any]) -> None:
         """Push to every connected console. A dead socket is dropped, never fatal."""

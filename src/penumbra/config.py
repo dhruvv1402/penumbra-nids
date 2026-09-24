@@ -11,7 +11,7 @@ from __future__ import annotations
 import functools
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -29,11 +29,18 @@ def _default_data_root() -> Path:
     return REPO_ROOT / "data"
 
 
+DEV_PII_KEY = "dev-only-not-a-secret"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="PENUMBRA_", env_file=".env", extra="ignore")
 
     data_root: Path = Field(default_factory=_default_data_root)
     artifact_root: Path = REPO_ROOT / "artifacts"
+    # Where the API WRITES: the SQLite store, the audit chain, the SIEM mock. Separate from the
+    # artifact root because a deployment mounts models read-only (docker-compose does) and the
+    # service must still be able to record what it saw. Defaults to the artifact root locally.
+    state_root: Path | None = None
 
     # One seed, threaded through every estimator and split. `penumbra.seeds.seed_everything`
     # is the only thing that should read it.
@@ -43,7 +50,16 @@ class Settings(BaseSettings):
     # so anyone holding this key can enumerate the whole mapping. It is therefore a secret, it is
     # stored apart from the data it protects, and re-identification is a role-gated audited call.
     # The default exists so tests run; production must set PENUMBRA_PII_HMAC_KEY.
-    pii_hmac_key: str = "dev-only-not-a-secret"
+    pii_hmac_key: str = Field(
+        default=DEV_PII_KEY,
+        # PENUMBRA_PII_SALT is what docker-compose and CI set; for a long time nothing read it, so the
+        # key silently stayed at the public default. Both names are accepted now.
+        validation_alias=AliasChoices("PENUMBRA_PII_HMAC_KEY", "PENUMBRA_PII_SALT"),
+    )
+
+    @property
+    def state_dir(self) -> Path:
+        return self.state_root or self.artifact_root
 
     @property
     def raw_dir(self) -> Path:

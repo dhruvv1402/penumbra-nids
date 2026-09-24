@@ -42,6 +42,9 @@ services:
       # Deliberately NOT set: PENUMBRA_ALLOW_DEMO_USERS. An image built from this repository has no
       # known credentials. Set it explicitly for a local demo and understand what you are doing.
       PENUMBRA_ARTIFACT_ROOT: /app/artifacts
+      # Writable state lives apart from the read-only artifacts mount. Before this existed the API
+      # tried to create its SQLite file inside the read-only mount and could not start.
+      PENUMBRA_STATE_ROOT: /app/state
       PENUMBRA_DATA_ROOT: /app/data
     volumes:
       # Read-only. The API scores with the model; it never writes one, and mounting rw would let a

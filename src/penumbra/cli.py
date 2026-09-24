@@ -1275,7 +1275,7 @@ def _audit(actor: str, action: str, target: str, detail: dict[str, Any]) -> None
     """Model promotions go in the same hash-chained log as analyst actions."""
     from penumbra.api.security.audit import AuditLog
 
-    AuditLog(settings().artifact_root / "audit.jsonl").append(
+    AuditLog(settings().state_dir / "audit.jsonl").append(
         actor=actor, role="cli", action=action, target=target, detail=detail
     )
 
@@ -1461,7 +1461,7 @@ def retrain(
         console.print(f"[red]No champion.[/red] Run `penumbra registry init -d {dataset}` first.")
         raise typer.Exit(1)
 
-    repo = SqliteRepository(db or settings().artifact_root / "penumbra.db")
+    repo = SqliteRepository(db or settings().state_dir / "penumbra.db")
     rows = repo.promoted_training_rows()
     ds = _load(dataset)
     augmented, summary = retraining.augment(ds, rows)
