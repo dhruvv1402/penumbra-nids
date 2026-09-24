@@ -41,6 +41,8 @@ export default function Evaluation() {
   const [rules, setRules] = useState<MinedRulesReport | null>(null);
   const [sequence, setSequence] = useState<SequenceReport | null>(null);
   const [evasion, setEvasion] = useState<EvasionReport | null>(null);
+  const [correlation, setCorrelation] = useState<CorrelationReport | null>(null);
+  const [calibration, setCalibration] = useState<Record<string, CalibrationReport | null>>({});
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => setSession(loadSession()), []);
@@ -63,6 +65,9 @@ export default function Evaluation() {
         pull<MinedRulesReport>("rules-unsw", setRules),
         pull<SequenceReport>("sequence", setSequence),
         pull<EvasionReport>("adversarial", setEvasion),
+        pull<CorrelationReport>("correlation", setCorrelation),
+        pull<CalibrationReport>("calibration-unsw", (v) => setCalibration((c) => ({ ...c, unsw: v }))),
+        pull<CalibrationReport>("calibration-nslkdd", (v) => setCalibration((c) => ({ ...c, nslkdd: v }))),
       ]);
       setError(null);
     } catch (err) {
@@ -123,6 +128,8 @@ export default function Evaluation() {
         <MinedRulesPanel report={rules} command={commandFor("rules-unsw")} />
         <SequencePanel report={sequence} command={commandFor("sequence")} />
         <EvasionPanel report={evasion} command={commandFor("adversarial")} />
+        <CorrelationPanel report={correlation} command={commandFor("correlation")} />
+        <CalibrationPanel reports={calibration} />
         <CataloguePanel entries={catalogue} />
       </div>
     </main>
@@ -372,6 +379,153 @@ function CataloguePanel({ entries }: { entries: ReportEntry[] }) {
       <Caption>
         Reports that have not been generated are listed rather than hidden. A page that silently
         renders nothing looks identical to one whose data is genuinely empty.
+      </Caption>
+    </Panel>
+  );
+}
+
+interface CorrelationReport {
+  replayed_flows: number;
+  n_alerts: number;
+  n_incidents: number;
+  compression_ratio: number;
+  attack_rows_replayed: number;
+  attack_rows_reaching_an_analyst?: number;
+  benign_rows_replayed?: number;
+  benign_rows_reaching_an_analyst?: number;
+  alerts_by_verdict: Record<string, number>;
+  top: {
+    title: string;
+    events: number;
+    destinations: number;
+    ports: number;
+    family_predicted: string | null;
+    ground_truth: Record<string, number>;
+  }[];
+}
+
+/** Incidents, with what they really were. The family an analyst sees is a guess; fan-out is measured. */
+function CorrelationPanel({ report, command }: { report: CorrelationReport | null; command: string }) {
+  if (!report) {
+    return (
+      <Panel title="alert → incident correlation (CICIDS2017, real source IPs)">
+        <NotGenerated command={command} />
+      </Panel>
+    );
+  }
+  const reached =
+    report.attack_rows_reaching_an_analyst != null
+      ? `${((100 * report.attack_rows_reaching_an_analyst) / report.attack_rows_replayed).toFixed(2)}%`
+      : "—";
+  return (
+    <Panel
+      title="alert → incident correlation (CICIDS2017, real source IPs)"
+      right={<CommandTag command={command} />}
+    >
+      <div className="grid grid-cols-4 border-b border-[var(--color-border)]">
+        <Stat label="alerts" value={report.n_alerts.toLocaleString()} />
+        <Stat label="incidents" value={report.n_incidents.toLocaleString()} />
+        <Stat label="events / incident" value={report.compression_ratio.toFixed(1)} />
+        <Stat label="attack flows reached analyst" value={reached} />
+      </div>
+      <table className="w-full text-[11px]">
+        <thead className="text-[var(--color-ink-dim)]">
+          <tr className="border-b border-[var(--color-border)]">
+            <th className="text-right font-normal px-3 py-1.5">events</th>
+            <th className="text-right font-normal px-3 py-1.5">dest · ports</th>
+            <th className="text-left font-normal px-3 py-1.5">family shown</th>
+            <th className="text-left font-normal px-3 py-1.5">ground truth</th>
+          </tr>
+        </thead>
+        <tbody>
+          {report.top.slice(0, 6).map((t) => (
+            <tr key={t.title + t.events} className="border-b border-[var(--color-border)]">
+              <td className="px-3 py-1.5 text-right tabular-nums">{t.events.toLocaleString()}</td>
+              <td className="px-3 py-1.5 text-right tabular-nums">
+                {t.destinations.toLocaleString()} · {t.ports.toLocaleString()}
+              </td>
+              <td className="px-3 py-1.5">{t.family_predicted ?? "(unrecognised)"}</td>
+              <td className="px-3 py-1.5 text-[var(--color-ink-dim)]">
+                {Object.entries(t.ground_truth ?? {})
+                  .slice(0, 2)
+                  .map(([k, v]) => `${k} ${v.toLocaleString()}`)
+                  .join(" · ")}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Caption>
+        {(report.alerts_by_verdict.UNCERTAIN ?? 0).toLocaleString()} of the alerts are abstentions: every Thursday–Friday
+        family is absent from Monday–Wednesday, so the supervised head does not recognise them and says so.
+        Correlation is what turns that review lane into {report.n_incidents} things to look at.
+      </Caption>
+    </Panel>
+  );
+}
+
+interface CalibrationMethod {
+  brier: number;
+  ece: number;
+}
+
+type CalibrationReport = Record<string, unknown> & {
+  held_out_train: Record<string, CalibrationMethod>;
+  test_split: Record<string, CalibrationMethod>;
+};
+
+/** Calibration that holds in-distribution and breaks under shift, side by side. */
+function CalibrationPanel({ reports }: { reports: Record<string, CalibrationReport | null> }) {
+  const rows = Object.entries(reports).filter(([, r]) => r) as [string, CalibrationReport][];
+  if (rows.length === 0) {
+    return (
+      <Panel title="calibration — in-distribution vs under shift">
+        <NotGenerated command="penumbra calibrate -d unsw" />
+      </Panel>
+    );
+  }
+  const methods = ["uncalibrated", "isotonic", "sigmoid"];
+  return (
+    <Panel title="calibration — in-distribution vs under shift">
+      <table className="w-full text-[11px]">
+        <thead className="text-[var(--color-ink-dim)]">
+          <tr className="border-b border-[var(--color-border)]">
+            <th className="text-left font-normal px-3 py-1.5">dataset · slice</th>
+            {methods.map((m) => (
+              <th key={m} className="text-right font-normal px-3 py-1.5">
+                {m === "sigmoid" ? "Platt" : m} Brier · ECE
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.flatMap(([name, r]) =>
+            (["held_out_train", "test_split"] as const).map((slice) => {
+              const best = Math.min(...methods.map((m) => r[slice][m]?.brier ?? Infinity));
+              return (
+                <tr key={name + slice} className="border-b border-[var(--color-border)]">
+                  <td className="px-3 py-1.5">
+                    {name} · {slice === "held_out_train" ? "held-out train" : "shifted test"}
+                  </td>
+                  {methods.map((m) => (
+                    <td
+                      key={m}
+                      className={`px-3 py-1.5 text-right tabular-nums ${r[slice][m]?.brier === best ? "text-[var(--color-ok)]" : ""}`}
+                    >
+                      {r[slice][m] ? `${r[slice][m].brier.toFixed(4)} · ${r[slice][m].ece.toFixed(4)}` : "—"}
+                    </td>
+                  ))}
+                </tr>
+              );
+            }),
+          )}
+        </tbody>
+      </table>
+      <Caption>
+        Isotonic calibration does its job on held-out training data and makes things worse on the
+        shifted test split, on both datasets. It carries the training distribution&apos;s mapping into
+        data where that mapping no longer holds. So p_attack is &quot;calibrated on held-out training
+        data&quot;, and the abstention rate on the drift page is the warning that it has stopped being true.
       </Caption>
     </Panel>
   );

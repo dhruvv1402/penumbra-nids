@@ -105,8 +105,9 @@ CATALOGUE: tuple[ReportSpec, ...] = (
         "correlation",
         "correlation_cicids.json",
         "Alert-to-incident correlation",
-        "penumbra replay --dataset cicids",
-        "Measured on real CICIDS2017 source addresses - the only dataset here that has any.",
+        "penumbra correlate",
+        "Measured on real CICIDS2017 source addresses - the only dataset here that has any - with "
+        "ground truth attached to every incident.",
     ),
     ReportSpec(
         "conformal",
@@ -183,6 +184,14 @@ CATALOGUE: tuple[ReportSpec, ...] = (
         "Calibration, in-distribution and under shift (NSL-KDD)",
         "penumbra calibrate -d nslkdd",
         "The same comparison on NSL-KDD, whose test split is far more shifted.",
+    ),
+    ReportSpec(
+        "onnx",
+        "onnx_nslkdd.json",
+        "ONNX export parity",
+        "penumbra export-onnx -d nslkdd",
+        "Probability difference and flipped decisions against scikit-learn on every test row, and "
+        "latency at a realistic batch size.",
     ),
     ReportSpec(
         "poisoning",
