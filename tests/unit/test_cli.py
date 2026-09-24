@@ -14,7 +14,23 @@ from typer.testing import CliRunner
 
 from penumbra.cli import app
 
-runner = CliRunner()
+# Wide and fixed: rich wraps and truncates at the detected terminal width, which is 80 or less on
+# CI and wider on a desktop, so width-dependent assertions passed locally and failed there.
+WIDE = {"COLUMNS": "300", "TERMINAL_WIDTH": "300"}
+
+
+class _Runner(CliRunner):
+    def invoke(self, *args, **kwargs):  # type: ignore[override]
+        kwargs.setdefault("env", WIDE)
+        return super().invoke(*args, **kwargs)
+
+
+runner = _Runner()
+
+
+def flat(result) -> str:
+    """Output with all wrapping collapsed, so a phrase split across lines still matches."""
+    return " ".join(result.output.split())
 
 
 @pytest.fixture()
@@ -71,19 +87,19 @@ def test_documented_commands_exist(argv: list[str]) -> None:
     ],
 )
 def test_documented_flags_exist(argv: list[str], flag: str) -> None:
-    assert flag in runner.invoke(app, argv).output
+    assert flag in flat(runner.invoke(app, argv))
 
 
 def test_fixture_replay_without_ingest_reads_the_fixture(isolated, tmp_path) -> None:
     fixture = tmp_path / "f.json"
     fixture.write_text(json.dumps({"generated_at": "x", "alerts": [], "incidents": []}), encoding="utf-8")
     result = runner.invoke(app, ["replay", "--from-fixture", str(fixture)])
-    assert result.exit_code == 0 and "0 alerts" in result.output
+    assert result.exit_code == 0 and "0 alerts" in flat(result)
 
 
 def test_missing_fixture_is_an_instruction_not_a_traceback(isolated) -> None:
     result = runner.invoke(app, ["replay", "--from-fixture", "nope.json"])
-    assert result.exit_code == 1 and "No fixture" in result.output
+    assert result.exit_code == 1 and "No fixture" in flat(result)
 
 
 def test_empty_registry_lists_and_verifies_cleanly(isolated) -> None:
@@ -93,7 +109,7 @@ def test_empty_registry_lists_and_verifies_cleanly(isolated) -> None:
 
 def test_promote_unknown_version_is_refused(isolated) -> None:
     result = runner.invoke(app, ["registry", "promote", "v999", "-d", "nslkdd"])
-    assert result.exit_code == 1 and "refused" in result.output
+    assert result.exit_code == 1 and "refused" in flat(result)
 
 
 def test_rollback_with_nothing_to_roll_back_to(isolated) -> None:
@@ -103,12 +119,12 @@ def test_rollback_with_nothing_to_roll_back_to(isolated) -> None:
 
 def test_retrain_without_a_champion_says_what_to_run(isolated) -> None:
     result = runner.invoke(app, ["retrain", "-d", "nslkdd"])
-    assert result.exit_code == 1 and "registry init" in result.output
+    assert result.exit_code == 1 and "registry init" in flat(result)
 
 
 def test_copilot_without_a_corpus_says_what_to_run(isolated) -> None:
     result = runner.invoke(app, ["copilot", "ask", "port scan"])
-    assert result.exit_code == 1 and "copilot build" in result.output
+    assert result.exit_code == 1 and "copilot build" in flat(result)
 
 
 def test_gate_without_a_baseline_says_what_to_run(isolated, tmp_path, monkeypatch) -> None:
