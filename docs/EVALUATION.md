@@ -502,26 +502,61 @@ there would be derived from identifiers we invented. `Correlator.correlate` rais
 grouping on synthesised entities, and the repository's `/stats` endpoint refuses to divide alerts by
 unrelated incidents.
 
-CICIDS2017, 240,000 test flows from the Thursday–Friday temporal split, grouped by
-(source IP, family, 15-minute window):
+`penumbra correlate`: the two-head detector is fitted on 400,000 Monday–Wednesday flows. It then
+scores 240,000 Thursday–Friday flows, strided over time order so both days are represented, with
+the capture's own timestamps and pseudonymised source addresses. Alerts are grouped by (source,
+predicted family, 15-minute window).
 
 | | |
 |---|---|
-| alerts emitted | **30,780** |
-| incidents presented | **273** |
-| events per incident | **112.7** |
+| flows replayed | 240,000 (87,822 attack, 152,178 benign) |
+| alerts emitted | **94,115** |
+| incidents presented | **203** |
+| events per incident | **463.6** |
+| attack flows that reached an analyst | **87,758 of 87,822 (99.93%)** |
+| benign flows that reached an analyst | 6,357 of 152,178 (4.2%) |
 
-The largest single incident: **a DoS Hulk flood from one source — 29,562 flows, one destination, one
-port — arrives as one thing to look at.** Without correlation that is 29,562 tickets for one event
-that a human understands in ten seconds.
+**How they reached an analyst is the finding.** Of the 94,115 alerts, **2** were `KNOWN_ATTACK`,
+2,570 `SUSPECTED_NOVEL`, and **91,543 `UNCERTAIN`**, the conformal abstention lane. That is
+correct behaviour, not a malfunction. PortScan, DDoS, Botnet, Infiltration and the web attacks
+exist *only* on Thursday and Friday, so the supervised head has never seen any of them, and it does
+not call them known attacks. The conformal layer declines to commit (exchangeability is broken,
+§10.6), and those flows go to a human. The abstention lane carried the detection on a temporal
+split whose test families are all unseen.
 
-Grouping is by `(entity, family)` rather than by entity alone, deliberately: a host running a port
-scan *and* exfiltrating data is two incidents with different responses, and merging them hides the
-second behind the first. Incidents are ranked by priority and then by event count, because two
-incidents at equal priority are not equally urgent when one represents 29,562 flows and the other
-represents one.
+**And correlation is what makes that lane workable.** 91,543 review items is not a queue anyone
+works flow by flow; 203 incidents is. Ground truth for the largest ones (the model's predicted
+family is what an analyst sees; the truth is recorded next to it):
 
-*Reproduce: see `artifacts/reports/correlation_cicids.json`.*
+| events | destinations | ports | family shown | ground truth |
+|---:|---:|---:|---|---|
+| 41,866 | 2 | 1,001 | (unrecognised) | PortScan 41,862 · Normal 4 |
+| 18,829 | 133 | 1,056 | (unrecognised) | Infiltration–PortScan 18,638 · Normal 181 |
+| 16,945 | 6 | 2 | (unrecognised) | DDoS 16,910 · Normal 35 |
+| 8,201 | 1 | 1 | **DoS Hulk** | **DDoS 8,201** |
+
+The fourth row is worth a sentence. The family classifier has no DDoS class, because DDoS only
+occurs on Friday, so it names Friday's DDoS after the nearest Wednesday class. The grouping is
+right and the label is wrong. That is why the incident view shows fan-out (1 destination, 1 port)
+next to the family: fan-out is measured, and the family is a guess.
+
+#### This replaces an earlier, unreproducible number
+
+An earlier version of this section reported **30,780 alerts → 273 incidents (112.7 per incident)**.
+It was produced before the conformal abstention lane existed, by a script that was never
+committed. `reproduce-all` could not regenerate it, and "Reproduce: see the JSON" was the only
+instruction. It is superseded rather than reconciled. The detector it measured no longer exists,
+and the comparison would be between two different systems.
+
+Two bugs surfaced while making it reproducible:
+- **Replay attached the wrong timestamps.** The k-th alert got the k-th row's time, but unflagged
+  rows are dropped, so on any stream with gaps every alert was mis-stamped. Correlation windows
+  depend on those stamps. Positions now travel with alerts (`builder.alerts_with_positions`).
+- **pandas deep-copies `DataFrame.attrs` on every row access.** The CICIDS loader keeps its
+  1.2M-row entity frame there, so the first attempt spent 30 minutes copying it. The builder now
+  detaches attrs for the duration of a scoring call.
+
+*Reproduce: `penumbra correlate` (≈ 12 minutes) → `artifacts/reports/correlation_cicids.json`.*
 
 ### 10.6 Conformal coverage as a label-free drift signal
 
@@ -983,6 +1018,15 @@ the three honest accounts. The other two flags failed, in instructive ways:
   22.9% of honest clearances. It is a review cue for honest mistakes, not a poisoning control.
 - `family_campaign` never fired. The attacker's honest cover work dilutes her concentration below a
   fixed 80% threshold. A concentration test has to be relative to peers.
+- **Post-hoc revision, in-sample, labelled as such** (EXPERIMENTS.md E7 addendum): a per-family
+  test against peers, with "no predicted family" as its own bucket. 244 of the 269 targeted alerts
+  had no family. `family_skew` flags 87–100% of flips at the damaging doses, flags none of the honest
+  accounts' clearances, and unlike the outlier check it points at the targeted verdicts rather than
+  the whole account.
+- **Replicated out of sample (E7b, pre-registered):** a different target (`back`, 956 training rows)
+  and seed. `family_skew` flagged 100% of flips at every dose, down to 13 flips, with no honest
+  false flags. `actor_outlier` missed the 25% dose. `confident_contradiction` flagged 30–41%,
+  because the model *is* confident about a well-supported type. It tracks confidence, not intent.
 
 **The canary gate caught the damaging model and passed the honest one.** It failed the 100% arm on
 the per-family criterion, naming `warezmaster` (canary recall 0.802 → 0.233 on 283 rows), while
@@ -1000,6 +1044,37 @@ distribution (§10.4c), which is its job, but the magnitude does not transfer as
 
 ---
 
+### 10.7g ONNX export of the supervised head
+
+`penumbra export-onnx -d nslkdd` converts the supervised pipeline (preprocessing + forest) to ONNX
+and checks parity on **every** test row, not a sample:
+
+| | |
+|---|---|
+| graph size | 10.2 MB |
+| max / mean \|Δp_attack\| vs scikit-learn | 7.2e-7 / 2.2e-7 (float32 inside the graph) |
+| decisions flipped at the deployed threshold (0.1231) | **0 of 22,544** |
+| latency, batch 2,048, same machine, idle | 66.0 ms sklearn → 46.6 ms onnxruntime (×1.4; a second run gave ×1.4) |
+
+**Why bother:** an ONNX graph is data, and loading it executes no Python. The joblib artifact is a
+pickle, and loading a pickle is code execution. The registry guards that with hash verification
+(§ THREAT_MODEL), but a scoring service that only needs the supervised head can drop the pickle
+surface entirely.
+
+**The conversion was not free, and the reason is worth recording.** The fitted one-hot encoder
+groups rare `service` and `flag` values into an "infrequent" column (`min_frequency=0.001`), and
+skl2onnx has no converter for that. On a toy model it raises. On the real one it converted
+without complaint, and nothing in the converter says whether rare values are encoded as sklearn
+encodes them, so we stopped relying on it. `faithful_copy` swaps in a plain encoder whose category list
+is the frequent values in sklearn's order plus a sentinel where the infrequent column sits, and
+the scorer maps rare and unseen values to the sentinel. That is exactly what
+`handle_unknown="infrequent_if_exist"` does. The parity row above is what shows the swap is exact.
+
+**Limits, stated:** the novelty head (custom frequency encoder + MLP autoencoder) and the conformal
+layer are not exported. An unseen value in a column *without* an infrequent bucket (sklearn scores
+it as all-zero) is refused with `UnseenCategory`, because the ONNX encoder cannot express all-zero.
+We refuse it rather than score it differently from what was evaluated.
+
 ### 10.8 Reproduction
 
 ```bash
@@ -1010,6 +1085,9 @@ uv run penumbra rules --dataset unsw        # mine + validate KQL/Sigma rules
 uv run penumbra sequence                    # E6: does sequence context buy recall?
 uv run penumbra loadtest --dataset unsw     # throughput, latency, and the honest conversion
 uv run penumbra poison-drill                # E7: poison the feedback loop, measure the controls
+uv run penumbra correlate                   # CICIDS alert->incident correlation, real source IPs
+uv run penumbra export-onnx -d nslkdd       # ONNX export with full-test-set parity
+uv run penumbra gate                        # the CI regression gate, locally
 uv run penumbra reproduce-all               # everything, with reasons for what it skips
 ```
 

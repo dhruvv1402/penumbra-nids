@@ -167,6 +167,8 @@ penumbra registry list|promote|rollback|verify -d nslkdd
 penumbra gate                           # ML regression gate against ci/baseline_nslkdd.json
 penumbra correlate                      # CICIDS alert->incident correlation on real source IPs
 penumbra poison-drill                   # E7: the feedback-loop poisoning drill
+penumbra poison-drill --flags-only      # the integrity flags alone, no refits (minutes)
+penumbra export-onnx -d nslkdd          # supervised head to ONNX; parity on every test row
 penumbra drift -d nslkdd [--inject abrupt]  # per-feature PSI + BH-corrected KS
 penumbra reproduce-all                  # regenerates every number in the report
 ```

@@ -560,6 +560,49 @@ assignment) is 7 instead of 42. `penumbra poison-drill --exclude-target warezmas
 **Falsification:** prediction 1 failing means `family_skew` was fitted to one drill and does not
 generalise; the addendum's numbers then describe E7 only, and we say so.
 
+#### RESULT (E7b) — `family_skew` replicates; two predictions about the other flags were wrong
+
+Recorded after the run; the registration above (`ac1f0c0`) is unedited.
+
+The rule, with `warezmaster` excluded, selected **`back`**, not `guess_passwd` as we expected:
+956 training rows, 126 champion alerts in the feedback pool. The champion does not alert on
+`guess_passwd` 50 times. That is a very different target, a well-supported DoS type the model
+already detects perfectly, which makes it a harder test of generality than the one planned.
+
+| arm | flipped | target recall [95% CI] | gate | `family_skew` | `actor_outlier` | `confident_contradiction` |
+|---|---:|---|---|---:|---:|---:|
+| champion | — | 1.000 [0.970, 1.000] | — | — | — | — |
+| honest | 0 | 1.000 [0.970, 1.000] | pass | — | — | — |
+| 10% | 13 | 1.000 [0.970, 1.000] | pass | 100% | 0% | 38% |
+| 25% | 32 | 1.000 [0.970, 1.000] | pass | 100% | **0%** | 41% |
+| 50% | 63 | 0.976 [0.932, 0.992] | pass | 100% | 100% | 30% |
+| 100% | 126 | **0.472** [0.387, 0.559] | **FAIL** | 100% | 100% | 40% |
+
+Honest accounts' clearances flagged: `family_skew` **0%**, `actor_outlier` 0%,
+`confident_contradiction` 22%.
+
+1. **`family_skew` ≥ 80% at 50/100% with ≤ 2% honest flags: confirmed, and stronger.** 100% at
+   every dose, including 10%, with no honest false flags. The E7 addendum's revision generalises to
+   a target it was not fitted on. `back` alerts carry a predicted family (`dos`) that honest
+   analysts almost never clear, so even 13 clearances stand out.
+2. **`actor_outlier` ≥ 90% at every dose ≥ 25%: wrong.** It missed the 25% dose entirely: 32
+   flips among ~1,000 verdicts do not move an account's overall clearance rate enough. A per-account
+   rate is diluted by the account's own honest volume. A per-family rate is not.
+3. **`confident_contradiction` < 10%: wrong.** 30–41%. The prediction assumed a thin type; the rule
+   picked a well-supported one, and the model is confident about `back`. This is E7's mechanism
+   confirmed from the other side. The flag tracks model confidence, not attacker intent, and it
+   still flags 22% of honest clearances.
+4. **The cliff: confirmed.** 50% stays within 0.024 of the honest retrain; 100% falls 0.53 against
+   the champion.
+5. **The gate: confirmed.** It fails 100% on G2 (`back` canary recall 1.000 → 0.426 on 108 rows)
+   and passes the honest retrain.
+
+**Across both drills:** `family_skew` is the one integrity check that caught every damaging dose
+on two different targets without flagging an honest account. It is also the only one we designed
+after seeing data, which is why E7b exists.
+
+*Reproduce: `penumbra poison-drill --exclude-target warezmaster --seed 7 --tag _rep`.*
+
 ---
 
 ## Standing rules for all experiments

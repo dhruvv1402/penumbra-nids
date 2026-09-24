@@ -63,10 +63,15 @@ attack prevalence that is an unusable ticket queue — so novelty findings do no
 
 On CICIDS2017's Thursday–Friday split, with real source IPs from the capture:
 
-**30,780 alerts → 273 incidents.** 112.7 events each.
+**94,115 alerts → 203 incidents.** 463.6 events each, and 99.93% of attack flows reached an analyst.
 
-The largest: a DoS Hulk flood producing **29,562 flows arrives as one incident**. Without
-correlation that is 29,562 tickets for one event a human understands in ten seconds.
+The largest: a PortScan of **41,862 flows across 1,001 ports arrives as one incident**. Without
+correlation that is 41,862 tickets for one event a human understands in ten seconds.
+
+Almost none of it came through the supervised head. Thursday–Friday's attack families never appear
+on Monday–Wednesday, so the classifier does not recognise them, and it says so: 91,543 of the alerts
+are conformal abstentions routed for review. The abstention lane carried the detection; correlation
+is what made 91,543 review items into 203 things to look at. `penumbra correlate` reproduces it.
 
 This number is reported from CICIDS2017 and nowhere else, because it is the only dataset here with
 real source identities. On UNSW-NB15 the correlator *raises* rather than grouping on identifiers we
@@ -153,10 +158,26 @@ cd console && npm install && npm run dev   # console on :3000
 uv run penumbra replay -d nslkdd --ingest  # stream alerts into it
 ```
 
+**Fallback with no model and no dataset:**
+`uv run penumbra replay --from-fixture tests/fixtures/demo_alerts.json --ingest` pushes 3,154
+pre-scored alerts into the running API.
+
 Sign in as `analyst`, `senior` or `admin` (password = username). The roles differ: an analyst sees
 only its own network segments and can record a verdict but **cannot promote it into the training
-pool** — that separation is what stops one compromised account from teaching the model to ignore
-its own traffic.
+pool**. A senior can, but **never their own verdict**: promotion takes a second account. That
+separation is what stops one compromised account from teaching the model to ignore its own traffic.
+
+The feedback loop, end to end:
+
+1. **Queue page:** record a verdict on any alert. *Benign by policy* opens a suppression form for
+   seniors: a rule scoped narrower than a family, with an expiry of at most 90 days. Matching alerts
+   are reclassified at ingest, stored, counted, and kept out of the queue.
+2. **Feedback page:** pending verdicts with integrity flags, a *label next* queue ranked by model
+   uncertainty, and the live suppression rules.
+3. `penumbra retrain -d nslkdd` trains a challenger on promoted verdicts and runs the per-family
+   canary gate. `penumbra registry shadow <v>` scores it beside the champion with nothing
+   alerting. `penumbra registry promote <v>` is refused without a passed gate, and `rollback` is a
+   pointer change.
 
 Add `--inject-drift abrupt` to the replay to watch the drift monitor fire at a known change point.
 
@@ -167,20 +188,29 @@ Every number in the report regenerates from a command. None are typed by hand.
 | | |
 |---|---|
 | `src/penumbra/data/` | loaders, the dataset-trap registry, and the leak audit |
-| `src/penumbra/models/` | supervised head, benign-only novelty head, fusion, calibration |
-| `src/penumbra/eval/` | metrics, prevalence correction, matched budgets, LOAFO, cost curves |
+| `src/penumbra/features/` | preprocessing (benign-only for novelty), causal entity-graph and sequence windows |
+| `src/penumbra/models/` | supervised head, benign-only novelty head, fusion, calibration, conformal, sequence, registry |
+| `src/penumbra/eval/` | metrics, prevalence, matched budgets, LOAFO, canary gate, shadow, regression gate, E7 drill |
 | `src/penumbra/drift/` | PSI with frozen bins, KS with BH correction, ADWIN, drift injector |
-| `src/penumbra/alerts/` | the canonical Alert, two-lane routing, correlation, ASIM/OCSF/ECS |
-| `src/penumbra/rag/` | ATT&CK corpus and the cited triage copilot — fully offline |
-| `src/penumbra/api/` | FastAPI, JWT, RBAC, hash-chained audit log, PII pseudonymisation |
-| `console/` | Next.js SOC console |
-| `docs/` | evaluation, model card, datasheet, threat model, ADRs, pre-registered experiments |
+| `src/penumbra/alerts/` | the canonical Alert, two-lane routing, correlation, suppression rules, ASIM/OCSF/ECS |
+| `src/penumbra/feedback/` | verdict integrity flags and the uncertainty-sampling labelling queue |
+| `src/penumbra/rules/` | KQL/Sigma rule mining from forest leaves, validated on held-out data |
+| `src/penumbra/pcap/` · `adversarial/` | pcap → flow features; problem-space evasion |
+| `src/penumbra/rag/` | ATT&CK corpus and the cited triage copilot, fully offline |
+| `src/penumbra/api/` · `storage/` | FastAPI, JWT, RBAC, hash-chained audit, PII pseudonymisation; SQLite behind a Protocol |
+| `console/` | Next.js SOC console: queue, feedback, evaluation, drift, governance |
+| `sentinel/` | ASIM parser, analytics rules, DCR, mined rule packs, overview workbook |
+| `ci/` | the ML regression gate's committed baseline |
+| `docs/` | evaluation, pre-registered experiments E1–E7, model card, datasheet, threat model, ADRs |
 
 ## Status
 
-Phases 0–2 complete and pushed. 141 tests. Working: data pipeline with leak auditing, both detector
-heads, the full honest-evaluation suite, imbalance ablation, drift detection and injection, the
-alert contract with three SIEM serialisers, RBAC + audit + PII, the API, and the console.
+347 tests. CI runs lint, types, tests, architectural invariants, SAST, dependency audit, a
+full-history secret scan, an image build and boot, ZAP DAST, and an ML regression gate on NSL-KDD.
 
-Not yet built: conformal abstention, the sequence head, KQL rule mining, the pcap converter, and the
-Sentinel solution files.
+Built: every phase in `docs/ROADMAP.md`. The supervised head also exports to ONNX with exact
+parity. Not built, and deliberately so: OpenTelemetry
+spans (Prometheus `/metrics` exists), Postgres (SQLite behind the `Repository` Protocol), and Grafana,
+all on the cut list. Also not done: a real capture from lab hardware (the pcap converter is tested on
+synthetic captures only), and Sentinel against a live workspace (the solution files exist; running
+them needs Azure credentials).

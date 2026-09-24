@@ -98,7 +98,13 @@ notes, with the LLM path behind an interface and off by default.
   guessed. `penumbra pcap`.
 - ✅ **`reproduce-all`**, which reports SKIPPED with a reason rather than passing quietly.
 - ✅ **Console**: queue, evaluation, drift and governance pages, all reading measured reports.
-- ⬜ ONNX export · ⬜ load test · ⬜ Docker Compose · ⬜ ZAP DAST
+- ✅ load test · ✅ Docker Compose · ✅ ZAP DAST in CI · ✅ ML regression gate in CI · ✅ ONNX export (supervised head, exact parity on all 22,544 test rows)
+- ✅ **Feedback loop made real**: alert-level verdicts, expiring scoped suppression rules applied at
+  ingest, two-person promotion, verdict rate limits, integrity flags, uncertainty-sampling queue,
+  model registry with hash-verified loads, per-family canary gate, shadow scoring, rollback.
+- ✅ **E7 poisoning drill**, pre-registered: one account can erase a thin attack type (0.84 → 0.19
+  recall) only by clearing all of its alerts, and the clearance-rate outlier flag caught every flip
+  at every damaging dose.
 - ⬜ Sentinel connector against a live workspace (the Protocol and the mock exist; the plan was
   always mock-first, and a live run needs credentials).
 - ⬜ A real lab capture. The converter works and is tested on synthetic captures; no capture from
