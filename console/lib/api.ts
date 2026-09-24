@@ -68,6 +68,7 @@ export interface Alert {
   suggested_action: string;
   requires_analyst_approval: boolean;
   incident_id: string | null;
+  suppression_rule_id?: string | null;
 }
 
 export interface Incident {
@@ -97,6 +98,7 @@ export interface Stats {
   alerts_hunting?: number;
   alerts_review?: number;
   pending_verdicts?: number;
+  alerts_suppressed?: number;
   [key: string]: number | undefined;
 }
 
@@ -185,11 +187,67 @@ export const recordVerdict = (token: string, incidentId: string, verdict: string
     { method: "POST", body: JSON.stringify({ verdict, note }) },
   );
 
-export const promoteVerdicts = (token: string, incidentIds: string[]) =>
-  request<{ promoted: number }>("/feedback/promote", token, {
+/** Verdict on a single alert. NSL-KDD and UNSW carry no IPs, so their alerts never correlate into
+ *  incidents - without this route every verdict button on them was a dead end. */
+export const recordAlertVerdict = (token: string, alertId: string, verdict: string, note = "") =>
+  request<{
+    queued_for_training: boolean;
+    promoted: boolean;
+    proposed_suppression: Record<string, string> | null;
+  }>(`/alerts/${alertId}/verdict`, token, { method: "POST", body: JSON.stringify({ verdict, note }) });
+
+export const promoteVerdicts = (token: string, ids: string[]) =>
+  request<{ promoted: number; refused_self_approval: string[] }>("/feedback/promote", token, {
     method: "POST",
-    body: JSON.stringify({ incident_ids: incidentIds }),
+    body: JSON.stringify({ incident_ids: ids }),
   });
+
+export interface PendingVerdict {
+  target_id: string;
+  target_kind: "alert" | "incident";
+  verdict: string;
+  actor: string;
+  note: string | null;
+  recorded_at: string;
+  p_attack: number | null;
+  family: string | null;
+  flags: string[];
+  flag_reasons: string[];
+  self_approval: boolean;
+}
+
+export const getPending = (token: string) => request<PendingVerdict[]>("/feedback/pending", token);
+
+export interface QueueItem {
+  alert_id: string;
+  lane: Lane;
+  verdict: Verdict;
+  p_attack: number;
+  novelty_percentile: number;
+  margin: number;
+  why: string;
+}
+
+export const getLabellingQueue = (token: string, limit = 25) =>
+  request<{ strategy: string; items: QueueItem[] }>(`/feedback/queue?limit=${limit}`, token);
+
+export interface Suppression {
+  rule_id: string;
+  match: Record<string, string>;
+  reason: string;
+  created_by: string;
+  created_at: string;
+  expires_at: string;
+  source_alert_id: string | null;
+  active: boolean;
+}
+
+export const getSuppressions = (token: string) => request<Suppression[]>("/suppressions", token);
+
+export const createSuppression = (
+  token: string,
+  body: { match: Record<string, string>; reason: string; days: number; source_alert_id?: string },
+) => request<Suppression>("/suppressions", token, { method: "POST", body: JSON.stringify(body) });
 
 export const getAudit = (token: string, limit = 50) =>
   request<{ chain_intact: boolean; n_entries: number; entries: AuditEntry[] }>(
@@ -337,4 +395,5 @@ export type StreamMessage =
   | { type: "connected"; user: string }
   | { type: "heartbeat" }
   | { type: "alert"; alert: Alert; at: string }
-  | { type: "verdict"; incident_id: string; verdict: string };
+  | { type: "verdict"; incident_id?: string; alert_id?: string; verdict: string }
+  | { type: "suppression"; rule_id: string };

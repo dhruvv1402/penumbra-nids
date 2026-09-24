@@ -14,7 +14,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
@@ -25,13 +25,15 @@ from pydantic import BaseModel, Field
 from starlette.responses import Response
 
 from penumbra import __version__
+from penumbra.alerts import suppression
 from penumbra.alerts.models import Alert, Incident
 from penumbra.api import reports
 from penumbra.api.security import rbac
-from penumbra.api.security.audit import AuditLog
+from penumbra.api.security.audit import ACTION_SUPPRESS, AuditLog
 from penumbra.api.security.auth import InvalidToken, UserStore, decode_token, issue_token
 from penumbra.api.security.rbac import Permission, Principal
 from penumbra.config import settings
+from penumbra.feedback import active, integrity
 from penumbra.storage.sqlite import SqliteRepository
 
 # --- metrics --------------------------------------------------------------------------------------
@@ -181,7 +183,23 @@ class VerdictRequest(BaseModel):
 
 
 class PromoteRequest(BaseModel):
+    """Verdict targets to promote. Named `incident_ids` for compatibility; alert ids work too."""
+
     incident_ids: list[str]
+
+
+class SuppressionRequest(BaseModel):
+    match: dict[str, str]
+    reason: str = Field(min_length=10, max_length=500)
+    days: int = Field(default=30, ge=1, le=suppression.MAX_LIFETIME.days)
+    source_alert_id: str | None = None
+
+
+# Per-account verdict ceiling. A human triaging carefully does not record 120 verdicts an hour; a
+# script replaying a stolen session to relabel a campaign does. The ceiling is deliberately loose
+# for people and tight for automation.
+VERDICT_RATE_LIMIT = 120
+VERDICT_RATE_WINDOW = timedelta(hours=1)
 
 
 class IngestRequest(BaseModel):
@@ -276,6 +294,10 @@ async def record_verdict(incident_id: str, body: VerdictRequest, principal: Curr
     `/feedback/promote` and docs/THREAT_MODEL.md T1.
     """
     require(principal, Permission.RECORD_VERDICT)
+    _enforce_verdict_rate(principal)
+    # Scope check first: get_incident filters by segment, record_verdict does not.
+    if state.repo.get_incident(incident_id, principal) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "incident not found")
     incident = state.repo.record_verdict(incident_id, body.verdict, principal.username, body.note)
     if incident is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "incident not found")
@@ -285,43 +307,155 @@ async def record_verdict(incident_id: str, body: VerdictRequest, principal: Curr
         role=principal.role.value,
         action="analyst.verdict",
         target=incident_id,
-        detail={"verdict": body.verdict, "note": body.note},
+        detail={"verdict": body.verdict, "note": body.note, "target_kind": "incident"},
     )
     await state.broadcast({"type": "verdict", "incident_id": incident_id, "verdict": body.verdict})
     return {"incident": incident, "queued_for_training": True, "promoted": False}
 
 
+@app.post("/alerts/{alert_id}/verdict", tags=["alerts"])
+async def record_alert_verdict(alert_id: str, body: VerdictRequest, principal: CurrentUser) -> dict[str, Any]:
+    """Record a verdict on a single alert that never correlated into an incident.
+
+    Same queue, same promotion gate, same audit trail as an incident verdict.
+    """
+    require(principal, Permission.RECORD_VERDICT)
+    _enforce_verdict_rate(principal)
+    alert = state.repo.record_alert_verdict(alert_id, body.verdict, principal.username, principal, body.note)
+    if alert is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "alert not found")
+
+    state.audit.append(
+        actor=principal.username,
+        role=principal.role.value,
+        action="analyst.verdict",
+        target=alert_id,
+        detail={"verdict": body.verdict, "note": body.note, "target_kind": "alert"},
+    )
+    await state.broadcast({"type": "verdict", "alert_id": alert_id, "verdict": body.verdict})
+    return {
+        "alert_id": alert_id,
+        "queued_for_training": body.verdict != "benign_by_policy",
+        "promoted": False,
+        # Benign-by-policy is a policy decision, not a label: it never trains the model. The
+        # console follows it with a suppression rule instead.
+        "proposed_suppression": suppression.proposed_match(alert)
+        if body.verdict == "benign_by_policy"
+        else None,
+    }
+
+
+def _enforce_verdict_rate(principal: Principal) -> None:
+    recent = state.repo.verdicts_by(principal.username, datetime.now(UTC) - VERDICT_RATE_WINDOW)
+    if recent >= VERDICT_RATE_LIMIT:
+        state.audit.append(
+            actor=principal.username,
+            role=principal.role.value,
+            action="verdict.rate_limited",
+            detail={"recent": recent, "limit": VERDICT_RATE_LIMIT},
+        )
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"{recent} verdicts in the last hour; the limit is {VERDICT_RATE_LIMIT}. "
+            "Bulk relabelling is how a stolen session poisons a model, so it is throttled and logged.",
+        )
+
+
 @app.get("/feedback/pending", tags=["feedback"])
 async def pending_verdicts(principal: CurrentUser) -> list[dict[str, object]]:
+    """Pending verdicts, each annotated with the reasons it deserves a second look."""
     require(principal, Permission.PROMOTE_VERDICT)
-    return state.repo.pending_verdicts()
+    flagged = integrity.flag_verdicts(state.repo.pending_verdicts(), state.repo.verdict_history())
+    for v in flagged:
+        v["flag_reasons"] = [integrity.explain(f) for f in v["flags"]]
+        v["self_approval"] = v.get("actor") == principal.username
+    return flagged
+
+
+@app.get("/feedback/queue", tags=["feedback"])
+async def labelling_queue(
+    principal: CurrentUser, limit: Annotated[int, Query(ge=1, le=100)] = 25
+) -> dict[str, Any]:
+    """Which alerts an analyst's next hour is best spent on (uncertainty sampling)."""
+    require(principal, Permission.RECORD_VERDICT)
+    judged = {str(v["target_id"]) for v in state.repo.verdict_history()}
+    candidates = state.repo.list_alerts(principal, limit=2000)
+    return {"strategy": "uncertainty sampling", "items": active.queue(candidates, judged=judged, limit=limit)}
 
 
 @app.post("/feedback/promote", tags=["feedback"])
 async def promote_verdicts(body: PromoteRequest, principal: CurrentUser) -> dict[str, Any]:
-    """Move verdicts into the retraining pool. Senior or above.
+    """Move verdicts into the retraining pool. Senior or above, and never your own.
 
-    This is the gate that stops one compromised analyst account from teaching the model that its own
-    traffic is benign.
+    This is the gate that stops one compromised account from teaching the model that its own traffic
+    is benign. The two-person rule is enforced in the repository's UPDATE, so no caller can skip it.
     """
     require(principal, Permission.PROMOTE_VERDICT)
+    own = {
+        str(v["target_id"])
+        for v in state.repo.pending_verdicts()
+        if v["actor"] == principal.username and str(v["target_id"]) in set(body.incident_ids)
+    }
     n = state.repo.promote_verdicts(body.incident_ids, principal.username)
     state.audit.append(
         actor=principal.username,
         role=principal.role.value,
         action="verdict.promote",
-        detail={"count": n, "incident_ids": body.incident_ids},
+        detail={"count": n, "incident_ids": body.incident_ids, "refused_self_approval": sorted(own)},
     )
-    return {"promoted": n}
+    return {"promoted": n, "refused_self_approval": sorted(own)}
+
+
+# --- suppression ------------------------------------------------------------------------------------
+
+
+@app.get("/suppressions", tags=["suppression"])
+async def list_suppressions(principal: CurrentUser) -> list[dict[str, Any]]:
+    require(principal, Permission.READ_ALERTS)
+    return [suppression.summary(r) for r in state.repo.list_suppressions()]
+
+
+@app.post("/suppressions", tags=["suppression"])
+async def create_suppression(body: SuppressionRequest, principal: CurrentUser) -> dict[str, Any]:
+    """Create a BENIGN_BY_POLICY rule. Senior only, always scoped, always expiring.
+
+    Matching alerts are still stored and counted - they leave the queue, not the record.
+    """
+    require(principal, Permission.CREATE_SUPPRESSION)
+    now = datetime.now(UTC)
+    try:
+        rule = suppression.SuppressionRule(
+            match=body.match,
+            reason=body.reason,
+            created_by=principal.username,
+            created_at=now,
+            expires_at=now + timedelta(days=body.days),
+            source_alert_id=body.source_alert_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+
+    state.repo.save_suppression(rule)
+    state.audit.append(
+        actor=principal.username,
+        role=principal.role.value,
+        action=ACTION_SUPPRESS,
+        target=rule.rule_id,
+        detail={"match": rule.match, "reason": rule.reason, "expires_at": rule.expires_at.isoformat()},
+    )
+    await state.broadcast({"type": "suppression", "rule_id": rule.rule_id})
+    return suppression.summary(rule)
 
 
 @app.post("/ingest", tags=["alerts"])
 async def ingest(body: IngestRequest, principal: CurrentUser) -> dict[str, Any]:
     """Accept scored alerts, persist them, and push to connected consoles."""
     require(principal, Permission.PROMOTE_VERDICT)  # senior or above
+    rules = state.repo.list_suppressions(active_only=True)
+    suppressed = 0
     for alert in body.alerts:
-        await publish_alert(alert)
-    return {"ingested": len(body.alerts)}
+        suppressed += await publish_alert(alert, rules=rules)
+    return {"ingested": len(body.alerts), "suppressed": suppressed}
 
 
 @app.post("/incidents/bulk", tags=["incidents"])
@@ -421,8 +555,15 @@ async def stream(websocket: WebSocket) -> None:
         state.subscribers.discard(websocket)
 
 
-async def publish_alert(alert: Alert) -> None:
-    """Persist an alert and push it to connected consoles."""
+async def publish_alert(alert: Alert, *, rules: list[suppression.SuppressionRule] | None = None) -> int:
+    """Persist an alert and push it to connected consoles. Returns 1 if a suppression matched.
+
+    Suppression happens here, at ingest, so a rule applies to every sensor and replay alike. The
+    alert is reclassified and stored - never dropped.
+    """
+    rule = suppression.first_match(rules or [], alert)
+    if rule is not None:
+        suppression.apply(alert, rule)
     state.repo.save_alert(alert)
     ALERTS_EMITTED.labels(lane=alert.lane.value, verdict=alert.verdict.value).inc()
     await state.broadcast(
@@ -432,3 +573,4 @@ async def publish_alert(alert: Alert) -> None:
             "at": datetime.now(UTC).isoformat(),
         }
     )
+    return int(rule is not None)

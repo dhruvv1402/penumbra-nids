@@ -23,10 +23,12 @@ import {
   type Session,
   type Stats,
   getAlerts,
+  createSuppression,
   getStats,
   loadSession,
   login,
   openStream,
+  recordAlertVerdict,
   recordVerdict,
   saveSession,
 } from "@/lib/api";
@@ -90,7 +92,7 @@ export default function Console() {
 
   const lanes = useMemo(() => {
     const known = alerts
-      .filter((a) => a.lane === "known_threat" && a.verdict !== "BENIGN")
+      .filter((a) => a.lane === "known_threat" && a.verdict !== "BENIGN" && a.verdict !== "BENIGN_BY_POLICY")
       .sort((a, b) => b.priority - a.priority);
     const hunting = alerts
       .filter((a) => a.lane === "hunting")
@@ -203,6 +205,12 @@ function Header({
             drift
           </Link>
           <Link
+            href="/feedback"
+            className="text-[11px] tracking-[0.14em] uppercase text-[var(--color-ink-dim)] hover:text-[var(--color-ink)]"
+          >
+            feedback
+          </Link>
+          <Link
             href="/governance"
             className="text-[11px] tracking-[0.14em] uppercase text-[var(--color-ink-dim)] hover:text-[var(--color-ink)]"
           >
@@ -220,6 +228,7 @@ function Header({
           tone="var(--color-ok)"
         />
         <Stat label="pending verdicts" value={String(stats.pending_verdicts ?? 0)} />
+        <Stat label="suppressed" value={String(stats.alerts_suppressed ?? 0)} />
         <div className="px-3 py-1.5 border-l border-[var(--color-border)] flex items-center gap-2">
           <span
             className={`w-1.5 h-1.5 rounded-full ${live ? "live-dot" : ""}`}
@@ -277,6 +286,14 @@ function AlertRow({
 function Detail({ alert, token, role }: { alert: Alert | null; token: string; role: string }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [proposal, setProposal] = useState<Record<string, string> | null>(null);
+
+  // A new selection starts clean; a note about the previous alert is a note about the wrong alert.
+  const alertId = alert?.alert_id;
+  useEffect(() => {
+    setNote(null);
+    setProposal(null);
+  }, [alertId]);
 
   if (!alert) {
     return (
@@ -286,26 +303,36 @@ function Detail({ alert, token, role }: { alert: Alert | null; token: string; ro
     );
   }
 
+  const canSuppress = role === "senior" || role === "admin";
+
   const submit = async (verdict: string) => {
-    if (!alert.incident_id) {
-      setNote("This alert is not yet correlated into an incident; verdicts attach to incidents.");
-      return;
-    }
     setBusy(true);
+    setProposal(null);
     try {
-      const res = await recordVerdict(token, alert.incident_id, verdict);
+      // Correlated alerts are judged as part of their incident; uncorrelated ones on their own.
+      // Both land in the same queue behind the same senior-only, two-person promotion gate.
+      if (alert.incident_id) {
+        await recordVerdict(token, alert.incident_id, verdict);
+      } else {
+        const res = await recordAlertVerdict(token, alert.alert_id, verdict);
+        if (res.proposed_suppression) setProposal(res.proposed_suppression);
+      }
       setNote(
-        res.promoted
-          ? "Verdict recorded and promoted."
-          : "Verdict recorded and queued. A senior analyst must promote it before it can train the model.",
+        verdict === "benign_by_policy"
+          ? canSuppress
+            ? "Recorded. Benign-by-policy never trains the model - it becomes an expiring suppression rule below."
+            : "Recorded. Benign-by-policy never trains the model; a senior analyst turns it into an expiring suppression rule."
+          : "Verdict recorded and queued. A different senior analyst must promote it before it can train the model.",
       );
     } catch (err) {
       setNote(
         err instanceof ApiError && err.isPermissionDenied
           ? `Your role (${role}) cannot do that.`
-          : err instanceof Error
-            ? err.message
-            : String(err),
+          : err instanceof ApiError && err.status === 429
+            ? "Verdict rate limit reached. Bulk relabelling is throttled and logged."
+            : err instanceof Error
+              ? err.message
+              : String(err),
       );
     } finally {
       setBusy(false);
@@ -379,12 +406,116 @@ function Detail({ alert, token, role }: { alert: Alert | null; token: string; ro
 
         {note && <p className="text-[11px] text-[var(--color-ink-dim)] leading-snug">{note}</p>}
 
+        {proposal && canSuppress && (
+          <SuppressionForm
+            token={token}
+            alertId={alert.alert_id}
+            proposal={proposal}
+            onDone={(msg) => {
+              setProposal(null);
+              setNote(msg);
+            }}
+          />
+        )}
+
+        {alert.suppression_rule_id && (
+          <p className="text-[10px] text-[var(--color-sev-low)] leading-snug">
+            Suppressed by {alert.suppression_rule_id}. Stored and counted, not queued.
+          </p>
+        )}
+
         <p className="text-[10px] text-[var(--color-ink-faint)] leading-snug border-t border-[var(--color-border)] pt-2">
           There is no block action here, and no endpoint behind one. Penumbra surfaces; a human
           decides. See ADR-0001.
         </p>
       </div>
     </Panel>
+  );
+}
+
+/**
+ * Benign-by-policy becomes a rule, not a label. The form is pre-filled with the narrowest match the
+ * alert supports; the analyst can remove fields, but the API refuses a rule scoped to a family alone,
+ * a wildcard, or one that outlives 90 days.
+ */
+function SuppressionForm({
+  token,
+  alertId,
+  proposal,
+  onDone,
+}: {
+  token: string;
+  alertId: string;
+  proposal: Record<string, string>;
+  onDone: (message: string) => void;
+}) {
+  const [fields, setFields] = useState<Record<string, boolean>>(
+    Object.fromEntries(Object.keys(proposal).map((k) => [k, true])),
+  );
+  const [reason, setReason] = useState("");
+  const [days, setDays] = useState(30);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const create = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const match = Object.fromEntries(Object.entries(proposal).filter(([k]) => fields[k]));
+      const rule = await createSuppression(token, { match, reason, days, source_alert_id: alertId });
+      onDone(`Suppression ${rule.rule_id} active until ${rule.expires_at.slice(0, 10)}. It is in the audit log.`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="border border-[var(--color-border)] rounded px-3 py-2 space-y-2">
+      <div className="text-[9px] uppercase tracking-wider text-[var(--color-sev-low)]">
+        create suppression · always scoped · always expires
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {Object.entries(proposal).map(([k, v]) => (
+          <label key={k} className="flex items-center gap-1 text-[11px] text-[var(--color-ink-dim)]">
+            <input
+              type="checkbox"
+              checked={fields[k] ?? false}
+              onChange={(e) => setFields((f) => ({ ...f, [k]: e.target.checked }))}
+            />
+            {k}={v}
+          </label>
+        ))}
+      </div>
+      <input
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder="why this is policy, not a threat (e.g. nightly vulnerability scanner)"
+        className="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1 text-[11px] text-[var(--color-ink)] focus:outline-none"
+      />
+      <div className="flex items-center gap-2">
+        <select
+          value={days}
+          onChange={(e) => setDays(Number(e.target.value))}
+          className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-1 py-0.5 text-[11px] text-[var(--color-ink)]"
+        >
+          {[7, 14, 30, 60, 90].map((d) => (
+            <option key={d} value={d}>
+              expires in {d} days
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={create}
+          disabled={busy || reason.trim().length < 10}
+          className="text-[11px] px-2.5 py-1 rounded border border-[var(--color-sev-low)] text-[var(--color-sev-low)] disabled:opacity-40"
+        >
+          Create rule
+        </button>
+      </div>
+      {error && <p className="text-[10px] text-[var(--color-sev-high)] break-words">{error}</p>}
+    </div>
   );
 }
 
