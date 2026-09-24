@@ -347,6 +347,11 @@ Say the caveat out loud before anyone asks:
 > unseen in Monday–Wednesday, so the model abstains and routes them to review. The biggest incident
 > is one PortScan: 41,862 flows, 1,001 ports, one row in the queue.
 
+To show it rather than say it: before the demo, run `penumbra correlate --write-fixture
+incidents.json` (about 12 minutes and ~4 GB of RAM, for the CICIDS load), then
+`penumbra replay --from-fixture incidents.json --ingest`. The queue page's **incidents** tab lists
+them largest first, and each incident shows its fan-out and a sample of its alerts.
+
 **"What's the false positive rate?"**
 > At the deployed threshold, and on which data? On held-out benign, 1% by construction. On the test
 > set, 10.2% — because the operating point doesn't transfer between the two, which is measurable
