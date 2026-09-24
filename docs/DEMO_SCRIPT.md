@@ -20,8 +20,8 @@ uv run penumbra replay -d nslkdd --ingest  # terminal 3, when you want the queue
 Have `artifacts/reports/` open in a second window. Every number quoted below is in a JSON file there
 and regenerates from one command.
 
-**Fallback, tested:** `penumbra replay --from-fixture tests/fixtures/demo_alerts.json` replays
-pre-scored alerts with no model, no dataset and no network. If anything is wrong on the day, use it
+**Fallback, tested:** `penumbra replay --from-fixture tests/fixtures/demo_alerts.json --ingest`
+replays 3,154 pre-scored alerts into the running API with no model, no dataset and no network. If anything is wrong on the day, use it
 and say nothing about it.
 
 ---

@@ -30,7 +30,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from penumbra.alerts.builder import alerts_from_scores
+from penumbra.alerts.builder import alerts_with_positions
 from penumbra.alerts.correlate import Correlator, EntitiesRequired
 from penumbra.alerts.models import Alert
 from penumbra.models.detector import PenumbraDetector
@@ -130,12 +130,15 @@ def replay(
     for start, chunk in batches(X, config.batch_size):
         scored = detector.score(chunk)
         chunk_entities = entities[start : start + len(chunk)] if entities else None
-        alerts = alerts_from_scores(detector, chunk, scored, dataset=dataset, entities=chunk_entities)
+        positioned = alerts_with_positions(detector, chunk, scored, dataset=dataset, entities=chunk_entities)
 
-        for offset, alert in enumerate(alerts):
-            idx = start + offset
+        # By row position, not by place in the alert list: unflagged rows are dropped, so the
+        # n-th alert is generally not the n-th row.
+        for pos, alert in positioned:
+            idx = start + pos
             if idx < len(stamps):
                 alert.timestamp = stamps[idx]
+        alerts = [alert for _, alert in positioned]
 
         collected.extend(alerts)
         stats.rows_scored += len(chunk)
@@ -205,8 +208,16 @@ class IngestClient:
         if not alerts or not self.token:
             return 0
         payload = json.dumps({"alerts": [json.loads(a.model_dump_json()) for a in alerts]}).encode()
+        return self._post("/ingest", payload)
+
+    def send_incidents(self, incidents: list[dict[str, Any]]) -> int:
+        if not incidents or not self.token:
+            return 0
+        return self._post("/incidents/bulk", json.dumps(incidents).encode())
+
+    def _post(self, path: str, payload: bytes) -> int:
         req = urllib.request.Request(
-            f"{self.base_url}/ingest",
+            f"{self.base_url}{path}",
             data=payload,
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.token}"},
             method="POST",
@@ -237,8 +248,10 @@ def write_fixture(alerts: list[Alert], incidents: list[Any], path: Path) -> Path
                 "alerts": [json.loads(a.model_dump_json()) for a in alerts],
                 "incidents": [json.loads(i.model_dump_json()) for i in incidents],
             },
-            indent=2,
-        ),
+            # One alert per line: diffable, and a third the size of indent=2 now that every alert
+            # carries its feature row.
+            separators=(",", ":"),
+        ).replace('},{"alert_id"', '},\n{"alert_id"'),
         encoding="utf-8",
     )
     return path

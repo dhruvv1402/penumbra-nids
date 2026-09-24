@@ -136,8 +136,9 @@ Rehearsed, in this order:
 
 1. Freeze the build well before the deadline. Tag it. Rehearse against the frozen tag, not against
    `main`.
-2. `penumbra demo --from-fixture` replays pre-scored alerts from checked-in JSON. **No model
-   inference, no network, no database.** This is the fallback.
+2. `penumbra replay --from-fixture tests/fixtures/demo_alerts.json --ingest` pushes pre-scored
+   alerts from checked-in JSON into the API. **No model inference, no dataset, no network beyond
+   loopback.** This is the fallback.
 3. Verify the full path works with the network disconnected.
 4. Record a screen capture of the complete run as the last-resort fallback.
 5. Build container images the night before, not on the day.

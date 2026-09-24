@@ -329,11 +329,20 @@ def replay(
         str | None, typer.Option("--inject-drift", help="abrupt | gradual | seasonal | evasion")
     ] = None,
     fixture_out: Annotated[Path | None, typer.Option("--write-fixture")] = None,
+    from_fixture: Annotated[
+        Path | None,
+        typer.Option("--from-fixture", help="Replay pre-scored alerts. No model, no dataset."),
+    ] = None,
 ) -> None:
     """Stream a dataset through the detector as if it were live traffic."""
     seed_everything()
-    from penumbra.models.detector import PenumbraDetector
     from penumbra.replay import engine
+
+    if from_fixture is not None:
+        _replay_fixture(from_fixture, ingest=ingest, api=api, delay=delay, rows=rows)
+        return
+
+    from penumbra.models.detector import PenumbraDetector
 
     model_dir = settings().model_dir / dataset.lower()
     if not (model_dir / "detector.joblib").exists():
@@ -387,6 +396,47 @@ def replay(
     if fixture_out:
         path = engine.write_fixture(alerts, incidents, fixture_out)
         console.print(f"\n[dim]fixture written to {path}[/dim]")
+
+
+def _replay_fixture(path: Path, *, ingest: bool, api: str, delay: float, rows: int) -> None:
+    """The demo-day fallback: push a frozen, already-scored run into the API.
+
+    Nothing here imports the detector or a loader, so it works with no trained model, no dataset on
+    disk and no network beyond loopback. The only moving part left is the API itself.
+    """
+    import time
+
+    from penumbra.replay import engine
+
+    if not path.exists():
+        console.print(f"[red]No fixture at {path}.[/red] Write one with `penumbra replay --write-fixture`.")
+        raise typer.Exit(1)
+
+    alerts, incidents = engine.read_fixture(path)
+    alerts = alerts[:rows]
+    console.print(f"[dim]fixture {path}: {len(alerts):,} alerts, {len(incidents):,} incidents[/dim]")
+    if not ingest:
+        console.print("Nothing sent. Add --ingest to push into a running API.")
+        return
+
+    client = engine.IngestClient(api)
+    if not client.login("senior", "senior"):
+        console.print(
+            "[red]Could not authenticate to the API.[/red] Start it with PENUMBRA_ALLOW_DEMO_USERS=1."
+        )
+        raise typer.Exit(1)
+
+    sent = 0
+    for start in range(0, len(alerts), 250):
+        sent += client.send(alerts[start : start + 250])
+        console.print(f"[dim]  {sent:>7,} ingested[/dim]")
+        if delay:
+            time.sleep(delay)
+    n_inc = client.send_incidents(incidents)
+    console.print(f"{sent:,} alerts and {n_inc:,} incidents ingested from fixture.")
+    if sent < len(alerts):
+        console.print(f"[yellow]{len(alerts) - sent:,} alerts were not accepted by the API.[/yellow]")
+        raise typer.Exit(1)
 
 
 @app.command()

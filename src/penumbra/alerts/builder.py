@@ -31,12 +31,42 @@ def alerts_from_scores(
     include_benign: bool = False,
 ) -> list[Alert]:
     """Build Alert objects from a detector's scored output."""
+    return [
+        alert
+        for _, alert in alerts_with_positions(
+            detector,
+            X,
+            scored,
+            policy=policy,
+            dataset=dataset,
+            entities=entities,
+            include_benign=include_benign,
+        )
+    ]
+
+
+def alerts_with_positions(
+    detector: Any,
+    X: pd.DataFrame,
+    scored: pd.DataFrame | None = None,
+    *,
+    policy: ScoringPolicy | None = None,
+    dataset: str = "unsw",
+    entities: list[str] | None = None,
+    include_benign: bool = False,
+) -> list[tuple[int, Alert]]:
+    """As `alerts_from_scores`, paired with each alert's row position in `X`.
+
+    Rows nobody flagged are dropped, so the n-th alert is not the n-th row. Anything that lines
+    alerts back up with per-row data (timestamps, entities) needs the position, and indexing by the
+    alert's place in the list silently attaches row 3's timestamp to row 40's alert.
+    """
     scored = scored if scored is not None else detector.score(X)
     policy = policy or getattr(detector, "policy", None) or ScoringPolicy()
     ranked = _ranked_importances(detector)
     version = getattr(getattr(detector, "metadata", None), "version", "0.1.0")
 
-    out: list[Alert] = []
+    out: list[tuple[int, Alert]] = []
     for pos, (_, row) in enumerate(scored.iterrows()):
         fired = int(row["fired"])
         abstains = bool(row.get("conformal_abstains", False))
@@ -50,22 +80,42 @@ def alerts_from_scores(
         raw_family = row.get("family")
         family = raw_family if (fired in (1, 3) and isinstance(raw_family, str)) else None
 
-        out.append(
-            build_alert(
-                p_attack=float(row["p_attack"]),
-                novelty_percentile=float(row["novelty_percentile"]),
-                policy=policy,
-                family=family,
-                dataset=dataset,
-                agreement=int(row.get("agreement", 0)),
-                conformal_ambiguous=bool(row.get("conformal_abstains", False)),
-                conformal_set=list(row.get("conformal_set") or []),
-                network=_network_for(X, pos, entities),
-                contributions=_contributions(X, pos, ranked),
-                model_version=version,
-            )
+        alert = build_alert(
+            p_attack=float(row["p_attack"]),
+            novelty_percentile=float(row["novelty_percentile"]),
+            policy=policy,
+            family=family,
+            dataset=dataset,
+            agreement=int(row.get("agreement", 0)),
+            conformal_ambiguous=bool(row.get("conformal_abstains", False)),
+            conformal_set=list(row.get("conformal_set") or []),
+            network=_network_for(X, pos, entities),
+            contributions=_contributions(X, pos, ranked),
+            model_version=version,
         )
+        # The full feature row travels with the alert. An analyst verdict is only a training
+        # example if the features it labels can be recovered later, and the alert is the one
+        # record that survives from scoring to promotion.
+        alert.raw_features = feature_payload(X.iloc[pos])
+        out.append((pos, alert))
     return out
+
+
+def feature_payload(row: pd.Series) -> dict[str, Any]:
+    """A feature row as JSON-safe scalars. Non-finite numbers become None."""
+    payload: dict[str, Any] = {}
+    for name, value in row.items():
+        if isinstance(value, (bool, np.bool_)):
+            payload[str(name)] = bool(value)
+        elif isinstance(value, (int, np.integer)):
+            payload[str(name)] = int(value)
+        elif isinstance(value, (float, np.floating)):
+            payload[str(name)] = float(value) if np.isfinite(value) else None
+        elif value is None or (isinstance(value, float) and np.isnan(value)):
+            payload[str(name)] = None
+        else:
+            payload[str(name)] = str(value)
+    return payload
 
 
 def _ranked_importances(detector: Any) -> list[tuple[str, float]]:
