@@ -1593,5 +1593,55 @@ def poison_drill(
         console.print(f"[dim]written to {out}[/dim]")
 
 
+# =================================================================================================
+# The triage copilot
+# =================================================================================================
+
+copilot_app = typer.Typer(
+    name="copilot", help="The offline, cited ATT&CK triage copilot (BM25, no LLM).", no_args_is_help=True
+)
+app.add_typer(copilot_app)
+
+
+@copilot_app.command("build")
+def copilot_build() -> None:
+    """Reduce the ATT&CK STIX bundle to the local JSONL corpus the copilot retrieves from."""
+    from penumbra.rag import corpus
+
+    try:
+        path = corpus.build()
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    stats = corpus.stats(corpus.load(path))
+    console.print(
+        f"[green]corpus written[/green] {path}: {stats['n_techniques']:,} techniques "
+        f"({stats['n_subtechniques']:,} sub-techniques), {stats['n_with_detection']:,} with detection guidance"
+    )
+
+
+@copilot_app.command("ask")
+def copilot_ask(
+    query: Annotated[str, typer.Argument(help="What you are looking at, in words.")],
+    top: Annotated[int, typer.Option("--top")] = 5,
+) -> None:
+    """Search the ATT&CK corpus the way the copilot does, and show what it would cite."""
+    from penumbra.rag.copilot import Retriever
+
+    try:
+        retriever = Retriever()
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    hits = retriever.search(query, top=top)
+    if not hits:
+        console.print("No technique matches those words. The copilot would say so rather than guess.")
+        return
+    for technique, score in hits:
+        console.print(
+            f"[bold]{technique.technique_id}[/bold] {technique.name}  [dim]bm25 {score:.2f}  {technique.url}[/dim]"
+        )
+
+
 if __name__ == "__main__":
     app()

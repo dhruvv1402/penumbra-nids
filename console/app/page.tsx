@@ -22,9 +22,11 @@ import {
   type Lane,
   type Session,
   type Stats,
+  type TriageNote,
   getAlerts,
   createSuppression,
   getStats,
+  getTriage,
   loadSession,
   login,
   openStream,
@@ -294,13 +296,27 @@ function Detail({ alert, token, role }: { alert: Alert | null; token: string; ro
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [proposal, setProposal] = useState<Record<string, string> | null>(null);
+  const [triage, setTriage] = useState<TriageNote | null>(null);
+  const [triageError, setTriageError] = useState<string | null>(null);
 
   // A new selection starts clean; a note about the previous alert is a note about the wrong alert.
   const alertId = alert?.alert_id;
   useEffect(() => {
     setNote(null);
     setProposal(null);
-  }, [alertId]);
+    setTriage(null);
+    setTriageError(null);
+    if (!alertId) return;
+    let live = true;
+    getTriage(token, alertId)
+      .then((r) => live && setTriage(r.note))
+      .catch((err) =>
+        live && setTriageError(err instanceof ApiError && err.status === 503 ? "Copilot corpus not built: penumbra copilot build" : null),
+      );
+    return () => {
+      live = false;
+    };
+  }, [alertId, token]);
 
   if (!alert) {
     return (
@@ -393,6 +409,52 @@ function Detail({ alert, token, role }: { alert: Alert | null; token: string; ro
             <ContributionList contributions={alert.contributions} />
           </div>
         </div>
+
+        {(triage || triageError) && (
+          <div>
+            <h3 className="text-[10px] uppercase tracking-wider text-[var(--color-ink-faint)] mb-1">
+              triage note · offline copilot, every source cited
+            </h3>
+            {triageError ? (
+              <p className="text-[11px] text-[var(--color-ink-faint)]">{triageError}</p>
+            ) : (
+              triage && (
+                <div className="bg-[var(--color-panel-2)] border border-[var(--color-border)] rounded px-3 py-2 space-y-2 text-[11px] leading-snug">
+                  <p className="text-[var(--color-ink)]">{triage.headline}</p>
+                  {triage.what_this_might_be && <p className="text-[var(--color-ink-dim)]">{triage.what_this_might_be}</p>}
+                  {triage.what_to_check.length > 0 && (
+                    <ol className="list-decimal ml-4 text-[var(--color-ink-dim)] space-y-0.5">
+                      {triage.what_to_check.slice(0, 4).map((c) => (
+                        <li key={c}>{c}</li>
+                      ))}
+                    </ol>
+                  )}
+                  {triage.what_not_to_conclude.length > 0 && (
+                    <p className="text-[10px] text-[var(--color-sev-medium)]">
+                      does not establish: {triage.what_not_to_conclude[0]}
+                    </p>
+                  )}
+                  {triage.citations.length > 0 && (
+                    <div className="flex flex-wrap gap-2 pt-1 border-t border-[var(--color-border)]">
+                      {triage.citations.map((c) => (
+                        <a
+                          key={c.technique_id}
+                          href={c.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={c.quoted}
+                          className="text-[10px] text-[var(--color-ink-dim)] underline hover:text-[var(--color-ink)]"
+                        >
+                          {c.technique_id} {c.name}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            )}
+          </div>
+        )}
 
         {alert.suggested_action && (
           <div className="border border-dashed border-[var(--color-border)] rounded px-3 py-2">

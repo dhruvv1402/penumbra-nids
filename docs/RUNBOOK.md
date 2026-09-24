@@ -77,7 +77,8 @@ or never. Unsupervised monitoring is the alarm; analyst verdicts are the confirm
 1. Read the plain-English attribution before the score. "312 distinct destination ports in 60s,
    typical is 3" is more useful than `p_attack = 0.94`.
 2. Check the ATT&CK mapping **and its confidence tier**. `stretch` mappings are suggestions.
-3. Read the cited copilot triage note. Follow the citations; do not trust the summary alone.
+3. Read the cited copilot triage note (alert detail panel, or `GET /alerts/{id}/triage`). Follow
+   the citations; do not trust the summary alone.
 4. Verdict: true positive → escalate; false positive → record why; benign-by-policy → create a
    suppression rule **with an expiry date**.
 
@@ -165,6 +166,8 @@ penumbra eval  --dataset unsw           # writes artifacts/reports/eval_unsw.jso
 penumbra loafo --dataset unsw           # the pre-registered experiment
 penumbra replay -d nslkdd --inject-drift abrupt   # abrupt | gradual | seasonal | evasion
 penumbra serve                          # API + WebSocket
+penumbra copilot build                  # ATT&CK STIX -> local corpus (after `data fetch -d attack`)
+penumbra copilot ask "<what you see>"   # what the triage copilot would cite
 penumbra registry init -d nslkdd        # the fitted model becomes the first (ungated) champion
 penumbra retrain -d nslkdd              # challenger from PROMOTED verdicts + canary gate
 penumbra registry shadow <version> -d nslkdd   # challenger beside champion, nothing alerts

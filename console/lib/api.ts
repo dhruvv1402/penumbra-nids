@@ -180,6 +180,20 @@ export const getIncident = (token: string, id: string) =>
 
 export const getStats = (token: string) => request<Stats>("/stats", token);
 
+export interface TriageNote {
+  headline: string;
+  what_fired: string[];
+  what_this_might_be: string;
+  what_to_check: string[];
+  what_not_to_conclude: string[];
+  citations: { technique_id: string; name: string; url: string; quoted: string }[];
+  generated_by: string;
+}
+
+/** Offline BM25 copilot. Deterministic, every source cited; a novelty note names no technique. */
+export const getTriage = (token: string, alertId: string) =>
+  request<{ alert_id: string; note: TriageNote; text: string }>(`/alerts/${alertId}/triage`, token);
+
 export const recordVerdict = (token: string, incidentId: string, verdict: string, note = "") =>
   request<{ queued_for_training: boolean; promoted: boolean }>(
     `/incidents/${incidentId}/verdict`,

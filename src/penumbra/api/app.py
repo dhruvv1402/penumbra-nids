@@ -82,6 +82,15 @@ class AppState:
         # PENUMBRA_SIEM=mock (default) | sentinel | none. A misconfigured `sentinel` fails here, at
         # startup, rather than on the first alert.
         self.siem: SiemConnector | None = siem_connector(settings().state_dir)
+        self._copilot: Any = None
+
+    def copilot(self) -> Any:
+        """The BM25 triage copilot, loaded on first use. Raises FileNotFoundError without a corpus."""
+        if self._copilot is None:
+            from penumbra.rag.copilot import Copilot
+
+            self._copilot = Copilot()
+        return self._copilot
 
     async def broadcast(self, message: dict[str, Any]) -> None:
         """Push to every connected console. A dead socket is dropped, never fatal."""
@@ -340,6 +349,29 @@ async def record_verdict(incident_id: str, body: VerdictRequest, principal: Curr
     )
     await state.broadcast({"type": "verdict", "incident_id": incident_id, "verdict": body.verdict})
     return {"incident": incident, "queued_for_training": True, "promoted": False}
+
+
+@app.get("/alerts/{alert_id}/triage", tags=["alerts"])
+async def triage_note(alert_id: str, principal: CurrentUser) -> dict[str, Any]:
+    """A cited triage note for one alert, from the offline BM25 copilot.
+
+    Deterministic and offline: retrieval over a local ATT&CK corpus, a template fills the note, and
+    every source is cited. A novelty alert's note deliberately names no technique, because the
+    system's own verdict is that it does not recognise the traffic. Segment-scoped like any read.
+    """
+    require(principal, Permission.READ_ALERTS)
+    alert = state.repo.get_alert(alert_id, principal)
+    if alert is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "alert not found")
+    try:
+        copilot = state.copilot()
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "ATT&CK corpus not built. Run `penumbra data fetch -d attack` then `penumbra copilot build`.",
+        ) from exc
+    note = copilot.note(alert)
+    return {"alert_id": alert_id, "note": note.to_dict(), "text": note.render()}
 
 
 @app.post("/alerts/{alert_id}/verdict", tags=["alerts"])
