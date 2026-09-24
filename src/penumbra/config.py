@@ -57,6 +57,15 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("PENUMBRA_PII_HMAC_KEY", "PENUMBRA_PII_SALT"),
     )
 
+    # Keys being rotated OUT, comma-separated, newest first. New pseudonyms always use the current
+    # key; these are still accepted for matching and audited re-identification so pre-rotation data
+    # stays queryable during the overlap window. Empty them to finish a rotation.
+    pii_hmac_previous_keys: str = ""
+
+    @property
+    def previous_pii_keys(self) -> list[str]:
+        return [k.strip() for k in self.pii_hmac_previous_keys.split(",") if k.strip()]
+
     @property
     def state_dir(self) -> Path:
         return self.state_root or self.artifact_root

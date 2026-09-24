@@ -111,12 +111,14 @@ the active-learning loop.
 The HMAC key is a secret. Anyone holding it can enumerate the entire IPv4 mapping in seconds.
 
 1. Generate the new key; store it in the secret manager, never in the repository.
-2. **Not implemented:** `api/security/pii.py` holds a single key, so there is no overlap window
-   and `Permission.ROTATE_KEY` is declared but unused. Until dual-key support exists, rotation means
-   choosing between step 3's two options at the moment of the switch.
+2. Open the overlap window: new key in `PENUMBRA_PII_HMAC_KEY`, the old one in
+   `PENUMBRA_PII_HMAC_PREVIOUS_KEYS`. New alerts get new pseudonyms; entity lookups
+   (`pii.pseudonyms_for`) and audited re-identification still accept the old key, so historical data
+   stays queryable. `GET /governance/pii-keys` (admin) shows the fingerprints in force.
 3. Re-pseudonymise retained data, or accept that pre-rotation data is only readable with the archived
    key.
-4. Retire the old key; record the rotation in the audit log.
+4. Close the window: empty `PENUMBRA_PII_HMAC_PREVIOUS_KEYS` and restart. Old pseudonyms can no
+   longer be re-identified from then on. The fingerprint check is written to the audit log.
 
 Rotate on: suspected compromise, an operator with key access leaving, or annually.
 

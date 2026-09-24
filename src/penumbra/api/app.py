@@ -634,6 +634,27 @@ async def model_registry(dataset: str, principal: CurrentUser) -> dict[str, Any]
     )
 
 
+@app.get("/governance/pii-keys", tags=["governance"])
+async def pii_key_status(principal: CurrentUser) -> dict[str, Any]:
+    """Which pseudonymisation keys are live, as fingerprints - never the keys.
+
+    Rotation itself happens in the secret manager (PENUMBRA_PII_HMAC_KEY plus
+    PENUMBRA_PII_HMAC_PREVIOUS_KEYS for the overlap window). This is how an operator confirms which
+    keys a running instance accepts, and when the overlap has been closed.
+    """
+    require(principal, Permission.ROTATE_KEY)
+    from penumbra.api.security import pii
+
+    status_ = pii.key_fingerprints()
+    state.audit.append(
+        actor=principal.username,
+        role=principal.role.value,
+        action="pii.key_status",
+        detail={"previous_accepted": len(status_["previous"])},  # type: ignore[arg-type]
+    )
+    return {**status_, "overlap_open": bool(status_["previous"])}
+
+
 @app.get("/reports", tags=["reports"])
 async def list_reports(principal: CurrentUser) -> dict[str, Any]:
     """Every evaluation report the console knows how to render, present or not.

@@ -329,3 +329,9 @@ def test_triage_without_a_corpus_says_how_to_build_one(client: TestClient, monke
     monkeypatch.setattr(state, "copilot", missing)
     resp = client.get(f"/alerts/{a.alert_id}/triage", headers=_token(client, "analyst"))
     assert resp.status_code == 503 and "penumbra copilot build" in resp.json()["detail"]
+
+
+def test_pii_key_status_is_admin_only(client: TestClient) -> None:
+    assert client.get("/governance/pii-keys", headers=_token(client, "senior")).status_code == 403
+    body = client.get("/governance/pii-keys", headers=_token(client, "admin")).json()
+    assert set(body) == {"current", "previous", "overlap_open"}

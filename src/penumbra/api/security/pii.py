@@ -42,7 +42,12 @@ def _key() -> bytes:
     return settings().pii_hmac_key.encode("utf-8")
 
 
-def pseudonymise_ip(ip: str, *, preserve_subnet: bool = False) -> str:
+def _accepted_keys() -> list[bytes]:
+    """Current key first, then keys still inside a rotation overlap window."""
+    return [_key(), *(k.encode("utf-8") for k in settings().previous_pii_keys)]
+
+
+def pseudonymise_ip(ip: str, *, preserve_subnet: bool = False, key: bytes | None = None) -> str:
     """Map an IP address to a stable pseudonym.
 
     Deterministic, so correlation by entity still works. Keyed, so the mapping cannot be recomputed
@@ -54,18 +59,27 @@ def pseudonymise_ip(ip: str, *, preserve_subnet: bool = False) -> str:
     except ValueError:
         # Not an address - hash it anyway rather than passing an unexpected value through to a
         # store that is supposed to contain no identifiers.
-        return PREFIX + _mac(ip.encode("utf-8"))
+        return PREFIX + _mac(ip.encode("utf-8"), key)
 
     if preserve_subnet and addr.version == 4:
         net = ipaddress.ip_network(f"{addr}/24", strict=False)
         host = int(addr) & 0xFF
-        return f"{PREFIX}{_mac(str(net.network_address).encode())}.{host}"
+        return f"{PREFIX}{_mac(str(net.network_address).encode(), key)}.{host}"
 
-    return PREFIX + _mac(addr.packed)
+    return PREFIX + _mac(addr.packed, key)
 
 
-def _mac(payload: bytes) -> str:
-    return hmac.new(_key(), payload, sha256).hexdigest()[:_DIGEST_CHARS]
+def pseudonyms_for(ip: str, *, preserve_subnet: bool = False) -> list[str]:
+    """Every pseudonym this address may appear under: current key first, then keys being retired.
+
+    For looking an entity up across a rotation: alerts written last week carry the old pseudonym,
+    alerts written today the new one, and both belong to the same host.
+    """
+    return [pseudonymise_ip(ip, preserve_subnet=preserve_subnet, key=k) for k in _accepted_keys()]
+
+
+def _mac(payload: bytes, key: bytes | None = None) -> str:
+    return hmac.new(key or _key(), payload, sha256).hexdigest()[:_DIGEST_CHARS]
 
 
 def is_pseudonymised(value: str | None) -> bool:
@@ -79,7 +93,9 @@ def build_reverse_index(addresses: list[str], *, preserve_subnet: bool = False) 
     linking pseudonyms back to addresses sitting next to the alerts. An attacker who takes the
     alert store gets pseudonyms and nothing to join them against.
     """
-    return {pseudonymise_ip(a, preserve_subnet=preserve_subnet): a for a in addresses}
+    # Every accepted key, so an alert pseudonymised before a rotation can still be re-identified
+    # during the overlap window - and cannot once the old key is retired.
+    return {p: a for a in addresses for p in pseudonyms_for(a, preserve_subnet=preserve_subnet)}
 
 
 def reidentify(
@@ -128,6 +144,14 @@ def fingerprint_key() -> str:
     without the fingerprint itself being useful for reversing anything.
     """
     return blake2b(_key(), digest_size=8).hexdigest()
+
+
+def key_fingerprints() -> dict[str, object]:
+    """Fingerprints of the current key and of every key still accepted, for the rotation record."""
+    return {
+        "current": fingerprint_key(),
+        "previous": [blake2b(k, digest_size=8).hexdigest() for k in _accepted_keys()[1:]],
+    }
 
 
 def assert_no_raw_addresses(payload: dict[str, object]) -> list[str]:
