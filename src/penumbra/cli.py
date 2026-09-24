@@ -342,15 +342,7 @@ def replay(
         _replay_fixture(from_fixture, ingest=ingest, api=api, delay=delay, rows=rows)
         return
 
-    from penumbra.models.detector import PenumbraDetector
-
-    model_dir = settings().model_dir / dataset.lower()
-    if not (model_dir / "detector.joblib").exists():
-        console.print()
-        console.print(f"[red]No detector at {model_dir}.[/red] Run `penumbra fit -d {dataset}` first.")
-        raise typer.Exit(1)
-
-    det = PenumbraDetector.load(model_dir)
+    det = _deployed_detector(dataset)
     ds = _load(dataset)
     X = ds.X_test
 
@@ -396,6 +388,36 @@ def replay(
     if fixture_out:
         path = engine.write_fixture(alerts, incidents, fixture_out)
         console.print(f"\n[dim]fixture written to {path}[/dim]")
+
+
+def _registry(dataset: str):
+    from penumbra.models.registry import ModelRegistry
+
+    return ModelRegistry(settings().artifact_root / "registry", dataset)
+
+
+def _deployed_detector(dataset: str):
+    """The registry's champion if there is one (hash-verified before unpickling), else the model
+    `penumbra fit` wrote."""
+    from penumbra.models.detector import PenumbraDetector
+    from penumbra.models.registry import TamperedArtifact
+
+    reg = _registry(dataset)
+    if reg.champion():
+        try:
+            det = reg.load()
+        except TamperedArtifact as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(2) from exc
+        console.print(f"[dim]champion {reg.champion()} (hashes verified)[/dim]")
+        return det
+
+    model_dir = settings().model_dir / dataset.lower()
+    if not (model_dir / "detector.joblib").exists():
+        console.print()
+        console.print(f"[red]No detector at {model_dir}.[/red] Run `penumbra fit -d {dataset}` first.")
+        raise typer.Exit(1)
+    return PenumbraDetector.load(model_dir)
 
 
 def _replay_fixture(path: Path, *, ingest: bool, api: str, delay: float, rows: int) -> None:
@@ -877,6 +899,18 @@ def reproduce_all(
                 else ("cicids not fetched" if not have("cicids") else "the `dl` extra is not installed")
             ),
         ),
+        (
+            "drift nslkdd",
+            lambda: drift_cmd("nslkdd"),
+            False,
+            lambda: None if have("nslkdd") else "nslkdd not fetched",
+        ),
+        (
+            "poison-drill nslkdd",
+            lambda: poison_drill(),
+            True,  # six full two-head fits, ~13 minutes
+            lambda: None if have("nslkdd") else "nslkdd not fetched",
+        ),
     ]
 
     outcomes: list[tuple[str, str, float, str]] = []
@@ -927,6 +961,327 @@ def reproduce_all(
     console.print(f"[dim]reports in {settings().report_dir}[/dim]")
     if failed:
         raise typer.Exit(1)
+
+
+@app.command("drift")
+def drift_cmd(
+    dataset: DatasetName = "nslkdd",
+    inject: Annotated[
+        str | None, typer.Option("--inject", help="abrupt | gradual | seasonal: perturb the current window")
+    ] = None,
+    rows: Annotated[int, typer.Option("--rows", help="Rows in the current window.")] = 20_000,
+    save: Annotated[bool, typer.Option("--save/--no-save")] = True,
+) -> None:
+    """Rank features by drift between training (reference) and test (current).
+
+    PSI with reference-frozen bins, KS with Benjamini-Hochberg across the whole feature set, and
+    the count of KS flags expected by chance printed next to the observed count. Without --inject
+    this measures the dataset's own train/test shift, which on NSL-KDD is large and real.
+    """
+    seed_everything()
+    from penumbra.drift import detectors
+
+    ds = _load(dataset)
+    reference = ds.X_train
+    current = ds.X_test.sample(n=min(rows, len(ds.X_test)), random_state=0)
+    if inject:
+        from penumbra.drift import injector
+
+        numeric = list(current.select_dtypes("number").columns)
+        plan = injector.scenario(inject, len(current))
+        current = injector.inject(current, plan, numeric_features=numeric)
+        # Only the rows after the change point are the drifted window.
+        current = current.iloc[plan.change_point :]
+
+    bins = detectors.fit_bins(reference)
+    report = detectors.compare(reference, current, bins=bins)
+    console.print(report.summary())
+
+    if save:
+        out = settings().report_dir / f"drift_features_{dataset.lower()}.json"
+        payload = {"dataset": dataset.lower(), "inject": inject, **report.to_dict()}
+        out.write_text(json.dumps(payload, indent=2, default=float), encoding="utf-8")
+        console.print(f"[dim]written to {out}[/dim]")
+
+
+# =================================================================================================
+# Model registry, retraining from promoted verdicts, and the poisoning drill
+# =================================================================================================
+
+registry_app = typer.Typer(
+    name="registry",
+    help="Versioned detectors, the champion pointer, promotion and rollback.",
+    no_args_is_help=True,
+)
+app.add_typer(registry_app)
+
+
+def _audit(actor: str, action: str, target: str, detail: dict[str, Any]) -> None:
+    """Model promotions go in the same hash-chained log as analyst actions."""
+    from penumbra.api.security.audit import AuditLog
+
+    AuditLog(settings().artifact_root / "audit.jsonl").append(
+        actor=actor, role="cli", action=action, target=target, detail=detail
+    )
+
+
+@registry_app.command("init")
+def registry_init(
+    dataset: DatasetName = "nslkdd",
+    by: Annotated[str, typer.Option("--by", help="Who is making this the first champion.")] = "admin",
+) -> None:
+    """Register the model `penumbra fit` wrote as the first champion.
+
+    The first champion is the only version ever promoted without a gate report, because it has
+    nothing to be compared against. The manifest records that it was ungated.
+    """
+    from penumbra.models.detector import PenumbraDetector
+
+    reg = _registry(dataset)
+    if reg.champion():
+        console.print(f"[yellow]{dataset} already has a champion ({reg.champion()}).[/yellow]")
+        raise typer.Exit(1)
+    model_dir = settings().model_dir / dataset.lower()
+    if not (model_dir / "detector.joblib").exists():
+        console.print(f"[red]No detector at {model_dir}.[/red] Run `penumbra fit -d {dataset}` first.")
+        raise typer.Exit(1)
+    info = reg.register(
+        PenumbraDetector.load(model_dir),
+        created_by=by,
+        training={"source": str(model_dir), "feedback_rows": 0},
+    )
+    reg.promote(info.version, approver=by, allow_without_gate=True)
+    _audit(
+        by, "model.promote", info.version, {"dataset": dataset, "gated": False, "reason": "initial champion"}
+    )
+    console.print(f"[green]{info.version}[/green] is the {dataset} champion (initial, ungated).")
+
+
+@registry_app.command("list")
+def registry_list(dataset: DatasetName = "nslkdd") -> None:
+    """Every version, which one is champion, and whether its gate passed."""
+    reg = _registry(dataset)
+    champion = reg.champion()
+    table = Table(title=f"{dataset} registry")
+    for col in ("version", "created by", "parent", "feedback rows", "gate", "intact", ""):
+        table.add_column(col)
+    for v in reg.versions():
+        gate = (
+            "-"
+            if v.gate is None
+            else ("[green]passed[/green]" if v.gate.get("passed") else "[red]failed[/red]")
+        )
+        intact = "[green]yes[/green]" if not reg.verify(v.version) else "[red]NO[/red]"
+        table.add_row(
+            v.version,
+            v.created_by,
+            v.parent or "-",
+            str(v.training.get("feedback_rows", "-")),
+            gate,
+            intact,
+            "champion" if v.version == champion else "",
+        )
+    console.print(table)
+
+
+@registry_app.command("promote")
+def registry_promote(
+    version: Annotated[str, typer.Argument()],
+    dataset: DatasetName = "nslkdd",
+    by: Annotated[str, typer.Option("--by")] = "admin",
+) -> None:
+    """Make a version the champion. Refused without a passed canary gate report."""
+    from penumbra.models.registry import RegistryError
+
+    reg = _registry(dataset)
+    try:
+        state = reg.promote(version, approver=by)
+    except RegistryError as exc:
+        console.print(f"[red]refused:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    _audit(by, "model.promote", version, {"dataset": dataset, "previous": state["history"][-1]["previous"]})
+    console.print(f"[green]{version}[/green] is now the {dataset} champion. Recorded in the audit log.")
+
+
+@registry_app.command("rollback")
+def registry_rollback(
+    dataset: DatasetName = "nslkdd", by: Annotated[str, typer.Option("--by")] = "admin"
+) -> None:
+    """Re-point the champion at the version it replaced. No retrain, no redeploy."""
+    from penumbra.models.registry import RegistryError
+
+    reg = _registry(dataset)
+    try:
+        state = reg.rollback(approver=by)
+    except RegistryError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    _audit(
+        by, "model.rollback", state["version"], {"dataset": dataset, "from": state["history"][-1]["previous"]}
+    )
+    console.print(f"champion is now [green]{state['version']}[/green].")
+
+
+@registry_app.command("verify")
+def registry_verify(dataset: DatasetName = "nslkdd") -> None:
+    """Re-hash every artifact against its manifest. Exit 2 if anything was modified."""
+    reg = _registry(dataset)
+    bad = {v.version: reg.verify(v.version) for v in reg.versions()}
+    bad = {k: v for k, v in bad.items() if v}
+    if bad:
+        for version, files in bad.items():
+            console.print(f"[red]{version}: {files} do not match the manifest[/red]")
+        raise typer.Exit(2)
+    console.print(f"all {len(reg.versions())} versions intact.")
+
+
+def _canary_labels(dataset: str, ds):
+    """Trusted labels for the canary: fine attack names where the dataset has them."""
+    if dataset.lower() in {"nslkdd", "nsl", "kdd"}:
+        from penumbra.data.loaders import nsl_kdd
+
+        _, _, fine_test = nsl_kdd.load_with_fine_labels()
+        return fine_test.astype(str).reset_index(drop=True)
+    return ds.fam_test.astype(str).reset_index(drop=True)
+
+
+@app.command()
+def retrain(
+    dataset: DatasetName = "nslkdd",
+    db: Annotated[Path | None, typer.Option("--db", help="SQLite store holding promoted verdicts.")] = None,
+    by: Annotated[str, typer.Option("--by")] = "admin",
+    model: Annotated[str, typer.Option("--model", "-m")] = "rf",
+) -> None:
+    """Train a challenger on training data plus PROMOTED verdicts, then run the canary gate.
+
+    The challenger is registered but never promoted here. Promotion is a separate, human step
+    (`penumbra registry promote`) and is refused unless the gate passed.
+    """
+    seed_everything()
+    from dataclasses import replace
+
+    from penumbra.eval import canary
+    from penumbra.models.detector import PenumbraDetector
+    from penumbra.storage.sqlite import SqliteRepository
+
+    reg = _registry(dataset)
+    champion_version = reg.champion()
+    if champion_version is None:
+        console.print(f"[red]No champion.[/red] Run `penumbra registry init -d {dataset}` first.")
+        raise typer.Exit(1)
+
+    repo = SqliteRepository(db or settings().artifact_root / "penumbra.db")
+    rows = repo.promoted_training_rows()
+    ds = _load(dataset)
+    usable = [r for r in rows if set(ds.feature_names) <= set(r["features"])]
+    console.print(
+        f"[dim]{len(rows)} promoted training rows, {len(usable)} carry the full {ds.name} feature set[/dim]"
+    )
+    if not usable:
+        console.print("Nothing to retrain on. Verdicts must be recorded, then promoted by a second senior.")
+        raise typer.Exit(1)
+
+    fb = pd.DataFrame([r["features"] for r in usable])[ds.feature_names].astype(ds.X_train.dtypes.to_dict())
+    labels = pd.Series([int(r["label"]) for r in usable])
+    fams = pd.Series([str(r["family"]) if r["label"] == 1 and r["family"] else "normal" for r in usable])
+    augmented = replace(
+        ds,
+        X_train=pd.concat([ds.X_train, fb], ignore_index=True),
+        y_train=pd.concat([ds.y_train, labels], ignore_index=True),
+        fam_train=pd.concat([ds.fam_train, fams], ignore_index=True),
+    )
+
+    champion = reg.load()
+    console.print(f"[dim]fitting challenger on {len(augmented.X_train):,} rows...[/dim]")
+    challenger = PenumbraDetector(target_fpr=champion.target_fpr).fit(augmented, model_name=model)
+    info = reg.register(
+        challenger,
+        created_by=by,
+        parent=champion_version,
+        training={
+            "feedback_rows": len(usable),
+            "feedback_attack": int(labels.sum()),
+            "feedback_benign": int(len(labels) - labels.sum()),
+            "approvers": sorted({str(r["approver"]) for r in usable}),
+        },
+    )
+
+    fine = _canary_labels(dataset, ds)
+    can_idx, _, _ = canary.live_split(fine)
+    X_can, y_can, f_can = ds.X_test.iloc[can_idx], ds.y_test.iloc[can_idx], fine.iloc[can_idx]
+    result = canary.gate(
+        canary.evaluate(champion, X_can, y_can, f_can), canary.evaluate(challenger, X_can, y_can, f_can)
+    )
+    reg.attach_gate(info.version, result.to_dict())
+    _audit(by, "model.register", info.version, {"dataset": dataset, "gate_passed": result.passed})
+
+    console.print(f"\nregistered [bold]{info.version}[/bold] (parent {champion_version})")
+    console.print(
+        f"  canary recall {result.champion.recall:.4f} -> {result.challenger.recall:.4f}   "
+        f"FPR {result.champion.fpr:.4f} -> {result.challenger.fpr:.4f}"
+    )
+    if result.passed:
+        console.print(
+            f"  gate [green]PASSED[/green]. Promote with `penumbra registry promote {info.version}`."
+        )
+    else:
+        console.print("  gate [red]FAILED[/red] - this version cannot be promoted:")
+        for reason in result.reasons:
+            console.print(f"    {reason}")
+
+
+@app.command("poison-drill")
+def poison_drill(
+    model: Annotated[str, typer.Option("--model", "-m")] = "rf",
+    save: Annotated[bool, typer.Option("--save/--no-save")] = True,
+) -> None:
+    """E7: poison the feedback loop from one analyst account and measure what the controls catch."""
+    seed_everything()
+    from penumbra.data.loaders import nsl_kdd
+    from penumbra.eval import poisoning
+
+    ds, fine_train, fine_test = nsl_kdd.load_with_fine_labels()
+    report = poisoning.run(
+        ds, fine_train, fine_test, model_name=model, on_progress=lambda m: console.print(f"[dim]  {m}[/dim]")
+    )
+
+    table = Table(
+        title=f"E7 poisoning drill - target {report['target']} ({report['target_train_support']} train rows)"
+    )
+    for col in (
+        "arm",
+        "flipped",
+        "target recall [95% CI]",
+        "overall recall",
+        "FPR",
+        "gate",
+        "poisoned flagged",
+    ):
+        table.add_column(col)
+    for name, arm in report["arms"].items():
+        ev = arm["evaluation"]
+        lo, hi = ev["target_recall_ci95"]
+        gate = (
+            "-"
+            if "gate" not in arm
+            else ("[green]pass[/green]" if arm["gate"]["passed"] else "[red]FAIL[/red]")
+        )
+        flagged = arm.get("integrity", {}).get("poisoned_flagged_any")
+        table.add_row(
+            name,
+            str(arm.get("n_flipped", "-")),
+            f"{ev['target_recall']:.3f} [{lo:.3f}, {hi:.3f}]",
+            f"{ev['recall']:.4f}",
+            f"{ev['fpr']:.4f}",
+            gate,
+            "-" if flagged is None or flagged != flagged else f"{flagged:.1%}",
+        )
+    console.print(table)
+
+    if save:
+        out = settings().report_dir / "poisoning_nslkdd.json"
+        out.write_text(json.dumps(report, indent=2, default=float), encoding="utf-8")
+        console.print(f"[dim]written to {out}[/dim]")
 
 
 if __name__ == "__main__":

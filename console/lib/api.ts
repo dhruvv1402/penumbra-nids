@@ -360,6 +360,26 @@ export interface ConformalDriftReport {
   }[];
 }
 
+export interface FeatureDriftReport {
+  dataset: string;
+  inject: string | null;
+  n_reference: number;
+  n_current: number;
+  n_significant: number;
+  n_moderate: number;
+  n_ks_flagged: number;
+  expected_false_flags: number;
+  features: {
+    feature: string;
+    psi: number;
+    verdict: string;
+    ks_statistic: number;
+    ks_pvalue: number;
+    js_distance: number;
+    ks_flagged: boolean;
+  }[];
+}
+
 export interface EvasionReport {
   n_attacks: number;
   threshold: number;

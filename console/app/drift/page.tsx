@@ -25,6 +25,7 @@ import {
   ApiError,
   type ConformalControlEntry,
   type ConformalDriftReport,
+  type FeatureDriftReport,
   type Session,
   getReport,
   getReports,
@@ -42,6 +43,7 @@ export default function Drift() {
   const [session, setSession] = useState<Session | null>(null);
   const [control, setControl] = useState<ConformalControlEntry[] | null>(null);
   const [series, setSeries] = useState<ConformalDriftReport | null>(null);
+  const [features, setFeatures] = useState<FeatureDriftReport | null>(null);
   const [commands, setCommands] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
@@ -62,6 +64,7 @@ export default function Drift() {
       await Promise.all([
         pull<ConformalControlEntry[]>("conformal-control", setControl),
         pull<ConformalDriftReport>("conformal", setSeries),
+        pull<FeatureDriftReport>("drift-features", setFeatures),
       ]);
       setError(null);
     } catch (err) {
@@ -121,6 +124,7 @@ export default function Drift() {
       <div className="grid grid-cols-1 gap-2 p-2">
         <ControlPanel entries={control} command={commands["conformal-control"] ?? "penumbra eval"} />
         <SeriesPanel report={series} command={commands["conformal"] ?? "penumbra replay"} />
+        <FeaturePanel report={features} command={commands["drift-features"] ?? "penumbra drift -d nslkdd"} />
         <LimitsPanel />
       </div>
     </main>
@@ -143,6 +147,67 @@ function NotGenerated({ command }: { command: string }) {
         {command}
       </code>
     </Empty>
+  );
+}
+
+/**
+ * Per-feature drift, reference-frozen PSI plus BH-corrected KS.
+ *
+ * Shown next to the score-level result on purpose: on NSL-KDD no single feature crosses the 0.25
+ * retrain threshold, while the model's score distribution moves by PSI 0.65 and coverage falls 30
+ * points. A monitor that only watched features one at a time would have said "moderate" about a
+ * shift that breaks the model's guarantee.
+ */
+function FeaturePanel({ report, command }: { report: FeatureDriftReport | null; command: string }) {
+  if (!report) {
+    return (
+      <Panel title="feature drift — which inputs moved">
+        <NotGenerated command={command} />
+      </Panel>
+    );
+  }
+  const ranked = [...report.features].sort((a, b) => b.psi - a.psi).slice(0, 12);
+  return (
+    <Panel
+      title="feature drift — which inputs moved"
+      right={
+        <span className="text-[10px] text-[var(--color-ink-faint)]">
+          {report.n_reference.toLocaleString()} reference · {report.n_current.toLocaleString()} current
+          {report.inject ? ` · injected ${report.inject}` : " · natural train→test shift"}
+        </span>
+      }
+    >
+      <table className="w-full text-[11px]">
+        <thead className="text-[var(--color-ink-dim)]">
+          <tr className="border-b border-[var(--color-border)]">
+            <th className="text-left font-normal px-3 py-1.5">feature</th>
+            <th className="text-right font-normal px-3 py-1.5">PSI</th>
+            <th className="text-right font-normal px-3 py-1.5">KS D</th>
+            <th className="text-right font-normal px-3 py-1.5">JS</th>
+            <th className="text-center font-normal px-3 py-1.5">KS (BH)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ranked.map((f) => (
+            <tr key={f.feature} className="border-b border-[var(--color-border)]">
+              <td className="px-3 py-1.5 font-mono text-[10px]">{f.feature}</td>
+              <td className={`px-3 py-1.5 text-right tabular-nums ${psiTone(f.psi)}`}>{f.psi.toFixed(4)}</td>
+              <td className="px-3 py-1.5 text-right tabular-nums">{f.ks_statistic.toFixed(3)}</td>
+              <td className="px-3 py-1.5 text-right tabular-nums">{f.js_distance.toFixed(3)}</td>
+              <td className="px-3 py-1.5 text-center">{f.ks_flagged ? "●" : ""}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Caption>
+        {report.n_significant} features at PSI ≥ {PSI_ACT}, {report.n_moderate} at ≥ {PSI_WATCH}. KS flags{" "}
+        {report.n_ks_flagged} of {report.features.length} after Benjamini-Hochberg against{" "}
+        {report.expected_false_flags.toFixed(1)} expected by chance — at these sample sizes KS rejects
+        almost anything, which is why PSI carries the verdict and KS only the ranking. Read this panel
+        next to the score-level one above: features moving moderately one at a time can still add up
+        to a shift that breaks the model.
+      </Caption>
+    </Panel>
   );
 }
 

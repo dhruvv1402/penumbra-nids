@@ -386,13 +386,13 @@ class SqliteRepository:
             )
             return int(cur.rowcount)
 
-    def promoted_training_rows(self) -> list[dict[str, object]]:
+    def promoted_training_rows(self) -> list[dict[str, Any]]:
         """Promoted verdicts as labelled feature rows, ready for `penumbra retrain`.
 
         An incident verdict labels every alert in the incident. Alerts with no features (scored
         before features travelled with alerts) are skipped rather than guessed.
         """
-        out: list[dict[str, object]] = []
+        out: list[dict[str, Any]] = []
         rows = self._conn.execute(
             "SELECT incident_id AS target_id, target_kind, verdict, actor, promoted_by FROM verdict_queue "
             "WHERE promoted = 1 ORDER BY promoted_at"

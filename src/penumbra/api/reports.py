@@ -161,6 +161,21 @@ CATALOGUE: tuple[ReportSpec, ...] = (
         "Detection against attacker effort, under realisable perturbations and under the "
         "unconstrained feature-space attack.",
     ),
+    ReportSpec(
+        "drift-features",
+        "drift_features_nslkdd.json",
+        "Per-feature drift",
+        "penumbra drift -d nslkdd",
+        "Reference-frozen PSI and Benjamini-Hochberg-corrected KS per feature, train versus test.",
+    ),
+    ReportSpec(
+        "poisoning",
+        "poisoning_nslkdd.json",
+        "Feedback-loop poisoning drill (E7)",
+        "penumbra poison-drill",
+        "One analyst account flips verdicts on its own attack type at four doses; the damage, "
+        "the integrity flags and the canary gate, measured on held-out rows.",
+    ),
 )
 
 BY_NAME: dict[str, ReportSpec] = {spec.name: spec for spec in CATALOGUE}
