@@ -154,9 +154,10 @@ SHA-256 in the registry; SAST via `bandit` and `semgrep`.
 
 Flood the scoring path to exhaust capacity and create a blind spot.
 
-**Mitigations:** rate limiting; bounded queues that shed load predictably rather than collapsing;
-measured throughput and p99 latency published so capacity is a known number rather than a hope;
-degraded-mode behaviour is to alert on the backlog rather than to fail silent.
+**Mitigations, built:** measured throughput and latency (EVALUATION §10.7) so capacity is a known
+number; scoring is sensor-side, so the API exposes no scoring path to flood; `/ingest` is
+senior-only; the SIEM connector gives up after one retry rather than stalling alerting.
+**Not built:** bounded queues that shed load, and a backlog alarm. Ingest is synchronous today.
 
 ---
 

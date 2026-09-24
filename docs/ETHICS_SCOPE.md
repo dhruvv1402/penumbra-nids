@@ -78,15 +78,17 @@ Consequences we accept:
 that code are scope commitments, not implementation details:
 
 **It is read-only.** The package parses capture files. It opens no socket, sends no packet, and
-has no code path that could. `scapy` is a declared dependency for its packet *structures*; its
-send/sniff functions are never called.
+has no code path that could. The assembler parses with `dpkt`. `scapy` sits in the `pcap` extra
+and is never imported by the assembler; its send/sniff functions are called nowhere.
 
 **It does not read payloads.** The assembler uses IP, TCP and UDP header fields plus arrival times.
 Six UNSW-NB15 features — `service`, `trans_depth`, `response_body_len`, `is_ftp_login`,
 `ct_ftp_cmd`, `ct_flw_http_mthd` — cannot be computed without reading the application layer, so
 they are emitted as zero and listed in the tool's own output rather than approximated. That is a
 measurable cost to accuracy, accepted deliberately: a converter that quietly guessed `service` from
-the destination port would produce rows that look like UNSW rows and are not.
+the destination port would produce rows that look like UNSW rows and are not. (Two more, `sloss`
+and `dloss`, are zero for a different reason: they need TCP sequence reassembly. That makes eight
+structurally-zero features in all, the figure the demo script quotes.)
 
 **Captures must come from a network you own.** The hackathon brief's rule is explicit and it is
 this project's rule too: only ever test systems you own or a safe practice app, never a real

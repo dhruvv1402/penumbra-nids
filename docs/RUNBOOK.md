@@ -25,8 +25,11 @@ sample-size dependent. Treat them as a prompt to look, not as a verdict.
 ### Promotion — champion / challenger
 
 1. Train the challenger on the extended dataset. Fixed seed, recorded.
-2. **Canary gate.** The challenger must clear a frozen held-out evaluation set and beat the champion's
-   committed PR-AUC floor. A model poisoned to ignore a traffic pattern fails here.
+2. **Canary gate** (`eval/canary.py`). On a frozen canary set, at each model's own deployed
+   threshold: overall recall may not drop more than 0.02, no attack type with ≥ 20 canary rows may
+   lose more than 0.10 recall, and benign FPR may not rise more than 0.01. The per-type check is the
+   one that matters. A model poisoned to ignore one attack loses almost nothing on average, and in
+   E7 its overall recall went *up*.
 3. **Shadow scoring** (`penumbra registry shadow`). Run the challenger alongside the champion on live
    traffic for ≥ 7 days, scoring without alerting. Compare alert volume, agreement rate, and per-family recall on anything the
    analysts confirm.
@@ -107,7 +110,9 @@ the active-learning loop.
 The HMAC key is a secret. Anyone holding it can enumerate the entire IPv4 mapping in seconds.
 
 1. Generate the new key; store it in the secret manager, never in the repository.
-2. Both keys are accepted during a defined overlap window — historical data stays queryable.
+2. **Not implemented:** `api/security/pii.py` holds a single key, so there is no overlap window
+   and `Permission.ROTATE_KEY` is declared but unused. Until dual-key support exists, rotation means
+   choosing between step 3's two options at the moment of the switch.
 3. Re-pseudonymise retained data, or accept that pre-rotation data is only readable with the archived
    key.
 4. Retire the old key; record the rotation in the audit log.
@@ -156,9 +161,9 @@ fixture path removes all three.
 penumbra data fetch [--force]           # download + verify against manifest
 penumbra audit --dataset unsw           # artifact audit; run before trusting any number
 penumbra train --dataset unsw
-penumbra eval  --dataset unsw --report
+penumbra eval  --dataset unsw           # writes artifacts/reports/eval_unsw.json
 penumbra loafo --dataset unsw           # the pre-registered experiment
-penumbra replay --inject-drift          # drift injector for the live demo
+penumbra replay -d nslkdd --inject-drift abrupt   # abrupt | gradual | seasonal | evasion
 penumbra serve                          # API + WebSocket
 penumbra registry init -d nslkdd        # the fitted model becomes the first (ungated) champion
 penumbra retrain -d nslkdd              # challenger from PROMOTED verdicts + canary gate

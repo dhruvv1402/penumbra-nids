@@ -1,0 +1,56 @@
+// vimNetworkSessionPenumbra
+//
+// Parametrized ASIM filtering parser for Penumbra alerts - the counterpart to
+// ASimNetworkSessionPenumbra, following Microsoft's naming convention (vim<Schema><Vendor><Product>).
+// The _Im_NetworkSession unifying parser calls this with its standard filtering parameters, so an
+// ASIM rule asking for "sessions from 10.0.0.0/8 to port 445 in the last hour" gets exactly those.
+//
+// Parameters are the NetworkSession filtering set; each default means "no filter". `disabled` lets
+// a workspace take Penumbra out of the unifying parser without deleting anything.
+//
+// Trade-off, stated: Microsoft's own vim parsers filter raw columns before normalising, for speed on
+// high-volume sources. This one calls the saved ASimNetworkSessionPenumbra function and filters the
+// normalised fields, so the normalisation logic exists in one place and cannot drift between the
+// two parsers. Penumbra emits alerts, not every flow, so the volume is small enough for that.
+//
+// DvcAction is always "Allow" - Penumbra alerts and never acts (ADR-0001) - so a dvcaction filter
+// that excludes "Allow" correctly returns nothing, and it is evaluated once rather than per row.
+
+let parser = (
+    starttime: datetime = datetime(null),
+    endtime: datetime = datetime(null),
+    srcipaddr_has_any_prefix: dynamic = dynamic([]),
+    dstipaddr_has_any_prefix: dynamic = dynamic([]),
+    ipaddr_has_any_prefix: dynamic = dynamic([]),
+    dstportnumber: int = int(null),
+    hostname_has_any: dynamic = dynamic([]),
+    dvcaction: dynamic = dynamic([]),
+    eventresult: string = "*",
+    disabled: bool = false
+) {
+    let action_ok = array_length(dvcaction) == 0 or set_has_element(dvcaction, "Allow");
+    let result_ok = eventresult == "*" or eventresult == "Success";
+    ASimNetworkSessionPenumbra
+    | where not(disabled) and action_ok and result_ok
+    | where isnull(starttime) or TimeGenerated >= starttime
+    | where isnull(endtime) or TimeGenerated <= endtime
+    | where array_length(srcipaddr_has_any_prefix) == 0 or has_any_ipv4_prefix(SrcIpAddr, srcipaddr_has_any_prefix)
+    | where array_length(dstipaddr_has_any_prefix) == 0 or has_any_ipv4_prefix(DstIpAddr, dstipaddr_has_any_prefix)
+    | where array_length(ipaddr_has_any_prefix) == 0
+        or has_any_ipv4_prefix(SrcIpAddr, ipaddr_has_any_prefix)
+        or has_any_ipv4_prefix(DstIpAddr, ipaddr_has_any_prefix)
+    | where isnull(dstportnumber) or DstPortNumber == dstportnumber
+    | where array_length(hostname_has_any) == 0 or DvcHostname has_any (hostname_has_any)
+};
+parser(
+    starttime = starttime,
+    endtime = endtime,
+    srcipaddr_has_any_prefix = srcipaddr_has_any_prefix,
+    dstipaddr_has_any_prefix = dstipaddr_has_any_prefix,
+    ipaddr_has_any_prefix = ipaddr_has_any_prefix,
+    dstportnumber = dstportnumber,
+    hostname_has_any = hostname_has_any,
+    dvcaction = dvcaction,
+    eventresult = eventresult,
+    disabled = disabled
+)

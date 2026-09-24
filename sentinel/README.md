@@ -6,7 +6,7 @@ Laid out the way a real Sentinel Solution is, so the artifacts can be read again
 ```
 Analytic Rules/   scheduled KQL detection rules, plus the mined rule packs
 Parsers/          ASIM normalizing + filtering parsers
-Data Connectors/  the DCR and connector definition
+Data Connectors/  the DCR (PenumbraDCR.json); no portal connector definition yet
 Sigma/            mined rules that Sigma can express honestly
 Workbooks/        PenumbraOverview.json: lanes, verdict mix, suppressions, abstention, ADR-0001 check
 ```
@@ -34,7 +34,7 @@ read it straight off the payload.
 
 `src/penumbra/integrations/siem/`: `/ingest` forwards every alert, suppressed ones included, as an
 ASIM record through a `SiemConnector`. `PENUMBRA_SIEM=mock` (the default) validates each record and
-appends it to `artifacts/siem/PenumbraAlerts_CL.jsonl`, which is exactly what Sentinel would
+appends it to `<state dir>/siem/PenumbraAlerts_CL.jsonl` (`PENUMBRA_STATE_ROOT`, default `artifacts/`), which is exactly what Sentinel would
 receive. `PENUMBRA_SIEM=sentinel` posts to the Logs Ingestion API and refuses to start without
 `PENUMBRA_SENTINEL_ENDPOINT`, `PENUMBRA_SENTINEL_DCR_ID` and the three `PENUMBRA_AZURE_*` values.
 It never falls back to the mock silently. The Sentinel client is tested against a fake transport;
@@ -62,7 +62,9 @@ path, not the dying shared-key one.
 - `relevantTechniques` is validated against **ATT&CK v16**.
 - Log Analytics column names must start with a letter and be ≤45 characters.
 
-`tests/unit/test_alert_schemas.py` asserts all of these against generated payloads. A green suite
+`tests/unit/test_alert_schemas.py` asserts the payload rules against generated payloads, and
+`tests/unit/test_sentinel_rules.py` asserts the analytics-rule rules (ASCII-only description,
+technique IDs) and that both parsers exist. A green suite
 proving "this is Sentinel-ingestible" is more verifiable than a screenshot of a portal.
 
 ## Constraint we are not pretending away

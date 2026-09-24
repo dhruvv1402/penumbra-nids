@@ -173,7 +173,8 @@ Enforced by a grep-based import check in CI (`.github/workflows/ci.yml`, job `in
 
 - `models/`, `eval/` and `rules/` never import `api/`, `alerts/` or `storage/`. The science must
   run headless, and a mined rule pack has to be reproducible without the product layer.
-- `api/` depends on `storage.repository.Repository`, the Protocol — never on a concrete backend.
+- `api/` uses storage through the `storage.repository.Repository` Protocol. The one concrete
+  reference is where `AppState` constructs the SQLite backend. This is a convention, not CI-enforced.
 - Everything SIEM-facing goes through `integrations.siem.base.SiemConnector`. `LocalMockSiem` is the
   default binding; `AzureSentinelSiem` raises `NotConfigured` until credentials exist.
 - `explain/attack_map.py` is a hand-written constant table with a justification per entry. A wrong

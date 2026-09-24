@@ -50,7 +50,8 @@ annotated with prevalence and re-weighted by `eval/prevalence.py` before anyone 
 
 **NSL-KDD.** `KDDTrain+` and `KDDTest+` are **never concatenated and re-shuffled**. Doing so would
 destroy the only naturally occurring unseen-attack holdout available to us — the dataset authors
-constructed the zero-day experiment, and re-splitting throws it away. A test enforces this.
+constructed the zero-day experiment, and re-splitting throws it away. `tests/unit/test_nslkdd_split.py`
+enforces this where the data is present (CI fetches no datasets, so it runs locally).
 
 **CICIDS2017.** We use the Engelen/Rimmer/Joosen **improved re-release** (WTMC 2021, IEEE CNS 2022)
 rather than the original, because the original's labels are known-wrong: a CICFlowMeter bug terminated

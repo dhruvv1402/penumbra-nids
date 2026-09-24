@@ -46,7 +46,7 @@ the test set. The dataset's authors built the experiment; we just ran it.
 
 ## 2 — The two-lane architecture (60s)
 
-Show the console. Two lanes side by side.
+Show the console. Two lanes, one tab each: *known* and *hunting* (plus *review*, the abstention lane).
 
 > "Left lane: a supervised head, high precision, SLA'd — normal tickets. Right lane: a second
 > detector trained on **benign traffic only**. It has never seen an attack, so it can't fail to
@@ -249,8 +249,11 @@ uv run penumbra replay -d nslkdd --ingest --inject-drift abrupt
 ## 7b — Not a CSV (45s)
 
 ```bash
-uv run penumbra pcap lab.pcap --model unsw
+uv run --extra pcap penumbra pcap <your-capture>.pcap --model unsw
 ```
+
+No capture ships with the repository. Bring one from hardware you own; the 41-flow result below came
+from a synthetic capture built by the test suite, and should be introduced as exactly that.
 
 > "Everything so far has been a benchmark somebody else prepared. This is a packet capture."
 

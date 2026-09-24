@@ -2,9 +2,8 @@
 
 Structured per Mitchell et al., *Model Cards for Model Reporting* (FAT\* 2019).
 
-> **Status: pre-results.** Every section below is complete except the numbers, which are marked
-> `[pending]` and will be filled from `penumbra eval --report` rather than typed by hand. Sections that
-> state limitations are already final — they do not depend on how the model performs.
+> **Status: measured.** Numbers come from `penumbra eval` (artifacts/reports/eval_*.json) and the
+> experiments in `docs/EVALUATION.md`, which is the authoritative source; this card summarises it.
 
 ---
 
@@ -13,11 +12,12 @@ Structured per Mitchell et al., *Model Cards for Model Reporting* (FAT\* 2019).
 | | |
 |---|---|
 | Name | Penumbra |
-| Version | 0.1.0 (pre-results) |
+| Version | 0.1.0. Deployed versions are tracked in the model registry (`penumbra registry list`): each has SHA-256 manifests, its training provenance (feedback rows, approvers), its canary gate report and its shadow comparison |
 | Type | Two-stage: supervised multiclass classifier + benign-only novelty detector |
 | Architecture | Known-threat head: LogisticRegression (floor), RandomForest, XGBoost. Novelty head: 42-32-16-8-16-32-42 MLP autoencoder, IsolationForest, Mahalanobis with Ledoit-Wolf shrinkage. Fusion: rank-normalised, single threshold |
 | Calibration | Isotonic on a held-out split; Platt compared |
 | Uncertainty | Mondrian (class-conditional) split-conformal prediction |
+| Portable form | Supervised head exports to ONNX (`penumbra export-onnx`); parity verified on all 22,544 NSL-KDD test rows, 0 decisions flipped. The novelty head and conformal layer are not exported |
 | Owner | Dhruv Gupta |
 | Licence | MIT |
 | Repository | https://github.com/dhruvv1402/penumbra-nids |
@@ -69,8 +69,9 @@ Performance is reported disaggregated by, not only in aggregate over:
 - **Network segment**, where the dataset distinguishes one.
 - **Flow duration regime** — relevant to slow-and-low evasion.
 
-Reported using the same framing as the Azure ML Responsible AI dashboard's **Error Analysis**
-component, run locally via the open-source `erroranalysis` package.
+**Only the attack-family breakdown is implemented.** The protocol, service, volume, segment and
+duration breakdowns are the intended factors, not produced results. The `erroranalysis` package this
+card once named is not a dependency.
 
 ---
 
@@ -99,13 +100,13 @@ measured**, because they are.
 
 | Metric | Value |
 |---|---|
-| Binary ROC-AUC (with suspected artifact features) | `[pending]` |
-| **Binary ROC-AUC (artifact features removed)** | `[pending]` — **this is the number we stand behind** |
-| Recall @ 1% FPR | `[pending]` |
-| Macro-F1 across 10 classes | `[pending]` |
-| Brier score, pre/post isotonic | `[pending]` |
-| Per-family recall matrix | `[pending]` |
-| LOAFO ΔRecall at matched alert budget | `[pending]` |
+| Binary ROC-AUC (with suspected artifact features) | UNSW rf 0.9844 |
+| **Binary ROC-AUC (artifact features removed)** | **UNSW rf 0.9833 [0.9828, 0.9839]** — **this is the number we stand behind**; NSL-KDD rf 0.9668 |
+| Recall @ 1% FPR | UNSW rf 0.8302 · NSL-KDD rf 0.4644 · NSL-KDD unseen-17 **0.0525** (supervised), 0.346 with the novelty head |
+| Macro-F1 across 10 classes | UNSW 0.5086 · NSL-KDD (5 classes) 0.5474 |
+| Brier score | UNSW rf 0.0698 (artifact-free). **Pre/post-isotonic comparison not measured**; the calibration module exists but no report compares the two |
+| Per-family recall matrix | EVALUATION §10.2: UNSW DoS 0.125, Backdoor 0.093, Analysis 0.090; NSL-KDD r2l 0.059 |
+| LOAFO ΔRecall at matched alert budget | UNSW: control, mean −0.011 (families overlap; EVALUATION §10.3b). NSL-KDD unseen-17: +0.29 at 1% FPR, −0.09 at 10% |
 
 ---
 
@@ -138,7 +139,8 @@ Class distribution (UNSW-NB15 training split):
 **Imbalance handling, stated precisely because this is where results become fiction:**
 
 Resampling is applied **inside cross-validation folds, on training data only, never before the split**.
-A test fails the build if a sampler is ever fitted outside a fold. SMOTE-NC rather than plain SMOTE
+`tests/property/test_invariants.py::test_resampler_is_fitted_inside_the_fold` fails the build if a
+sampler ever sees rows outside the training fold. SMOTE-NC rather than plain SMOTE
 where categoricals are present, because interpolating between one-hot columns generates rows that
 cannot physically exist.
 
@@ -147,7 +149,7 @@ held-out set is performed *after* any resampling. This is easy to miss and inval
 claim if missed.
 
 The full ablation — `class_weight`, SMOTE, SMOTE-NC, ADASYN, BorderlineSMOTE, RandomUnderSampler,
-BalancedRandomForest, EasyEnsemble, focal loss, threshold-moving — is evaluated **on the natural
+BalancedRandomForest, EasyEnsemble, threshold-moving (focal loss was planned and not built) — is evaluated **on the natural
 distribution** in every cell.
 
 **Suspected testbed artifacts.** `data/audit.py` fits a single-feature stump per column and quarantines
@@ -159,8 +161,10 @@ headline number is reported with and without the quarantined set.
 
 ## 7. Quantitative analyses
 
-`[pending]` — per-family recall, disaggregation across the factors in §3, the LOAFO matrix, calibration
-curves, and the with/without-artifact comparison.
+Per-family recall, the LOAFO matrix, the unseen-17 curve and the with/without-artifact comparison
+are in `docs/EVALUATION.md` §2 and §10. **Not produced:** disaggregation by protocol, service,
+volume or duration regime (§3 lists them as intended factors; no report computes them yet) and a
+calibration reliability diagram.
 
 Expected in advance and published regardless: **U2R and R2L recall on NSL-KDD will be poor** (52 U2R
 instances in test). That is reported with an explanation rather than omitted.
@@ -192,7 +196,15 @@ constraints (Pierazzi et al., IEEE S&P 2020) rather than meaningless feature-spa
 an attacker can add padding and delay, but cannot un-send a packet.
 
 **Poisoning through the feedback loop.** The analyst-verdict path is an attack surface we introduced
-ourselves. See `docs/THREAT_MODEL.md`.
+ourselves, and we measured it (E7, replicated as E7b). One compromised account can erase detection of
+a thinly supported attack type (recall 0.84 → 0.19), but only by clearing every one of its alerts.
+Controls: two-person promotion, per-account rate limits, verdict integrity flags (the per-family peer
+comparison caught every damaging dose in both drills, with no honest false flags), a per-family canary
+gate, and shadow scoring before promotion. See `docs/THREAT_MODEL.md` T1.
+
+**Retraining changes the model you are reading about.** Analyst feedback shifts the numbers in this
+card. In E7 honest verdicts cut FPR from 10.2% to 4.3%. Any promoted version must be re-evaluated,
+and its registry entry carries the evidence it was promoted on.
 
 ---
 

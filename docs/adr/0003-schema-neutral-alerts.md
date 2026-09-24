@@ -32,7 +32,7 @@ our event. The model verdict maps onto the inspection fields:
   `priority` is a sort key, not a probability, and putting it here would misrepresent it.
 - `ThreatName`, `ThreatCategory`, `ThreatId`, `ThreatRiskLevel`
 - `ThreatField` — **conditional**: required whenever `ThreatIpAddr` is set
-- `NetworkRuleName` — `Penumbra-XGB-v{version}/{family}`
+- `NetworkRuleName` — `{model_name}-{model_version}/{family or 'novel'}` (e.g. `penumbra-0.1.0/dos`)
 
 **The alert-not-block decision, expressed in Microsoft's own vocabulary:**
 
