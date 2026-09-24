@@ -249,3 +249,19 @@ def test_expired_rule_stops_matching() -> None:
         expires_at=past + timedelta(days=30),
     )
     assert first_match([rule], _alert(13)) is None
+
+
+def test_labelling_queue_reaches_the_review_lane_under_load(client: TestClient) -> None:
+    # 2,100 confident alerts outrank every abstention and exceed the old 2,000-row fetch.
+    confident = [_alert(1000 + i, p=0.99) for i in range(2100)]
+    unsure = build_alert(
+        p_attack=0.5,
+        novelty_percentile=0.3,
+        policy=ScoringPolicy(),
+        conformal_ambiguous=True,
+        network=NetworkContext(),
+    )
+    unsure.raw_features = {"segment": "dmz"}
+    state.repo.save_alerts([*confident, unsure])
+    items = client.get("/feedback/queue", headers=_token(client, "analyst")).json()["items"]
+    assert items[0]["alert_id"] == unsure.alert_id

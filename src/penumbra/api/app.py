@@ -379,7 +379,11 @@ async def labelling_queue(
     """Which alerts an analyst's next hour is best spent on (uncertainty sampling)."""
     require(principal, Permission.RECORD_VERDICT)
     judged = {str(v["target_id"]) for v in state.repo.verdict_history()}
-    candidates = state.repo.list_alerts(principal, limit=2000)
+    # The review lane is fetched on its own. Abstentions sit near p = 0.5, below every confident
+    # alert, so a single top-N by priority would starve exactly the items this queue exists for.
+    candidates = state.repo.list_alerts(principal, lane="review", limit=1000) + state.repo.list_alerts(
+        principal, limit=1000
+    )
     return {"strategy": "uncertainty sampling", "items": active.queue(candidates, judged=judged, limit=limit)}
 
 
