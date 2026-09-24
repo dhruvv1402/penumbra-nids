@@ -1452,10 +1452,7 @@ def retrain(
     (`penumbra registry promote`) and is refused unless the gate passed.
     """
     seed_everything()
-    from dataclasses import replace
-
-    from penumbra.eval import canary
-    from penumbra.models.detector import PenumbraDetector
+    from penumbra.eval import canary, retraining
     from penumbra.storage.sqlite import SqliteRepository
 
     reg = _registry(dataset)
@@ -1467,45 +1464,28 @@ def retrain(
     repo = SqliteRepository(db or settings().artifact_root / "penumbra.db")
     rows = repo.promoted_training_rows()
     ds = _load(dataset)
-    usable = [r for r in rows if set(ds.feature_names) <= set(r["features"])]
+    augmented, summary = retraining.augment(ds, rows)
     console.print(
-        f"[dim]{len(rows)} promoted training rows, {len(usable)} carry the full {ds.name} feature set[/dim]"
+        f"[dim]{summary.rows_offered} promoted training rows, {summary.rows_usable} carry the full "
+        f"{ds.name} feature set[/dim]"
     )
-    if not usable:
+    if not summary.rows_usable:
         console.print("Nothing to retrain on. Verdicts must be recorded, then promoted by a second senior.")
         raise typer.Exit(1)
 
-    fb = pd.DataFrame([r["features"] for r in usable])[ds.feature_names].astype(ds.X_train.dtypes.to_dict())
-    labels = pd.Series([int(r["label"]) for r in usable])
-    fams = pd.Series([str(r["family"]) if r["label"] == 1 and r["family"] else "normal" for r in usable])
-    augmented = replace(
-        ds,
-        X_train=pd.concat([ds.X_train, fb], ignore_index=True),
-        y_train=pd.concat([ds.y_train, labels], ignore_index=True),
-        fam_train=pd.concat([ds.fam_train, fams], ignore_index=True),
-    )
-
     champion = reg.load()
-    console.print(f"[dim]fitting challenger on {len(augmented.X_train):,} rows...[/dim]")
-    challenger = PenumbraDetector(target_fpr=champion.target_fpr).fit(augmented, model_name=model)
-    info = reg.register(
-        challenger,
-        created_by=by,
-        parent=champion_version,
-        training={
-            "feedback_rows": len(usable),
-            "feedback_attack": int(labels.sum()),
-            "feedback_benign": int(len(labels) - labels.sum()),
-            "approvers": sorted({str(r["approver"]) for r in usable}),
-        },
-    )
-
     fine = _canary_labels(dataset, ds)
     can_idx, _, _ = canary.live_split(fine)
-    X_can, y_can, f_can = ds.X_test.iloc[can_idx], ds.y_test.iloc[can_idx], fine.iloc[can_idx]
-    result = canary.gate(
-        canary.evaluate(champion, X_can, y_can, f_can), canary.evaluate(challenger, X_can, y_can, f_can)
+    console.print(f"[dim]fitting challenger on {len(augmented.X_train):,} rows...[/dim]")
+    challenger, result = retraining.challenge(
+        champion,
+        augmented,
+        ds.X_test.iloc[can_idx],
+        ds.y_test.iloc[can_idx],
+        fine.iloc[can_idx],
+        model_name=model,
     )
+    info = reg.register(challenger, created_by=by, parent=champion_version, training=summary.to_dict())
     reg.attach_gate(info.version, result.to_dict())
     _audit(by, "model.register", info.version, {"dataset": dataset, "gate_passed": result.passed})
 

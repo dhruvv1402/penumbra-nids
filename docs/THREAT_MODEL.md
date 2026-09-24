@@ -96,8 +96,11 @@ ATLAS: `AML.T0043` Craft Adversarial Data.
 Feature attributions describe what makes traffic detectable, which doubles as a map of what an evader
 must change. Repeated querying of a scoring endpoint allows threshold discovery.
 
-**Mitigations:** attributions only inside authenticated, role-gated, audited interfaces; rate limiting
-on `/score`; no public scoring endpoint; SHAP values never returned to an unauthenticated caller.
+**Mitigations:** attributions only inside authenticated, role-gated, audited interfaces; **no scoring
+endpoint at all**. The API receives already-scored alerts (`/ingest`, senior-only), so there is no
+oracle to query for threshold discovery; scoring runs in the sensor-side replay and pcap paths.
+Attributions are never returned to an unauthenticated caller. If a scoring endpoint is ever added it
+needs per-account rate limiting, like the verdict routes already have.
 
 ATLAS: `AML.T0024` Exfiltration via ML Inference API · `AML.T0002` Acquire Public ML Artifacts.
 

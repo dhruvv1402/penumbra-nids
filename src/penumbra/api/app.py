@@ -3,9 +3,13 @@
 Serves the SOC console and anything else that wants scored traffic. Every route that changes
 something is permission-gated and audit-logged.
 
-**There is no endpoint that blocks traffic.** Not disabled, not admin-gated - absent. `/score`
-returns a verdict and a suggested action as text; nothing consumes it as an instruction. ADR-0001,
-and CI greps the tree to keep it true.
+**There is no endpoint that blocks traffic.** Not disabled, not admin-gated - absent. Alerts carry
+a verdict and a suggested action as text; nothing consumes either as an instruction. ADR-0001, and
+CI greps the tree to keep it true.
+
+There is also no scoring endpoint: scoring happens sensor-side (replay, pcap) and the API receives
+scored alerts. An API that scores arbitrary input on request is a threshold-discovery oracle
+(THREAT_MODEL T3).
 """
 
 from __future__ import annotations
