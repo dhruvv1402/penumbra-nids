@@ -32,6 +32,8 @@ MAX_LIFETIME = timedelta(days=90)
 # field, so family alone is rejected.
 SCOPING_FIELDS = ("src_ip", "dst_ip", "dst_port", "service")
 MATCH_FIELDS = (*SCOPING_FIELDS, "family", "protocol")
+PLACEHOLDERS = frozenset({"-", "--", "none", "null", "nan", "n/a", "unknown", "other"})
+WILDCARDS = frozenset({"*", "all", "0.0.0.0/0", "::/0"})
 
 
 class SuppressionRule(BaseModel):
@@ -53,32 +55,30 @@ class SuppressionRule(BaseModel):
         unknown = sorted(set(v) - set(MATCH_FIELDS))
         if unknown:
             raise ValueError(f"cannot match on {unknown}; allowed: {list(MATCH_FIELDS)}")
-        cleaned = {k: str(val).strip() for k, val in v.items() if str(val).strip()}
+        # Placeholders are the datasets' "no value": UNSW writes "-" for "no service" on about half
+        # its flows. A placeholder scopes nothing, so it is DROPPED - then the rule must still be
+        # scoped by something real. (Rejecting it outright broke the console's own pre-filled rule
+        # whenever an alert had a real address and a "-" service.)
+        cleaned = {
+            k: str(val).strip()
+            for k, val in v.items()
+            if str(val).strip() and str(val).strip().lower() not in PLACEHOLDERS
+        }
+        # Wildcards mean "everything" and are refused outright. `any` is a real protocol value in
+        # UNSW-NB15, so it is only a wildcard outside the protocol field.
+        wild = [
+            k
+            for k, val in cleaned.items()
+            if val.lower() in WILDCARDS or (val.lower() == "any" and k != "protocol")
+        ]
+        if wild:
+            raise ValueError(f"wildcards cannot scope a suppression: {wild}")
         if not any(k in cleaned for k in SCOPING_FIELDS):
             raise ValueError(
-                f"a suppression must be scoped by at least one of {list(SCOPING_FIELDS)}; "
-                "suppressing a whole family is switching the detector off"
+                f"a suppression must be scoped by at least one real value of {list(SCOPING_FIELDS)}; "
+                "suppressing a whole family, or scoping by a placeholder like '-', is switching the "
+                "detector off"
             )
-        # Wildcards, and the datasets' "no value" placeholders. UNSW writes "-" for "no service" on
-        # roughly half its flows, so {"service": "-"} passed as a scoped rule and would have switched
-        # detection off across every family. A placeholder scopes nothing.
-        blocked = {
-            "*",
-            "any",
-            "all",
-            "0.0.0.0/0",
-            "::/0",
-            "-",
-            "--",
-            "none",
-            "null",
-            "nan",
-            "n/a",
-            "unknown",
-            "other",
-        }
-        if any(val.lower() in blocked for val in cleaned.values()):
-            raise ValueError("wildcards and placeholder values ('-', 'none', ...) cannot scope a suppression")
         return cleaned
 
     @model_validator(mode="after")
@@ -132,7 +132,11 @@ def proposed_match(alert: Alert) -> dict[str, str]:
     Everything the alert carries that scopes it, plus its family when it has one. The analyst can
     loosen it; the default should never be looser than the evidence.
     """
-    return {k: v for k, v in alert_fields(alert).items() if v is not None and k in MATCH_FIELDS}
+    return {
+        k: v
+        for k, v in alert_fields(alert).items()
+        if v is not None and k in MATCH_FIELDS and v.strip().lower() not in PLACEHOLDERS
+    }
 
 
 def first_match(

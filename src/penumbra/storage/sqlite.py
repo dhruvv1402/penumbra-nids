@@ -102,6 +102,7 @@ TRAINING_LABEL = {"true_positive": 1, "false_positive": 0}
 
 
 MIXED_SEGMENT = "mixed"
+UNRESOLVED_SEGMENT = "unresolved"
 
 
 class VerdictLocked(ValueError):
@@ -121,7 +122,25 @@ class SqliteRepository:
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
         self._migrate()
+        self._backfill_incident_segments()
         self._conn.commit()
+
+    def _backfill_incident_segments(self) -> None:
+        """Derive the segment of incidents stored before segments were derived.
+
+        Every incident used to be written with segment NULL, which passes every segment filter. A
+        database from before the fix would keep leaking those incidents to restricted analysts
+        until each happened to be saved again. Idempotent: only NULL rows are touched, and an
+        incident whose alerts genuinely carry no segment stays NULL.
+        """
+        rows = self._conn.execute("SELECT payload FROM incidents WHERE segment IS NULL").fetchall()
+        for r in rows:
+            incident = Incident.model_validate_json(r["payload"])
+            segment = self._incident_segment(incident)
+            if segment is not None:
+                self._conn.execute(
+                    "UPDATE incidents SET segment = ? WHERE incident_id = ?", [segment, incident.incident_id]
+                )
 
     def _migrate(self) -> None:
         present = {r["name"] for r in self._conn.execute("PRAGMA table_info(verdict_queue)")}
@@ -230,10 +249,14 @@ class SqliteRepository:
             return None
         placeholders = ",".join("?" for _ in incident.alert_ids)
         rows = self._conn.execute(
-            f"SELECT DISTINCT segment FROM alerts WHERE alert_id IN ({placeholders}) AND segment IS NOT NULL",
+            f"SELECT segment FROM alerts WHERE alert_id IN ({placeholders})",
             incident.alert_ids,
         ).fetchall()
-        segments = {str(r["segment"]) for r in rows}
+        if not rows:
+            # None of its alerts are stored, so the segment is unknowable - and NULL would make it
+            # visible to everyone. Unresolved is visible only to unrestricted principals.
+            return UNRESOLVED_SEGMENT
+        segments = {str(r["segment"]) for r in rows if r["segment"] is not None}
         if not segments:
             return None
         return segments.pop() if len(segments) == 1 else MIXED_SEGMENT

@@ -475,3 +475,83 @@ def test_suppression_can_be_revoked_and_stops_matching(client: TestClient) -> No
     assert body["suppressed"] == 0
     assert client.post(f"/suppressions/{rule['rule_id']}/revoke", headers=senior).status_code == 409
     assert "suppression.revoke" in [e.action for e in state.audit.tail(10)]
+
+
+def test_placeholder_is_dropped_when_a_real_field_scopes_the_rule(client: TestClient) -> None:
+    # Second review: the console's own pre-filled rule (real address + service "-") was refused.
+    resp = client.post(
+        "/suppressions",
+        json={
+            "match": {"src_ip": "pseudo:abc", "dst_port": "80", "service": "-", "protocol": "any"},
+            "reason": "nightly vuln scanner",
+            "days": 7,
+        },
+        headers=_token(client, "senior"),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["match"] == {"src_ip": "pseudo:abc", "dst_port": "80", "protocol": "any"}
+
+
+def test_proposal_never_offers_a_placeholder() -> None:
+    from penumbra.alerts.suppression import proposed_match
+
+    assert "service" not in proposed_match(_alert(994, service="-"))
+
+
+def test_live_stream_respects_segments(client: TestClient) -> None:
+    # Second review: publish_alert pushed every alert to every socket regardless of segment.
+    token = client.post("/auth/login", json={"username": "analyst", "password": "analyst"}).json()[
+        "access_token"
+    ]
+    ot, dmz = _alert(995, segment="ot"), _alert(996, segment="dmz")
+    with client.websocket_connect(f"/stream?token={token}") as ws:
+        assert ws.receive_json()["type"] == "connected"
+        senior = _token(client, "senior")
+        client.post("/ingest", json={"alerts": [ot.model_dump(mode="json")]}, headers=senior)
+        client.post("/ingest", json={"alerts": [dmz.model_dump(mode="json")]}, headers=senior)
+        first = ws.receive_json()
+        assert first["type"] == "alert" and first["alert"]["alert_id"] == dmz.alert_id
+
+
+def test_incident_without_stored_alerts_is_unresolved_not_public(client: TestClient) -> None:
+    from penumbra.alerts.models import Incident, Lane, Severity
+
+    state.repo.save_incident(
+        Incident(
+            incident_id="INC-ORPHAN",
+            title="orphan",
+            severity=Severity.LOW,
+            lane=Lane.KNOWN_THREAT,
+            priority=10,
+            entity="pseudo:x",
+            alert_ids=["never-stored"],
+            event_count=1,
+        )
+    )
+    assert client.get("/incidents/INC-ORPHAN", headers=_token(client, "analyst")).status_code == 404
+    assert client.get("/incidents/INC-ORPHAN", headers=_token(client, "senior")).status_code == 200
+
+
+def test_pre_fix_incidents_are_backfilled_on_open(tmp_path) -> None:
+    from penumbra.alerts.models import Incident, Lane, Severity
+
+    db = tmp_path / "old.db"
+    repo = SqliteRepository(db)
+    a = _alert(997, segment="ot")
+    repo.save_alert(a)
+    inc = Incident(
+        incident_id="INC-OLD",
+        title="old",
+        severity=Severity.LOW,
+        lane=Lane.KNOWN_THREAT,
+        priority=10,
+        entity="pseudo:y",
+        alert_ids=[a.alert_id],
+        event_count=1,
+    )
+    repo.save_incident(inc)
+    repo._conn.execute("UPDATE incidents SET segment = NULL")  # what every pre-fix row looked like
+    repo._conn.commit()
+    repo.close()
+    reopened = SqliteRepository(db)
+    assert reopened._conn.execute("SELECT segment FROM incidents").fetchone()["segment"] == "ot"

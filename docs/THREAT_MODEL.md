@@ -60,8 +60,10 @@ improve is the same mechanism that makes it corruptible.
   manifest; artifacts are SHA-256-verified before they are unpickled; rollback is a recorded pointer
   change that also refuses a tampered target. **The manifest lives beside the artifact**, so digests
   alone only catch accidental or partial tampering: set `PENUMBRA_MODEL_SIGNING_KEY` (held outside
-  the registry) and every manifest is HMAC-signed and checked, so a swapped artifact with a
-  rewritten manifest still fails. Without the key that protection is absent, and the docs say so.
+  the registry) and every manifest is HMAC-signed over its whole content, including the gate
+  verdict and feedback provenance, and so is the champion pointer. A swapped artifact, a forged
+  "gate passed", or a pointer edited to force a rollback all fail verification. Without the key that
+  protection is absent, and the docs say so.
 - **Benign-by-policy never trains the model.** It becomes an expiring suppression rule instead, so a
   policy exception cannot be laundered into a permanent blind spot in the weights.
 - **Shadow scoring** (`penumbra registry shadow`, `eval/shadow.py`): champion and challenger score

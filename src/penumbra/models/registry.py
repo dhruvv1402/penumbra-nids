@@ -52,8 +52,15 @@ def _signing_key() -> bytes | None:
     return key.encode("utf-8") if key else None
 
 
-def _signature(key: bytes, version: str, files: dict[str, str]) -> str:
-    payload = json.dumps({"version": version, "files": dict(sorted(files.items()))}, sort_keys=True).encode()
+def _sign(key: bytes, document: dict[str, Any]) -> str:
+    """HMAC over a whole JSON document, minus its own signature field.
+
+    The whole document, not just the file digests: the promotion decision reads `gate.passed` from
+    the same manifest, so signing only the digests left the gate verdict (and the feedback
+    provenance) forgeable by anyone who could write the directory.
+    """
+    body = {k: v for k, v in document.items() if k != "signature"}
+    payload = json.dumps(body, sort_keys=True, default=str).encode()
     return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
 
@@ -116,6 +123,13 @@ class ModelRegistry:
         if not path.exists():
             return {"version": None, "history": []}
         state: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+        key = _signing_key()
+        if key is not None and not hmac.compare_digest(str(state.get("signature", "")), _sign(key, state)):
+            # The champion pointer decides what production unpickles. Unsigned, it would allow a
+            # forced "rollback" to any version by editing one file.
+            raise TamperedArtifact(
+                f"{self.dataset} champion pointer fails its signature; refusing to trust it"
+            )
         return state
 
     def champion(self) -> str | None:
@@ -147,8 +161,7 @@ class ModelRegistry:
                 bad.append(name)
         key = _signing_key()
         if key is not None and (
-            not info.signature
-            or not hmac.compare_digest(info.signature, _signature(key, version, info.files))
+            not info.signature or not hmac.compare_digest(info.signature, _sign(key, info.to_dict()))
         ):
             bad.append("manifest signature")
         return bad
@@ -194,9 +207,6 @@ class ModelRegistry:
             files=files,
             training=training or {},
         )
-        key = _signing_key()
-        if key is not None:
-            info.signature = _signature(key, version, files)
         self._write_manifest(info)
         return info
 
@@ -296,9 +306,17 @@ class ModelRegistry:
         return self.versions_dir / version
 
     def _write_manifest(self, info: VersionInfo) -> None:
+        # Re-signed on every write, so attaching a gate or shadow report keeps the manifest valid and
+        # an edit made anywhere else does not.
+        key = _signing_key()
+        info.signature = _sign(key, info.to_dict()) if key is not None else None
         path = self._version_dir(info.version) / MANIFEST
         path.write_text(json.dumps(info.to_dict(), indent=2, default=str), encoding="utf-8")
 
     def _write_champion(self, state: dict[str, Any]) -> None:
+        key = _signing_key()
+        state.pop("signature", None)
+        if key is not None:
+            state["signature"] = _sign(key, state)
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / CHAMPION).write_text(json.dumps(state, indent=2), encoding="utf-8")

@@ -403,12 +403,13 @@ def _deployed_detector(dataset: str):
     from penumbra.models.registry import TamperedArtifact
 
     reg = _registry(dataset)
-    if reg.champion():
-        try:
-            det = reg.load()
-        except TamperedArtifact as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(2) from exc
+    try:
+        champion = reg.champion()
+        det = reg.load() if champion else None
+    except TamperedArtifact as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+    if det is not None:
         console.print(f"[dim]champion {reg.champion()} (hashes verified)[/dim]")
         return det
 
@@ -454,11 +455,21 @@ def _replay_fixture(path: Path, *, ingest: bool, api: str, delay: float, rows: i
         console.print(f"[dim]  {sent:>7,} ingested[/dim]")
         if delay:
             time.sleep(delay)
-    n_inc = client.send_incidents(incidents)
-    console.print(f"{sent:,} alerts and {n_inc:,} incidents ingested from fixture.")
     if sent < len(alerts):
-        console.print(f"[yellow]{len(alerts) - sent:,} alerts were not accepted by the API.[/yellow]")
+        # Incidents derive their segment from their stored alerts; posting them without those
+        # alerts would store them unscoped. Better none than wrongly visible.
+        console.print(
+            f"[yellow]{len(alerts) - sent:,} alerts were not accepted by the API; incidents not sent.[/yellow]"
+        )
         raise typer.Exit(1)
+    shipped = {a.alert_id for a in alerts}
+    ready = [i for i in incidents if set(i.get("alert_ids", [])) & shipped]
+    n_inc = client.send_incidents(ready)
+    console.print(f"{sent:,} alerts and {n_inc:,} incidents ingested from fixture.")
+    if len(ready) < len(incidents):
+        console.print(
+            f"[dim]{len(incidents) - len(ready):,} incidents skipped: none of their alerts were within --rows.[/dim]"
+        )
 
 
 @app.command()

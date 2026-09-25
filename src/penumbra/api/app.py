@@ -78,7 +78,10 @@ class AppState:
         self.users = UserStore()
         self.users.seed_demo_users()
         self.audit = AuditLog(settings().state_dir / "audit.jsonl")
-        self.subscribers: set[WebSocket] = set()
+        # Socket -> who is on the other end. The stream carries full alerts, so it is scoped by
+        # segment exactly like the REST reads; a restricted analyst must not receive every
+        # segment's alerts just by holding the socket open.
+        self.subscribers: dict[WebSocket, Principal] = {}
         # PENUMBRA_SIEM=mock (default) | sentinel | none. A misconfigured `sentinel` fails here, at
         # startup, rather than on the first alert.
         self.siem: SiemConnector | None = siem_connector(settings().state_dir)
@@ -92,15 +95,22 @@ class AppState:
             self._copilot = Copilot()
         return self._copilot
 
-    async def broadcast(self, message: dict[str, Any]) -> None:
-        """Push to every connected console. A dead socket is dropped, never fatal."""
+    async def broadcast(self, message: dict[str, Any], *, segment: str | None = None) -> None:
+        """Push to every connected console allowed to see it. A dead socket is dropped, never fatal.
+
+        `segment` is the segment of the data in the message; None means unsegmented, which every
+        principal may see - the same rule as the SQL filter.
+        """
         dead: set[WebSocket] = set()
-        for ws in self.subscribers:
+        for ws, principal in list(self.subscribers.items()):
+            if segment is not None and principal.segments and segment not in principal.segments:
+                continue
             try:
                 await ws.send_json(message)
             except Exception:  # noqa: BLE001 - a disconnected client must not break the stream
                 dead.add(ws)
-        self.subscribers -= dead
+        for ws in dead:
+            self.subscribers.pop(ws, None)
 
 
 state = AppState()
@@ -689,10 +699,14 @@ async def model_registry(dataset: str, principal: CurrentUser) -> dict[str, Any]
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, f"unknown dataset; expected one of {sorted(KNOWN_DATASETS)}"
         )
-    from penumbra.models.registry import ModelRegistry
+    from penumbra.models.registry import ModelRegistry, RegistryError
 
     reg = ModelRegistry(settings().artifact_root / "registry", dataset)
-    champion = reg.champion_state()
+    try:
+        champion = reg.champion_state()
+    except RegistryError as exc:
+        # A tampered champion pointer is shown as exactly that, not as a 500 or an empty registry.
+        champion = {"version": None, "history": [], "error": str(exc)}
     versions = []
     for v in reg.versions():
         shadow = v.training.get("shadow") or {}
@@ -720,6 +734,7 @@ async def model_registry(dataset: str, principal: CurrentUser) -> dict[str, Any]
             "champion": champion.get("version"),
             "history": champion.get("history", []),
             "versions": versions,
+            **({"error": champion["error"]} if "error" in champion else {}),
         }
     )
 
@@ -790,7 +805,7 @@ async def stream(websocket: WebSocket) -> None:
         return
 
     await websocket.accept()
-    state.subscribers.add(websocket)
+    state.subscribers[websocket] = principal
     await websocket.send_json({"type": "connected", "user": principal.username})
     try:
         while True:
@@ -800,7 +815,7 @@ async def stream(websocket: WebSocket) -> None:
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
-        state.subscribers.discard(websocket)
+        state.subscribers.pop(websocket, None)
 
 
 async def publish_alert(alert: Alert, *, rules: list[suppression.SuppressionRule] | None = None) -> int:
@@ -814,11 +829,13 @@ async def publish_alert(alert: Alert, *, rules: list[suppression.SuppressionRule
         suppression.apply(alert, rule)
     state.repo.save_alert(alert)
     ALERTS_EMITTED.labels(lane=alert.lane.value, verdict=alert.verdict.value).inc()
+    segment = alert.raw_features.get("segment")
     await state.broadcast(
         {
             "type": "alert",
             "alert": json.loads(alert.model_dump_json()),
             "at": datetime.now(UTC).isoformat(),
-        }
+        },
+        segment=str(segment) if segment is not None else None,
     )
     return int(rule is not None)

@@ -226,3 +226,38 @@ class TestRegistryHardening:
         assert registry.champion() == versions[0]  # was versions[2]: the bad model came back
         with pytest.raises(RegistryError):
             registry.rollback(approver="admin")
+
+
+class TestSignatureCoversDecisions:
+    """Second review: the signature covered file digests only, but promotion reads gate.passed."""
+
+    def test_forged_gate_verdict_fails_verification(self, registry, detector, monkeypatch) -> None:
+        import json
+
+        monkeypatch.setenv("PENUMBRA_MODEL_SIGNING_KEY", "held-outside")
+        v1 = registry.register(detector, created_by="admin")
+        registry.promote(v1.version, approver="admin", allow_without_gate=True)
+        v2 = registry.register(detector, created_by="admin", parent=v1.version)
+        registry.attach_gate(v2.version, FAILED)
+        assert not registry.verify(v2.version)  # attaching re-signs; still valid
+
+        path = registry.path(v2.version) / "manifest.json"
+        m = json.loads(path.read_text())
+        m["gate"]["passed"] = True
+        path.write_text(json.dumps(m))
+        assert registry.verify(v2.version) == ["manifest signature"]
+        with pytest.raises(TamperedArtifact):
+            registry.promote(v2.version, approver="admin")
+
+    def test_forged_champion_pointer_is_refused(self, registry, detector, monkeypatch) -> None:
+        import json
+
+        monkeypatch.setenv("PENUMBRA_MODEL_SIGNING_KEY", "held-outside")
+        v1 = registry.register(detector, created_by="admin")
+        registry.promote(v1.version, approver="admin", allow_without_gate=True)
+        path = registry.root / "champion.json"
+        state = json.loads(path.read_text())
+        state["version"] = "v999-forged"
+        path.write_text(json.dumps(state))
+        with pytest.raises(TamperedArtifact):
+            registry.champion()
