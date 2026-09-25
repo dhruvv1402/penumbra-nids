@@ -8,6 +8,7 @@ with an instruction rather than a traceback.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from typer.testing import CliRunner
@@ -28,9 +29,17 @@ class _Runner(CliRunner):
 runner = _Runner()
 
 
+ANSI = re.compile(r"\[[0-9;]*[A-Za-z]")
+
+
 def flat(result) -> str:
-    """Output with all wrapping collapsed, so a phrase split across lines still matches."""
-    return " ".join(result.output.split())
+    """Output with ANSI codes stripped and wrapping collapsed.
+
+    Typer forces a colour terminal when GITHUB_ACTIONS is set, so on CI the help text is full of
+    escape codes that split '--from-fixture' into pieces. It is decided at import, so the test
+    cannot switch it off; it can only read through it.
+    """
+    return " ".join(ANSI.sub("", result.output).split())
 
 
 @pytest.fixture()
