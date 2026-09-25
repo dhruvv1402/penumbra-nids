@@ -1003,8 +1003,7 @@ never seen rather than on a held-out split of the same capture.
 **Caveat, stated plainly.** That capture is synthetic — built packet by packet by a test helper, not
 taken off a wire. It exercises the mechanism; it measures nothing about real traffic. Its "benign"
 conversation has fixed payload sizes and identical TTLs, which is not what benign traffic looks
-like. A capture from owned lab hardware has not been taken yet, and no claim here should be read as
-one.
+like. The real capture is §10.7h, and it tells a harder story.
 
 Reproduce: `penumbra fit -d unsw && penumbra pcap <capture> --model unsw`.
 
@@ -1103,6 +1102,56 @@ layer are not exported. An unseen value in a column *without* an infrequent buck
 it as all-zero) is refused with `UnseenCategory`, because the ONNX encoder cannot express all-zero.
 We refuse it rather than score it differently from what was evaluated.
 
+### 10.7h A real capture from owned hardware
+
+The capture: two of our own laptops on a phone hotspot, not a shared network. One ran `tcpdump`
+for 25 minutes while browsing normally, then ran three nmap scans against the other: a SYN scan
+over 1,000 ports, a connect scan on common ports, and a deliberately slow `-T1` scan. Ground truth
+is the address pair. Every flow between the two laptops is attack traffic, and everything else is
+not. 13,478 packets became **2,979 flows, 2,067 of them attack**. `penumbra lab` reproduces
+everything below; the report holds counts and scores, never addresses.
+
+#### Out of the box: the model trained on a 2015 testbed does not know this network
+
+| | flows | reached an analyst | supervised head fired | conformal abstained |
+|---|---:|---:|---:|---:|
+| scan flows | 2,067 | **2,067** | **1** | 2,067 |
+| everything else | 912 | **912** | 519 | 890 |
+
+Every scan flow reached an analyst, almost all through the novelty lane (`SUSPECTED_NOVEL`
+2,027, `UNCERTAIN` 40). The supervised head recognised **1 of 2,067**. That is the thesis on real
+traffic: a classifier trained on known families does not know an nmap scan it has never seen. But
+**every ordinary flow alerted too**. Out of the box, on a network the model has never seen, the
+detector cannot tell a scan from browsing. The conformal layer abstained on nearly every flow of
+both kinds, which is the correct statement: it has no basis for judging this network.
+
+#### Re-baselined: the benign-only head, refitted on this network with no labels
+
+The novelty head's design claim is that it can be fitted to a network's own ordinary traffic
+without anyone labelling an attack. We tested exactly that. It was refitted on a random 70% of the
+non-scan flows (638) and scored on the held-out 30% (274) against the 2,067 scan flows:
+
+| novelty head | ROC-AUC | recall @ 5% FPR | recall @ 10% FPR |
+|---|---:|---:|---:|
+| stock, fitted on UNSW-NB15 benign | 0.604 | 0.000 | 0.000 |
+| **re-baselined on 638 local flows** | **0.971** | **0.947** | **0.974** |
+
+At 5% FPR that means 14 of 274 held-out ordinary flows are flagged, against 94.7% of scan flows.
+
+**What this does and does not show.** It shows that the design works as intended: a label-free
+refit on local traffic turns the head from useless to strongly separating. It does not show
+production performance:
+- It is one session, with one attacker and one victim.
+- The benign fit and evaluation flows come from the same 25 minutes.
+- The scan flows are highly uniform, so one pattern dominates the recall.
+- 1% FPR on 274 benign flows is 3 flows, below the estimation floor. That column is in the JSON
+  and is not quoted.
+
+The supervised head cannot be re-baselined without labels. On a new network it is the novelty head
+and the abstention lane that carry detection until analysts' verdicts accumulate.
+
+*Reproduce with your own capture: `penumbra lab <capture.pcap> --attacker <ip> --target <ip>`.*
+
 ### 10.8 Reproduction
 
 ```bash
@@ -1115,6 +1164,7 @@ uv run penumbra loadtest --dataset unsw     # throughput, latency, and the hones
 uv run penumbra poison-drill                # E7: poison the feedback loop, measure the controls
 uv run penumbra correlate                   # CICIDS alert->incident correlation, real source IPs
 uv run penumbra export-onnx -d nslkdd       # ONNX export with full-test-set parity
+uv run penumbra lab <pcap> --attacker <ip> --target <ip>   # a real capture, scored and re-baselined
 uv run penumbra gate                        # the CI regression gate, locally
 uv run penumbra calibrate -d unsw           # Brier/ECE before and after calibration, in and out of distribution
 uv run penumbra reproduce-all               # everything, with reasons for what it skips

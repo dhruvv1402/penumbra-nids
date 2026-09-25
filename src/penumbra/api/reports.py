@@ -194,6 +194,14 @@ CATALOGUE: tuple[ReportSpec, ...] = (
         "latency at a realistic batch size.",
     ),
     ReportSpec(
+        "pcap-lab",
+        "pcap_lab.json",
+        "Real capture from owned hardware",
+        "penumbra lab <capture> --attacker <ip> --target <ip>",
+        "nmap scans between two lab laptops on a phone hotspot: the stock detector, then the novelty "
+        "head re-baselined on the network's own traffic without labels.",
+    ),
+    ReportSpec(
         "poisoning",
         "poisoning_nslkdd.json",
         "Feedback-loop poisoning drill (E7)",

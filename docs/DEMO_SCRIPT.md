@@ -253,8 +253,16 @@ uv run penumbra replay -d nslkdd --ingest --inject-drift abrupt
 uv run --extra pcap penumbra pcap <your-capture>.pcap --model unsw
 ```
 
-No capture ships with the repository. Bring one from hardware you own; the 41-flow result below came
-from a synthetic capture built by the test suite, and should be introduced as exactly that.
+No capture ships with the repository (it would contain our own traffic). The 41-flow result below
+came from a synthetic capture built by the test suite. The real one is `penumbra lab` (EVALUATION
+§10.7h), and its story is the better one for this slot:
+
+> "We scanned one of our laptops from another and recorded everything. Out of the box the model
+> alerted on every flow, the scans *and* the browsing: a detector trained on a 2015 testbed does
+> not know a real network, and its conformal layer said so by abstaining on nearly all of it. Then
+> we refitted the benign-only head on that network's ordinary traffic, with no labels, and it
+> separated the scans at AUC 0.97, catching 95% of scan flows at 5% false positives. One session,
+> so it is a demonstration of the design, not a benchmark."
 
 > "Everything so far has been a benchmark somebody else prepared. This is a packet capture."
 

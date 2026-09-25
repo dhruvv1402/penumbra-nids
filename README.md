@@ -236,6 +236,6 @@ full-history secret scan, an image build and boot, ZAP DAST, and an ML regressio
 Built: every phase in `docs/ROADMAP.md`. The supervised head also exports to ONNX with exact
 parity. Not built, and deliberately so: OpenTelemetry
 spans (Prometheus `/metrics` exists), Postgres (SQLite behind the `Repository` Protocol), and Grafana,
-all on the cut list. Also not done: a real capture from lab hardware (the pcap converter is tested on
-synthetic captures only), and Sentinel against a live workspace (the solution files exist; running
+all on the cut list. A real capture from our own laptops is measured
+(EVALUATION §10.7h). Not done: Sentinel against a live workspace (the solution files exist; running
 them needs Azure credentials).

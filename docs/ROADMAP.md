@@ -116,8 +116,10 @@ notes, with the LLM path behind an interface and off by default.
   incidents tab in the console.
 - ⬜ Sentinel connector against a live workspace (the Protocol and the mock exist; the plan was
   always mock-first, and a live run needs credentials).
-- ⬜ A real lab capture. The converter works and is tested on synthetic captures; no capture from
-  owned hardware has been taken yet.
+- ✅ A real lab capture (two owned laptops on a phone hotspot, nmap scans). Out of the box the
+  UNSW-trained detector alerts on every flow, scans and browsing alike; the benign-only head,
+  re-baselined on the network's own traffic with no labels, reaches AUC 0.971 and 0.947 recall at
+  5% FPR. One session - EVALUATION §10.7h has the caveats.
 
 ## Phase 9 — Governance, docs, rehearsal — **never cut**
 

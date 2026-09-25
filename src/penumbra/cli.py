@@ -1363,6 +1363,68 @@ def calibrate_cmd(
         console.print(f"[dim]written to {out}[/dim]")
 
 
+@app.command("lab")
+def lab_cmd(
+    capture: Annotated[Path, typer.Argument(help="A capture from hardware you own.")],
+    attacker: Annotated[str, typer.Option("--attacker", help="IP that ran the attacks.")],
+    target: Annotated[str, typer.Option("--target", help="IP that was attacked.")],
+    model: Annotated[str, typer.Option("--model")] = "unsw",
+    save: Annotated[bool, typer.Option("--save/--no-save")] = True,
+) -> None:
+    """Score a real lab capture against known ground truth, then re-baseline the novelty head on it.
+
+    Ground truth is the address pair: flows between --attacker and --target are attack, the rest
+    are not. The saved report holds counts and scores only - no addresses.
+    """
+    seed_everything()
+    from penumbra.alerts.builder import alerts_with_positions
+    from penumbra.eval import lab
+    from penumbra.models.detector import PenumbraDetector
+    from penumbra.pcap import assemble
+
+    frame = assemble.assemble(capture)
+    meta = frame.attrs["meta"].reset_index(drop=True)
+    attack = lab.attack_mask(meta, attacker, target)
+    if not attack.any():
+        console.print(f"[red]No flows between {attacker} and {target} in this capture.[/red]")
+        raise typer.Exit(1)
+
+    det = PenumbraDetector.load(settings().model_dir / model)
+    X = frame.copy()
+    X.attrs = {}
+    X = X[det._feature_names].reset_index(drop=True)
+    scored = det.score(X)
+    positioned = alerts_with_positions(det, X, scored, dataset=model, include_benign=True)
+    verdicts = ["BENIGN"] * len(X)
+    for pos, alert in positioned:
+        verdicts[pos] = alert.verdict.value
+
+    report = {
+        "capture": {
+            "flows": int(len(X)),
+            "protocols": dict(pd.Series(frame["proto"].astype(str)).value_counts().items()),
+        },
+        "out_of_the_box": lab.out_of_the_box(scored, verdicts, attack),
+        "rebaselined": lab.rebaseline(X, attack, scored["novelty_percentile"].to_numpy()),
+    }
+    oob, rb = report["out_of_the_box"], report["rebaselined"]
+    console.print(
+        f"{len(X):,} flows, {oob['attack_flows']['flows']:,} attack. Out of the box: "
+        f"{oob['attack_flows']['reached_an_analyst']:,} attack and "
+        f"{oob['other_flows']['reached_an_analyst']:,} of {oob['other_flows']['flows']:,} other flows reached an analyst."
+    )
+    for name in ("stock_unsw_novelty", "local_rebaselined_novelty"):
+        r = rb[name]
+        console.print(
+            f"  {name:<27} AUC {r['roc_auc']:.3f}   recall@5% {r['recall_at_5pct_fpr']:.3f}   "
+            f"recall@10% {r['recall_at_10pct_fpr']:.3f}"
+        )
+    if save:
+        out = settings().report_dir / "pcap_lab.json"
+        out.write_text(json.dumps(report, indent=2, default=float), encoding="utf-8")
+        console.print(f"[dim]written to {out}[/dim]")
+
+
 # =================================================================================================
 # Model registry, retraining from promoted verdicts, and the poisoning drill
 # =================================================================================================
