@@ -89,3 +89,29 @@ def test_builder_never_deep_copies_frame_attrs() -> None:
     X.attrs["meta"] = _NoDeepCopy()
     assert len(alerts_with_positions(StubDetector(), X)) == 5
     assert "meta" in X.attrs  # the caller's frame is untouched
+
+
+def test_ingest_client_resends_after_503(monkeypatch) -> None:
+    import io
+    import urllib.error
+
+    calls = []
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout):
+        calls.append(req.full_url)
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(req.full_url, 503, "full", {"Retry-After": "0"}, None)
+        return Resp(b'{"ingested": 3}')
+
+    monkeypatch.setattr(engine.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(engine.time, "sleep", lambda s: None)
+    client = engine.IngestClient("http://127.0.0.1:1", token="t")
+    assert client._post("/ingest", b"{}") == 3
+    assert len(calls) == 2

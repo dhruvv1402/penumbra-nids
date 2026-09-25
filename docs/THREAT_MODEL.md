@@ -162,7 +162,13 @@ Flood the scoring path to exhaust capacity and create a blind spot.
 **Mitigations, built:** measured throughput and latency (EVALUATION §10.7) so capacity is a known
 number; scoring is sensor-side, so the API exposes no scoring path to flood; `/ingest` is
 senior-only; the SIEM connector gives up after one retry rather than stalling alerting.
-**Not built:** bounded queues that shed load, and a backlog alarm. Ingest is synchronous today.
+**Bounded ingest:** at most 20,000 alerts in flight and 5,000 per batch. Beyond that a batch is
+refused whole with `503` + `Retry-After`; the sensor keeps it and resends (`IngestClient` honours
+the header), so load is shed predictably and nothing is dropped silently. **Backlog alarm:**
+`/health` reports `ingest.status = degraded` while in-flight work is above 80% of capacity or
+anything was shed in the last five minutes; Prometheus exposes `penumbra_ingest_inflight_alerts`
+and `penumbra_ingest_shed_alerts_total`; shedding is audit-logged at most once a minute so a flood
+cannot also flood the audit chain.
 
 ---
 

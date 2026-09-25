@@ -25,9 +25,9 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from pydantic import BaseModel, Field
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from penumbra import __version__
 from penumbra.alerts import suppression
@@ -49,6 +49,19 @@ from penumbra.storage.sqlite import SqliteRepository, VerdictLocked
 REQUESTS = Counter("penumbra_requests_total", "API requests", ["route", "status"])
 SCORE_LATENCY = Histogram("penumbra_score_seconds", "Scoring latency")
 ALERTS_EMITTED = Counter("penumbra_alerts_total", "Alerts emitted", ["lane", "verdict"])
+INGEST_INFLIGHT = Gauge("penumbra_ingest_inflight_alerts", "Alerts accepted and still being processed")
+INGEST_SHED = Counter("penumbra_ingest_shed_alerts_total", "Alerts refused with 503 because ingest was full")
+
+# Ingest capacity (THREAT_MODEL T8). Flooding the ingest path is how an attacker creates a blind
+# spot: if the API accepts without bound it runs out of memory or falls minutes behind, and either
+# way nobody is told. Instead it holds at most INGEST_CAPACITY alerts in flight and refuses the
+# excess with 503 + Retry-After. Nothing is dropped silently: a refused batch stays with the sensor,
+# which retries (replay.engine.IngestClient honours Retry-After). /health reports "degraded" while
+# saturated or shedding, which is the backlog alarm.
+INGEST_CAPACITY = 20_000
+INGEST_MAX_BATCH = 5_000
+INGEST_HIGH_WATER = 0.8
+SHED_ALARM_WINDOW = timedelta(minutes=5)
 
 
 # --- app state ------------------------------------------------------------------------------------
@@ -86,6 +99,21 @@ class AppState:
         # startup, rather than on the first alert.
         self.siem: SiemConnector | None = siem_connector(settings().state_dir)
         self._copilot: Any = None
+        self.ingest_inflight = 0
+        self.last_shed: datetime | None = None
+        self.last_shed_audit: datetime | None = None
+
+    def ingest_status(self) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        shedding = self.last_shed is not None and now - self.last_shed < SHED_ALARM_WINDOW
+        saturated = self.ingest_inflight >= INGEST_HIGH_WATER * INGEST_CAPACITY
+        return {
+            "status": "degraded" if (shedding or saturated) else "ok",
+            "inflight": self.ingest_inflight,
+            "capacity": INGEST_CAPACITY,
+            "shed_within_5m": shedding,
+            "last_shed": self.last_shed.isoformat() if self.last_shed else None,
+        }
 
     def copilot(self) -> Any:
         """The BM25 triage copilot, loaded on first use. Raises FileNotFoundError without a corpus."""
@@ -262,7 +290,7 @@ class IngestRequest(BaseModel):
     and a queue an attacker can fill is a queue an attacker can hide in.
     """
 
-    alerts: list[Alert]
+    alerts: list[Alert] = Field(max_length=INGEST_MAX_BATCH)
 
 
 # --- routes -----------------------------------------------------------------------------------------
@@ -271,8 +299,12 @@ class IngestRequest(BaseModel):
 @app.get("/health", tags=["ops"])
 async def health() -> dict[str, Any]:
     chain = state.audit.verify()
+    ingest_ = state.ingest_status()
     return {
+        # Liveness stays "ok" while ingest is merely saturated - the process is healthy and
+        # restarting it would make things worse - but the degradation is reported next to it.
         "status": "ok",
+        "ingest": ingest_,
         "version": __version__,
         "audit_chain_intact": chain.valid,
         "audit_entries": chain.n_entries,
@@ -599,9 +631,47 @@ async def create_suppression(body: SuppressionRequest, principal: CurrentUser) -
 
 
 @app.post("/ingest", tags=["alerts"])
-async def ingest(body: IngestRequest, principal: CurrentUser) -> dict[str, Any]:
-    """Accept scored alerts, persist them, and push to connected consoles."""
+async def ingest(body: IngestRequest, principal: CurrentUser) -> Any:
+    """Accept scored alerts, persist them, and push to connected consoles.
+
+    Bounded: beyond INGEST_CAPACITY alerts in flight the batch is refused with 503 and Retry-After,
+    whole, so the sensor keeps and resends it. Partial acceptance would force the sensor to work out
+    which alerts landed; whole-batch refusal keeps retry trivially correct.
+    """
     require(principal, Permission.PROMOTE_VERDICT)  # senior or above
+    n = len(body.alerts)
+    if state.ingest_inflight + n > INGEST_CAPACITY:
+        now = datetime.now(UTC)
+        state.last_shed = now
+        INGEST_SHED.inc(n)
+        # Audited at most once a minute: a flood must not also flood the audit chain.
+        if state.last_shed_audit is None or now - state.last_shed_audit > timedelta(minutes=1):
+            state.last_shed_audit = now
+            state.audit.append(
+                actor=principal.username,
+                role=principal.role.value,
+                action="ingest.shed",
+                detail={"refused": n, "inflight": state.ingest_inflight, "capacity": INGEST_CAPACITY},
+            )
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "detail": "ingest at capacity; batch not accepted - resend after Retry-After",
+                "inflight": state.ingest_inflight,
+                "capacity": INGEST_CAPACITY,
+            },
+            headers={"Retry-After": "2"},
+        )
+    state.ingest_inflight += n
+    INGEST_INFLIGHT.set(state.ingest_inflight)
+    try:
+        return await _ingest(body, principal)
+    finally:
+        state.ingest_inflight -= n
+        INGEST_INFLIGHT.set(state.ingest_inflight)
+
+
+async def _ingest(body: IngestRequest, principal: Principal) -> dict[str, Any]:
     rules = state.repo.list_suppressions(active_only=True)
     suppressed = 0
     for alert in body.alerts:

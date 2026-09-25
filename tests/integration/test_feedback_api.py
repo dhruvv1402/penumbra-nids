@@ -555,3 +555,43 @@ def test_pre_fix_incidents_are_backfilled_on_open(tmp_path) -> None:
     repo.close()
     reopened = SqliteRepository(db)
     assert reopened._conn.execute("SELECT segment FROM incidents").fetchone()["segment"] == "ot"
+
+
+class TestIngestCapacity:
+    """THREAT_MODEL T8: a flood is refused predictably and visibly, and nothing is dropped silently."""
+
+    def test_over_capacity_is_refused_whole_with_retry_after(self, client: TestClient, monkeypatch) -> None:
+        monkeypatch.setattr(app_module, "INGEST_CAPACITY", 2)
+        state.last_shed = state.last_shed_audit = None
+        batch = [_alert(1100 + i).model_dump(mode="json") for i in range(3)]
+        resp = client.post("/ingest", json={"alerts": batch}, headers=_token(client, "senior"))
+        assert resp.status_code == 503 and resp.headers["Retry-After"]
+        from penumbra.api.security.rbac import Principal, Role
+
+        stored = state.repo.list_alerts(Principal(username="t", role=Role.ADMIN))
+        assert stored == []  # nothing from the refused batch was stored: the sensor still has it
+
+    def test_shedding_turns_health_degraded_and_is_audited(self, client: TestClient, monkeypatch) -> None:
+        monkeypatch.setattr(app_module, "INGEST_CAPACITY", 1)
+        state.last_shed = state.last_shed_audit = None
+        batch = [_alert(1200 + i).model_dump(mode="json") for i in range(2)]
+        client.post("/ingest", json={"alerts": batch}, headers=_token(client, "senior"))
+        assert client.get("/health").json()["ingest"]["status"] == "degraded"
+        assert "ingest.shed" in [e.action for e in state.audit.tail(5)]
+
+    def test_within_capacity_is_unaffected_and_inflight_returns_to_zero(self, client: TestClient) -> None:
+        state.last_shed = None
+        resp = client.post(
+            "/ingest",
+            json={"alerts": [_alert(1300).model_dump(mode="json")]},
+            headers=_token(client, "senior"),
+        )
+        assert resp.status_code == 200
+        assert state.ingest_inflight == 0
+        assert client.get("/health").json()["ingest"]["status"] == "ok"
+
+    def test_oversized_batch_is_rejected(self, client: TestClient, monkeypatch) -> None:
+        big = [_alert(0).model_dump(mode="json")] * (app_module.INGEST_MAX_BATCH + 1)
+        assert (
+            client.post("/ingest", json={"alerts": big}, headers=_token(client, "senior")).status_code == 422
+        )

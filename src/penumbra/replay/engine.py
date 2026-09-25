@@ -215,18 +215,30 @@ class IngestClient:
             return 0
         return self._post("/incidents/bulk", json.dumps(incidents).encode())
 
-    def _post(self, path: str, payload: bytes) -> int:
-        req = urllib.request.Request(
-            f"{self.base_url}{path}",
-            data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.token}"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=20) as resp:  # nosec B310
-                return int(json.loads(resp.read()).get("ingested", 0))
-        except (urllib.error.URLError, TimeoutError, ValueError):
-            return 0
+    def _post(self, path: str, payload: bytes, *, retries: int = 5) -> int:
+        """POST, honouring 503 + Retry-After: the API refuses whole batches when ingest is full,
+        and the batch is resent rather than lost."""
+        for _ in range(retries + 1):
+            req = urllib.request.Request(
+                f"{self.base_url}{path}",
+                data=payload,
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.token}"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=20) as resp:  # nosec B310
+                    return int(json.loads(resp.read()).get("ingested", 0))
+            except urllib.error.HTTPError as exc:
+                if exc.code != 503:
+                    return 0
+                try:
+                    wait = min(float(exc.headers.get("Retry-After", "1")), 30.0)
+                except ValueError:
+                    wait = 1.0
+                time.sleep(wait)
+            except (urllib.error.URLError, TimeoutError, ValueError):
+                return 0
+        return 0
 
 
 # =================================================================================================
