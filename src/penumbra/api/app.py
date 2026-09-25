@@ -359,6 +359,31 @@ async def record_verdict(incident_id: str, body: VerdictRequest, principal: Curr
     return {"incident": incident, "queued_for_training": True, "promoted": False}
 
 
+@app.get("/alerts/{alert_id}/export", tags=["alerts"])
+async def export_alert(
+    alert_id: str,
+    principal: CurrentUser,
+    fmt: Annotated[str, Query(alias="format", pattern="^(asim|ocsf|ecs)$")] = "asim",
+) -> dict[str, Any]:
+    """One alert as Microsoft Sentinel ASIM, OCSF (Security Lake and others) or Elastic ECS.
+
+    The same alert, three vocabularies, each validated against its schema's rules before it leaves.
+    A record that would fail ingestion is refused here with the reasons rather than exported.
+    """
+    require(principal, Permission.READ_ALERTS)
+    alert = state.repo.get_alert(alert_id, principal)
+    if alert is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "alert not found")
+    from penumbra.alerts.schemas import ecs, ocsf
+
+    module = {"asim": asim, "ocsf": ocsf, "ecs": ecs}[fmt]
+    record = module.to_asim(alert) if fmt == "asim" else getattr(module, f"to_{fmt}")(alert)
+    problems = module.validate(record)
+    if problems:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, {"format": fmt, "problems": problems})
+    return {"format": fmt, "record": record}
+
+
 @app.get("/alerts/{alert_id}/triage", tags=["alerts"])
 async def triage_note(alert_id: str, principal: CurrentUser) -> dict[str, Any]:
     """A cited triage note for one alert, from the offline BM25 copilot.
@@ -499,6 +524,36 @@ async def promote_verdicts(body: PromoteRequest, principal: CurrentUser) -> dict
 async def list_suppressions(principal: CurrentUser) -> list[dict[str, Any]]:
     require(principal, Permission.READ_ALERTS)
     return [suppression.summary(r) for r in state.repo.list_suppressions()]
+
+
+@app.post("/suppressions/{rule_id}/revoke", tags=["suppression"])
+async def revoke_suppression(rule_id: str, principal: CurrentUser) -> dict[str, Any]:
+    """End a suppression now instead of at its expiry. Senior only, audited, never a deletion.
+
+    The rule stays on record with its new, earlier expiry, so "what did we suppress last quarter,
+    and who stopped it" keeps an answer. Alerts it already reclassified are not rewritten: they were
+    suppressed under the policy in force when they arrived.
+    """
+    require(principal, Permission.CREATE_SUPPRESSION)
+    rule = next((r for r in state.repo.list_suppressions() if r.rule_id == rule_id), None)
+    if rule is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such suppression rule")
+    now = datetime.now(UTC)
+    if not rule.is_active(now):
+        raise HTTPException(status.HTTP_409_CONFLICT, "rule is not active")
+    # Validation requires expires_at > created_at, so a rule revoked in its first instant expires a
+    # microsecond after creation rather than being rejected.
+    revoked = rule.model_copy(update={"expires_at": max(now, rule.created_at + timedelta(microseconds=1))})
+    state.repo.save_suppression(revoked)
+    state.audit.append(
+        actor=principal.username,
+        role=principal.role.value,
+        action="suppression.revoke",
+        target=rule_id,
+        detail={"match": rule.match, "was_expiring": rule.expires_at.isoformat()},
+    )
+    await state.broadcast({"type": "suppression", "rule_id": rule_id})
+    return suppression.summary(revoked)
 
 
 @app.post("/suppressions", tags=["suppression"])

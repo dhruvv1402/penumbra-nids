@@ -259,6 +259,9 @@ export interface Suppression {
 
 export const getSuppressions = (token: string) => request<Suppression[]>("/suppressions", token);
 
+export const revokeSuppression = (token: string, ruleId: string) =>
+  request<Suppression>(`/suppressions/${ruleId}/revoke`, token, { method: "POST" });
+
 export const createSuppression = (
   token: string,
   body: { match: Record<string, string>; reason: string; days: number; source_alert_id?: string },

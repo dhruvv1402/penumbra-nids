@@ -27,6 +27,7 @@ import {
   getSuppressions,
   loadSession,
   promoteVerdicts,
+  revokeSuppression,
   saveSession,
 } from "@/lib/api";
 import { Empty, Panel, Stat } from "@/components/Primitives";
@@ -91,6 +92,17 @@ export default function Feedback() {
       await load(session.token);
     } catch (err) {
       setNote(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const revoke = async (ruleId: string) => {
+    if (!session) return;
+    try {
+      await revokeSuppression(session.token, ruleId);
+      setNote(`Suppression ${ruleId} ended now. It stays on record; the revocation is in the audit log.`);
+      await load(session.token);
+    } catch (err) {
+      setNote(err instanceof ApiError && err.isPermissionDenied ? "Only a senior can end a suppression." : String(err));
     }
   };
 
@@ -230,6 +242,7 @@ export default function Feedback() {
                   <th className="text-left font-normal px-3 py-1.5">reason</th>
                   <th className="text-left font-normal px-3 py-1.5">owner</th>
                   <th className="text-left font-normal px-3 py-1.5">expires</th>
+                  <th className="px-3 py-1.5" />
                 </tr>
               </thead>
               <tbody>
@@ -243,6 +256,16 @@ export default function Feedback() {
                     <td className="px-3 py-1.5 text-[var(--color-ink-dim)]">{r.reason}</td>
                     <td className="px-3 py-1.5">{r.created_by}</td>
                     <td className="px-3 py-1.5 tabular-nums">{r.expires_at.slice(0, 10)}</td>
+                    <td className="px-3 py-1.5 text-right">
+                      {r.active && (
+                        <button
+                          onClick={() => revoke(r.rule_id)}
+                          className="text-[10px] px-2 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-ink-dim)] hover:text-[var(--color-ink)]"
+                        >
+                          end now
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

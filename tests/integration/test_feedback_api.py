@@ -435,3 +435,43 @@ def test_incident_segment_is_derived_and_enforced(client: TestClient) -> None:
     resp = client.post("/incidents/INC-OT/verdict", json={"verdict": "false_positive"}, headers=analyst)
     assert resp.status_code == 404
     assert client.get("/incidents/INC-OT", headers=_token(client, "senior")).status_code == 200
+
+
+@pytest.mark.parametrize("fmt", ["asim", "ocsf", "ecs"])
+def test_alert_exports_in_each_schema(client: TestClient, fmt: str) -> None:
+    a = _alert(990)
+    state.repo.save_alert(a)
+    body = client.get(f"/alerts/{a.alert_id}/export?format={fmt}", headers=_token(client, "analyst")).json()
+    assert body["format"] == fmt and body["record"]
+
+
+def test_export_rejects_unknown_formats_and_hidden_alerts(client: TestClient) -> None:
+    a, hidden = _alert(991), _alert(992, segment="ot")
+    state.repo.save_alerts([a, hidden])
+    analyst = _token(client, "analyst")
+    assert client.get(f"/alerts/{a.alert_id}/export?format=cef", headers=analyst).status_code == 422
+    assert client.get(f"/alerts/{hidden.alert_id}/export", headers=analyst).status_code == 404
+
+
+def test_suppression_can_be_revoked_and_stops_matching(client: TestClient) -> None:
+    senior = _token(client, "senior")
+    rule = client.post(
+        "/suppressions",
+        json={
+            "match": {"service": "private", "family": "probe"},
+            "reason": "nightly vuln scanner",
+            "days": 30,
+        },
+        headers=senior,
+    ).json()
+    assert (
+        client.post(f"/suppressions/{rule['rule_id']}/revoke", headers=_token(client, "analyst")).status_code
+        == 403
+    )
+    revoked = client.post(f"/suppressions/{rule['rule_id']}/revoke", headers=senior).json()
+    assert revoked["active"] is False
+    hit = _alert(993, service="private")
+    body = client.post("/ingest", json={"alerts": [hit.model_dump(mode="json")]}, headers=senior).json()
+    assert body["suppressed"] == 0
+    assert client.post(f"/suppressions/{rule['rule_id']}/revoke", headers=senior).status_code == 409
+    assert "suppression.revoke" in [e.action for e in state.audit.tail(10)]

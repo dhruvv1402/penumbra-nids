@@ -79,6 +79,8 @@ or never. Unsupervised monitoring is the alarm; analyst verdicts are the confirm
 2. Check the ATT&CK mapping **and its confidence tier**. `stretch` mappings are suggestions.
 3. Read the cited copilot triage note (alert detail panel, or `GET /alerts/{id}/triage`). Follow
    the citations; do not trust the summary alone.
+   To hand an alert to another tool, `GET /alerts/{id}/export?format=asim|ocsf|ecs` returns it in
+   that schema, validated first.
 4. Verdict: true positive → escalate; false positive → record why; benign-by-policy → create a
    suppression rule **with an expiry date**.
 
@@ -101,6 +103,8 @@ the active-learning loop.
   September.
 - Requires `senior` role. Records who, why, and what it matches.
 - Reviewed monthly; expired rules are not auto-renewed.
+- A rule can be ended early (`POST /suppressions/{id}/revoke`, or *end now* on the feedback page).
+  It is not deleted: its expiry moves to now and the revocation is audited.
 - Suppressed events are still **stored and counted**, just not queued. Suppression is not deletion —
   you must be able to answer "what did we suppress last quarter?"
 
