@@ -77,6 +77,30 @@ This number is reported from CICIDS2017 and nowhere else, because it is the only
 real source identities. On UNSW-NB15 the correlator *raises* rather than grouping on identifiers we
 invented.
 
+## The human in the loop, attacked
+
+Analyst verdicts retrain the model, so a stolen analyst account can teach it that its own traffic is
+benign. We built that attack and measured it (E7, pre-registered, then replicated on a second target):
+
+- One account clearing its own attack type took recall on it from **0.84 to 0.19**, but only by
+  clearing *every* alert. At a quarter or a half of them, the honest verdicts outvoted it.
+- A per-family comparison against peer analysts flagged **every flipped verdict at every damaging
+  dose, on both targets, and never an honest analyst**.
+- A per-family canary gate refused the poisoned model while an aggregate gate would have promoted it:
+  overall recall went *up*, because the honest feedback on everything else improved the model at the
+  same time.
+- Honest feedback alone cut the false-positive rate from 10.2% to 4.3%.
+
+Promotion needs a second senior (never the verdict's author), verdicts are rate-limited, and a model
+reaches production only through a hash-verified registry with a gate report attached.
+
+## Calibrated, until the data moves
+
+Isotonic calibration cuts expected calibration error 4× (UNSW) and 13× (NSL-KDD) on held-out
+training data. On each dataset's shifted test split it makes calibration **worse**. NSL-KDD's
+shifted split also breaks conformal coverage by 30 points. So `p_attack` is labelled "calibrated on held-out
+training data", and the label-free abstention rate is the monitored warning that it no longer is.
+
 ## It alerts. It never blocks.
 
 There is no blocking code path in this repository, and [a test fails the build if one appears](tests/). The
