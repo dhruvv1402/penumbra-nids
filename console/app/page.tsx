@@ -166,11 +166,11 @@ export default function Console() {
           {lane === "incidents" ? (
             incidents.length === 0 ? (
               <Empty>
-                No incidents. Correlation needs source IPs, which only CICIDS2017 has. Build a fixture
-                with{" "}
-                <code className="text-[var(--color-ink-dim)]">penumbra correlate --write-fixture incidents.json</code>{" "}
-                then{" "}
-                <code className="text-[var(--color-ink-dim)]">penumbra replay --from-fixture incidents.json --ingest</code>
+                No incidents. Correlation needs source IPs, which only CICIDS2017 has. Load the real
+                CICIDS incidents with{" "}
+                <code className="text-[var(--color-ink-dim)]">
+                  penumbra replay --from-fixture tests/fixtures/incidents_cicids.json --ingest
+                </code>
               </Empty>
             ) : (
               <ul className="divide-y divide-[var(--color-border)]">

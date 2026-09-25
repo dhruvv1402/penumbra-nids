@@ -560,7 +560,15 @@ class SqliteRepository:
             f"SELECT COUNT(*) AS n FROM alerts WHERE incident_id IS NOT NULL{clause}", seg
         ).fetchone()["n"]
         out["alerts_correlated"] = int(correlated)
-        out["compression_ratio"] = int(correlated // total_incidents) if total_incidents and correlated else 0
+        # Events per incident from the incidents' own event counts. Dividing stored alerts by incidents
+        # under-reports whenever only a sample of each incident's alerts is stored (the CICIDS demo
+        # fixture ships 20 per incident, and the header read 20x against a measured 463.6x). With
+        # every alert stored, the two agree.
+        events = self._conn.execute(
+            f"SELECT COALESCE(SUM(event_count), 0) AS n FROM incidents WHERE 1=1{iclause}", iseg
+        ).fetchone()["n"]
+        out["incident_events"] = int(events)
+        out["compression_ratio"] = int(events // total_incidents) if total_incidents and events else 0
         out["pending_verdicts"] = len(self.pending_verdicts())
         suppressed = self._conn.execute(
             f"SELECT COUNT(*) AS n FROM alerts WHERE verdict = 'BENIGN_BY_POLICY'{clause}", seg

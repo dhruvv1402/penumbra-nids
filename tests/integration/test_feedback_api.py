@@ -595,3 +595,26 @@ class TestIngestCapacity:
         assert (
             client.post("/ingest", json={"alerts": big}, headers=_token(client, "senior")).status_code == 422
         )
+
+
+def test_events_per_incident_uses_true_event_counts(client: TestClient) -> None:
+    # The demo fixture ships a sample of each incident's alerts; the header read 20x against a
+    # measured 463.6x because it divided stored alerts by incidents.
+    from penumbra.alerts.models import Incident, Lane, Severity
+
+    sample = _alert(1400)
+    state.repo.save_alert(sample)
+    state.repo.save_incident(
+        Incident(
+            incident_id="INC-BIG",
+            title="big",
+            severity=Severity.HIGH,
+            lane=Lane.KNOWN_THREAT,
+            priority=90,
+            entity="pseudo:big",
+            alert_ids=[sample.alert_id],
+            event_count=1000,
+        )
+    )
+    stats = client.get("/stats", headers=_token(client, "senior")).json()
+    assert stats["compression_ratio"] == 1000 and stats["incident_events"] == 1000

@@ -15,6 +15,7 @@ uv run penumbra fit -d nslkdd              # ~2 min, do this beforehand
 uv run penumbra serve                      # terminal 1
 cd console && npm run dev                  # terminal 2
 uv run penumbra replay -d nslkdd --ingest  # terminal 3, when you want the queue to fill
+uv run penumbra replay --from-fixture tests/fixtures/incidents_cicids.json --ingest   # the incidents
 ```
 
 Have `artifacts/reports/` open in a second window. Every number quoted below is in a JSON file there
@@ -347,10 +348,12 @@ Say the caveat out loud before anyone asks:
 > unseen in Monday–Wednesday, so the model abstains and routes them to review. The biggest incident
 > is one PortScan: 41,862 flows, 1,001 ports, one row in the queue.
 
-To show it rather than say it: before the demo, run `penumbra correlate --write-fixture
-incidents.json` (about 12 minutes and ~4 GB of RAM, for the CICIDS load), then
-`penumbra replay --from-fixture incidents.json --ingest`. The queue page's **incidents** tab lists
-them largest first, and each incident shows its fan-out and a sample of its alerts.
+To show it rather than say it: `penumbra replay --from-fixture tests/fixtures/incidents_cicids.json
+--ingest` pushes all 203 real CICIDS incidents (each with a sample of up to 8 alerts, and its true
+event count) into the running API in seconds, with no dataset needed. The queue page's
+**incidents** tab lists them largest first; each shows its fan-out and sample alerts. The header's
+events-per-incident is computed from the incidents' own event counts, so it matches the measured
+463.6. Regenerate the fixture with `penumbra correlate --write-fixture <path>` (~12 min, ~4 GB).
 
 **"What's the false positive rate?"**
 > At the deployed threshold, and on which data? On held-out benign, 1% by construction. On the test

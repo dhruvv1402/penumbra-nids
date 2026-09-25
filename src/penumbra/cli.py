@@ -1100,9 +1100,7 @@ def correlate_cmd(
     save: Annotated[bool, typer.Option("--save/--no-save")] = True,
     fixture_out: Annotated[
         Path | None,
-        typer.Option(
-            "--write-fixture", help="Freeze the largest incidents, with sample alerts, for the console."
-        ),
+        typer.Option("--write-fixture", help="Freeze every incident, with sample alerts, for the console."),
     ] = None,
 ) -> None:
     """Alert-to-incident correlation on CICIDS2017's real source IPs, end to end.
@@ -1239,13 +1237,14 @@ def correlate_cmd(
     if fixture_out is not None:
         from penumbra.replay import engine
 
-        # The 60 largest incidents, each with up to 20 of its alerts. event_count keeps the true
-        # size; alert_ids is trimmed to what ships, so every id in the fixture resolves.
+        # Every incident, so the console's events-per-incident matches the measured figure (a top-N
+        # slice overstates it), with a sample of up to 8 alerts each. event_count keeps the true size;
+        # alert_ids is trimmed to what ships, so every id in the fixture resolves.
         by_id = {a.alert_id: a for a in alerts}
-        chosen = sorted(result.incidents, key=lambda i: i.event_count, reverse=True)[:60]
+        chosen = sorted(result.incidents, key=lambda i: i.event_count, reverse=True)
         kept_incidents, kept_alerts = [], []
         for inc in chosen:
-            sample = [by_id[a] for a in inc.alert_ids[:20] if a in by_id]
+            sample = [by_id[a] for a in inc.alert_ids[:8] if a in by_id]
             kept_alerts.extend(sample)
             kept_incidents.append(inc.model_copy(update={"alert_ids": [a.alert_id for a in sample]}))
         path = engine.write_fixture(kept_alerts, kept_incidents, fixture_out)
