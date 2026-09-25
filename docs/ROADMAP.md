@@ -105,6 +105,15 @@ notes, with the LLM path behind an interface and off by default.
 - ✅ **E7 poisoning drill**, pre-registered: one account can erase a thin attack type (0.84 → 0.19
   recall) only by clearing all of its alerts, and the clearance-rate outlier flag caught every flip
   at every damaging dose.
+- ✅ **Wired what existed but was unreachable**: the RAG copilot (CLI, API, console), the
+  calibration module (`penumbra calibrate`: isotonic helps in-distribution, hurts under shift), the
+  OCSF/ECS serialisers (`/alerts/{id}/export`), and a SIEM connector seam (mock default, Sentinel
+  Logs Ingestion client) where the package had been empty.
+- ✅ **Deployment and key management**: writable state split from read-only artifacts, the PII key
+  actually read in compose, a refusal to start on the public dev key, and a key-rotation overlap
+  window.
+- ✅ **Correlation reproducible** (`penumbra correlate`) with ground truth per incident, and an
+  incidents tab in the console.
 - ⬜ Sentinel connector against a live workspace (the Protocol and the mock exist; the plan was
   always mock-first, and a live run needs credentials).
 - ⬜ A real lab capture. The converter works and is tested on synthetic captures; no capture from
