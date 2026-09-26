@@ -605,6 +605,97 @@ after seeing data, which is why E7b exists.
 
 ---
 
+## E8 — When the data drifts, is it the thresholds or the notion of normal that is wrong?
+
+**Registered before the run. Nothing below was written after seeing a number.** The code that runs
+it (`eval/threshold_refit.py`, `penumbra refit-drill`) does not exist at the time of this commit.
+
+The detector targets 1% FPR. On NSL-KDD's own shifted test split it realises **10.2%**
+(EVALUATION §7, condition B): the operating point was fitted on training benign traffic and the
+benign traffic moved. There are two different repairs, and they are not the same claim:
+
+- **move the thresholds** - keep both heads, re-fit only the two thresholds on recent benign traffic;
+- **re-learn normal** - re-fit the novelty head too (`PenumbraDetector.rebaselined`, what
+  `penumbra rebaseline` ships), then the thresholds.
+
+This experiment measures what each buys, what each costs, how much recent benign traffic each
+needs, and what happens when that traffic is not clean.
+
+### Hypotheses
+
+> **H8a — the 10.2% is a threshold problem.** Re-fitting only the thresholds on benign rows drawn
+> from the shifted distribution brings the realised FPR on held-out shifted benign traffic back to
+> the 1% target.
+
+> **H8b — the repair is not free, and the price is paid in unseen-attack recall.** The shipped
+> thresholds are permissive on shifted data; part of what they catch is caught *because* they
+> over-alert. Moving them to a true 1% gives some of that back.
+
+> **H8c — re-learning normal beats moving thresholds at the same false-positive rate.** A novelty
+> head fitted to the benign traffic it is actually watching separates unseen attacks from it better
+> than one fitted to a different network's benign traffic, so at the same realised FPR it recalls
+> more of them.
+
+> **H8d — the window-size rule is right.** `penumbra rebaseline` refuses a window whose
+> calibration slice rests on fewer than five benign exceedances per head (R1: 998 calibration rows,
+> a 3,327-row window, at 1%). Below that size the realised FPR should be visibly unstable from one
+> window to the next.
+
+> **H8e — a dirty baseline costs detection (THREAT_MODEL T9, measured).** Re-learning normal from a
+> window that is 5% attack traffic teaches the detector some attacks are normal.
+
+### Design
+
+- **NSL-KDD.** A champion is fitted on `KDDTrain+` at a 1% target, seeded, the same full two-head
+  pipeline as everywhere else. `KDDTest+` is split three ways by `canary.live_split` (stratified by
+  attack type, fixed seed), as in E7: **canary** 30% unused here, **recent** 35% is the pool
+  windows are drawn from, **evaluation** 35% is where every reported number comes from.
+- **A window is N benign rows of the recent pool.** Ground-truth benign stands in for a vetted
+  window (an operator's quiet week, or benign-confirmed traffic); this measures what a clean window
+  buys, not a label-free way of obtaining one. N ∈ {500, 1,000, 2,000, all ≈ 3,400}; the three
+  smaller sizes are drawn with five seeds each.
+- **Arms**, each at a 1% total target:
+  - **A0** champion as shipped.
+  - **A1 thresholds only**: `OrGate.fit` on the window's supervised and novelty scores. Heads
+    unchanged.
+  - **A2 re-learn normal**: `PenumbraDetector.rebaselined` with the window split 5:3 into fit and
+    calibration (the same ratio as `penumbra rebaseline`'s 50/30).
+  - **A2-dirty**: A2 on a window of all recent benign rows plus attack rows from the recent pool
+    amounting to **5%** of the window (and, as a dose check, 1%), sampled uniformly from the pool's
+    attack rows, three seeds each.
+- **Metrics on the evaluation slice**, each at the arm's own thresholds: realised FPR on its benign
+  rows (with a Wilson 95% interval); recall on all attacks; recall on the **unseen-17** attack types
+  (types absent from `KDDTrain+`) and on the seen types; and the share of benign rows reaching an
+  analyst (fired or abstained). Recall means "fired", either head.
+
+### Predicted outcome, recorded in advance
+
+1. **A0** realises roughly 10% FPR on the evaluation slice (it is the same shift as §7, on a 35%
+   sample).
+2. **A1 at N = all** realises FPR in **[0.5%, 2.0%]**. (H8a)
+3. **A1's unseen-17 recall is at least 0.10 below A0's**, at N = all. (H8b)
+4. **A2's unseen-17 recall exceeds A1's by at least 0.05** at N = all, with A2's realised FPR also
+   in [0.5%, 2.0%]. (H8c) This is the prediction we are least sure of: NSL-KDD's shift is partly
+   new attack types rather than new benign behaviour, and if benign traffic barely moved, re-fitting
+   the novelty head buys nothing.
+5. **Across the five seeds, the standard deviation of A1's realised FPR at N = 500 is at least twice
+   that at N = 2,000.** (H8d)
+6. **A2-dirty at 5% loses at least 0.05 unseen-17 recall against A2 on the same clean rows**; the
+   1% dose loses less than the 5% dose. (H8e)
+
+### Falsification
+
+H8a is refuted if A1 at N = all realises FPR outside [0.5%, 2.0%]: then the drift is not a
+threshold problem and something else is broken. H8b is refuted if A1 loses less than 0.10
+unseen-17 recall - the shipped operating point was not buying detection with its false positives.
+H8c is refuted if A2 does not beat A1 by 0.05 at comparable FPR; the finding would then be that on
+this data, re-learning normal is not worth more than moving thresholds, and `penumbra rebaseline`'s
+case rests on the lab capture alone. H8d is refuted if the N = 500 spread is under twice the
+N = 2,000 spread, which would say R1 is stricter than it needs to be. H8e is refuted if the 5% dose
+costs under 0.05 unseen-17 recall. **Every refutation gets published.**
+
+---
+
 ## Standing rules for all experiments
 
 - **Prevalence is stated with every precision-family number.** UNSW-NB15's test set is ~55% attack;
