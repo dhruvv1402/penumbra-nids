@@ -5,6 +5,18 @@ honestly how much it actually catches.
 
 > Bennett University Hackathon 2026 · Microsoft track · Problem 26, *Catch the Attack the Signatures Miss*
 
+**At a glance** (every number regenerates from a command; details in [`docs/EVALUATION.md`](docs/EVALUATION.md)):
+
+| | |
+|---|---|
+| **The thesis, measured** | On 17 attack types never seen in training, a supervised classifier recalls **5%** at 1% FPR; adding a benign-only novelty head: **35%**. At 10% FPR the same head *costs* 9 points. Both reported. |
+| **Alert fatigue** | Real CICIDS2017 source IPs: **94,115 alerts → 203 incidents**; 99.93% of attack flows reach an analyst. |
+| **Real traffic** | nmap between two of our laptops: out of the box everything alerts; the novelty head re-baselined on the network's own traffic, with no labels, reaches **AUC 0.97**. |
+| **Human in the loop, attacked** | One stolen analyst account poisons a thin attack type (0.84 → 0.19 recall), but only at full dose; a per-family peer check flagged every flip on two targets. Pre-registered. |
+| **Honesty checks** | Leak audit, SMOTE-leakage demo, calibration that breaks under shift, a deep model that lost, 13 bugs found by review and fixed. |
+| **Never blocks** | No enforcement code path, CI-enforced. Alerts a SOC; a human decides. |
+| **Try it** | `uv run penumbra demo` - API, console and real incidents in one command, no dataset needed. |
+
 The penumbra is the region between full shadow and full light. It is where novel attacks live: not matching a
 known-bad signature, not looking like known-good either.
 
