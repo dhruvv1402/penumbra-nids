@@ -156,6 +156,30 @@ CATALOGUE: tuple[ReportSpec, ...] = (
         "and the flows-to-Mbps conversion stated as a conversion.",
     ),
     ReportSpec(
+        "rebaseline",
+        "rebaseline_unsw.json",
+        "Re-baselined on a real network",
+        "penumbra rebaseline <capture.pcap>",
+        "The detector's normal re-learnt from a network's own benign traffic, gated on a held-out "
+        "slice (window size, false-positive rate) and registered as a candidate.",
+    ),
+    ReportSpec(
+        "threshold-refit",
+        "threshold_refit_nslkdd.json",
+        "Threshold drift (E8)",
+        "penumbra refit-drill",
+        "Under real drift, moving the operating point against re-learning normal, on windows of "
+        "recent benign traffic from 500 rows up, and against a dirty baseline.",
+    ),
+    ReportSpec(
+        "family-ceiling",
+        "family_ceiling_unsw.json",
+        "Family ceiling",
+        "penumbra family-ceiling -d unsw",
+        "The best family recall any classifier can reach, from exact duplicate feature vectors that "
+        "carry different family labels.",
+    ),
+    ReportSpec(
         "adversarial",
         "adversarial_unsw.json",
         "Constrained evasion",

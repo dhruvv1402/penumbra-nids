@@ -190,6 +190,26 @@ finish two points worse.
 
 ---
 
+## 5b — A network it has never seen, and a network that drifts (60s — optional)
+
+Open **/evaluation**, scroll to **re-baselined on a real network**.
+
+> "We pointed the detector at our own two laptops. Out of the box, every single flow alerted: a
+> model trained on a 2015 testbed has no idea what our Wi-Fi looks like. `penumbra rebaseline`
+> re-learns normal from the network's own traffic, no labels. Ordinary flows alerting went from
+> 70% to 4.9%, and it still caught 92.9% of the nmap scans. It refuses if the window is too short
+> for the target: at 1% it told us we need 3,327 benign flows, and we didn't have them."
+
+Then **threshold drift (E8)**.
+
+> "Same network, drifting: NSL-KDD's test set. Our 1% target was really 10.2%. Re-fitting the
+> thresholds brings it back to 1.06%, and our unseen-attack recall falls from 0.77 to 0.43. We
+> pre-registered that, and we publish the 0.43, because the 0.77 was bought with ten times the
+> false positives. The scary part is the last line: poison the baseline with 5% attack traffic and
+> detection drops by a quarter while the false-positive rate *improves*. It looks like tuning."
+
+---
+
 ## 6 — Alert, never block (45s)
 
 > "There is no blocking code path in this repository. Not disabled — absent. CI greps the tree and

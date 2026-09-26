@@ -43,6 +43,9 @@ export default function Evaluation() {
   const [evasion, setEvasion] = useState<EvasionReport | null>(null);
   const [correlation, setCorrelation] = useState<CorrelationReport | null>(null);
   const [calibration, setCalibration] = useState<Record<string, CalibrationReport | null>>({});
+  const [refit, setRefit] = useState<RefitReport | null>(null);
+  const [speed, setSpeed] = useState<LoadReport | null>(null);
+  const [rebaseline, setRebaseline] = useState<RebaselineReport | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => setSession(loadSession()), []);
@@ -68,6 +71,9 @@ export default function Evaluation() {
         pull<CorrelationReport>("correlation", setCorrelation),
         pull<CalibrationReport>("calibration-unsw", (v) => setCalibration((c) => ({ ...c, unsw: v }))),
         pull<CalibrationReport>("calibration-nslkdd", (v) => setCalibration((c) => ({ ...c, nslkdd: v }))),
+        pull<RefitReport>("threshold-refit", setRefit),
+        pull<LoadReport>("loadtest", setSpeed),
+        pull<RebaselineReport>("rebaseline", setRebaseline),
       ]);
       setError(null);
     } catch (err) {
@@ -130,6 +136,9 @@ export default function Evaluation() {
         <EvasionPanel report={evasion} command={commandFor("adversarial")} />
         <CorrelationPanel report={correlation} command={commandFor("correlation")} />
         <CalibrationPanel reports={calibration} />
+        <RefitPanel report={refit} command={commandFor("threshold-refit")} />
+        <RebaselinePanel report={rebaseline} command={commandFor("rebaseline")} />
+        <SpeedPanel report={speed} command={commandFor("loadtest")} />
         <CataloguePanel entries={catalogue} />
       </div>
     </main>
@@ -526,6 +535,228 @@ function CalibrationPanel({ reports }: { reports: Record<string, CalibrationRepo
         shifted test split, on both datasets. It carries the training distribution&apos;s mapping into
         data where that mapping no longer holds. So p_attack is &quot;calibrated on held-out training
         data&quot;, and the abstention rate on the drift page is the warning that it has stopped being true.
+      </Caption>
+    </Panel>
+  );
+}
+
+const pct = (v: number | null | undefined, digits = 1) => (v == null ? "—" : `${(100 * v).toFixed(digits)}%`);
+const num = (v: number | null | undefined, digits = 3) => (v == null ? "—" : v.toFixed(digits));
+
+interface Rate {
+  rate: number | null;
+  ci95?: [number | null, number | null];
+}
+
+interface RefitArm {
+  fpr: Rate;
+  recall_all: Rate;
+  recall_unseen17: Rate;
+  benign_reach: Rate;
+}
+
+interface RefitReport {
+  A0: RefitArm;
+  windows: { n: number; seed: number | null; A1: RefitArm; A2: RefitArm }[];
+  dirty: { dose: number; A2_dirty: RefitArm; A2_clean: RefitArm }[];
+}
+
+function RefitPanel({ report, command }: { report: RefitReport | null; command: string }) {
+  const full = report?.windows.find((w) => w.seed === null);
+  if (!report || !full) {
+    return (
+      <Panel title="threshold drift — move the operating point, or re-learn normal? (E8)">
+        <NotGenerated command={command} />
+      </Panel>
+    );
+  }
+  const dirty5 = report.dirty.filter((d) => d.dose === 0.05);
+  const loss5 =
+    dirty5.length > 0
+      ? dirty5.reduce((acc, d) => acc + ((d.A2_clean.recall_unseen17.rate ?? 0) - (d.A2_dirty.recall_unseen17.rate ?? 0)), 0) /
+        dirty5.length
+      : null;
+  const fpr5 =
+    dirty5.length > 0 ? dirty5.reduce((acc, d) => acc + (d.A2_dirty.fpr.rate ?? 0), 0) / dirty5.length : null;
+  const rows: [string, RefitArm][] = [
+    ["as shipped", report.A0],
+    ["move thresholds", full.A1],
+    ["re-learn normal", full.A2],
+  ];
+  return (
+    <Panel title="threshold drift — move the operating point, or re-learn normal? (E8)" right={<CommandTag command={command} />}>
+      <table className="w-full text-[11px]">
+        <thead className="text-[var(--color-ink-dim)]">
+          <tr className="border-b border-[var(--color-border)]">
+            <th className="text-left font-normal px-3 py-1.5">NSL-KDD shifted test, 1% target</th>
+            <th className="text-right font-normal px-3 py-1.5">realised FPR</th>
+            <th className="text-right font-normal px-3 py-1.5">unseen-17 recall</th>
+            <th className="text-right font-normal px-3 py-1.5">benign to an analyst</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([name, arm]) => (
+            <tr key={name} className="border-b border-[var(--color-border)]">
+              <td className="px-3 py-1.5">{name}</td>
+              <td className="px-3 py-1.5 text-right tabular-nums">{pct(arm.fpr.rate, 2)}</td>
+              <td className="px-3 py-1.5 text-right tabular-nums">{num(arm.recall_unseen17.rate)}</td>
+              <td className="px-3 py-1.5 text-right tabular-nums">{pct(arm.benign_reach.rate)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Caption>
+        The 1% target realised {pct(report.A0.fpr.rate)} under drift, and moving the thresholds on {full.n.toLocaleString()} recent
+        benign flows restores {pct(full.A1.fpr.rate, 2)}. The unseen-attack recall it gives back had been bought with false
+        positives. A baseline that is 5% attack traffic cost {num(loss5)} unseen recall while the FPR fell to {pct(fpr5)}:
+        poisoning the baseline looks like tuning. Pre-registered; two predictions refuted.
+      </Caption>
+    </Panel>
+  );
+}
+
+interface RebaselineRates {
+  flows: number;
+  fired_rate: number;
+  reach_rate: number;
+}
+
+interface RebaselineReport {
+  mode?: string;
+  target_fpr: number;
+  passed: boolean;
+  window: { benign_flows: number };
+  gates: Record<string, { passed: boolean }>;
+  evidence: {
+    holdout?: { current: RebaselineRates; rebaselined: RebaselineRates };
+    attack_flows?: { current: RebaselineRates; rebaselined: RebaselineRates };
+  };
+}
+
+function RebaselinePanel({ report, command }: { report: RebaselineReport | null; command: string }) {
+  const hold = report?.evidence.holdout;
+  if (!report || !hold) {
+    return (
+      <Panel title="re-baselined on a real network (lab capture)">
+        <NotGenerated command={command} />
+      </Panel>
+    );
+  }
+  const attack = report.evidence.attack_flows;
+  const gates = Object.entries(report.gates);
+  return (
+    <Panel title="re-baselined on a real network (lab capture)" right={<CommandTag command={command} />}>
+      <div className="grid grid-cols-4 border-b border-[var(--color-border)]">
+        <Stat label="benign window" value={report.window.benign_flows.toLocaleString()} />
+        <Stat label="target FPR" value={pct(report.target_fpr, 0)} />
+        <Stat label="gate" value={report.passed ? "passed" : "failed"} />
+        <Stat label="checks" value={gates.map(([name, g]) => `${name.split("_")[0]} ${g.passed ? "✓" : "✗"}`).join(" ")} />
+      </div>
+      <table className="w-full text-[11px]">
+        <thead className="text-[var(--color-ink-dim)]">
+          <tr className="border-b border-[var(--color-border)]">
+            <th className="text-left font-normal px-3 py-1.5"> </th>
+            <th className="text-right font-normal px-3 py-1.5">as shipped</th>
+            <th className="text-right font-normal px-3 py-1.5">re-baselined</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="border-b border-[var(--color-border)]">
+            <td className="px-3 py-1.5">ordinary flows that fired ({hold.current.flows.toLocaleString()} held out)</td>
+            <td className="px-3 py-1.5 text-right tabular-nums">{pct(hold.current.fired_rate)}</td>
+            <td className="px-3 py-1.5 text-right tabular-nums">{pct(hold.rebaselined.fired_rate)}</td>
+          </tr>
+          <tr className="border-b border-[var(--color-border)]">
+            <td className="px-3 py-1.5">ordinary flows reaching an analyst</td>
+            <td className="px-3 py-1.5 text-right tabular-nums">{pct(hold.current.reach_rate)}</td>
+            <td className="px-3 py-1.5 text-right tabular-nums">{pct(hold.rebaselined.reach_rate)}</td>
+          </tr>
+          {attack && (
+            <tr className="border-b border-[var(--color-border)]">
+              <td className="px-3 py-1.5">scan flows that fired ({attack.current.flows.toLocaleString()})</td>
+              <td className="px-3 py-1.5 text-right tabular-nums">{pct(attack.current.fired_rate)}</td>
+              <td className="px-3 py-1.5 text-right tabular-nums">{pct(attack.rebaselined.fired_rate)}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      <Caption>
+        No labels: the detector&apos;s normal is re-learnt from the network&apos;s own benign traffic, checked on a held-out
+        slice, and registered as a candidate. Promotion is a separate, audited step.
+      </Caption>
+    </Panel>
+  );
+}
+
+interface LoadPoint {
+  batch_size: number;
+  flows_per_second: number;
+  batch_latency_ms: { p50: number };
+}
+
+interface LoadEngine {
+  fixed_overhead_ms: number;
+  points: LoadPoint[];
+}
+
+interface LoadReport extends LoadEngine {
+  engines?: Record<string, LoadEngine>;
+  compile?: { decisions_changed: number; n_rows: number };
+  alert_building?: { alerts_per_second: number };
+}
+
+function SpeedPanel({ report, command }: { report: LoadReport | null; command: string }) {
+  if (!report) {
+    return (
+      <Panel title="speed — one flow, and a batch">
+        <NotGenerated command={command} />
+      </Panel>
+    );
+  }
+  const engines = report.engines ?? { sklearn: report };
+  const batches = (Object.values(engines)[0]?.points ?? []).map((p) => p.batch_size);
+  const oneFlow = report.points.find((p) => p.batch_size === 1);
+  return (
+    <Panel title="speed — one flow, and a batch" right={<CommandTag command={command} />}>
+      <div className="grid grid-cols-4 border-b border-[var(--color-border)]">
+        <Stat label="one flow" value={oneFlow ? `${oneFlow.batch_latency_ms.p50.toFixed(1)} ms` : "—"} />
+        <Stat label="fixed cost / call" value={`${report.fixed_overhead_ms.toFixed(1)} ms`} />
+        <Stat
+          label="alerts built / s"
+          value={report.alert_building ? Math.round(report.alert_building.alerts_per_second).toLocaleString() : "—"}
+        />
+        <Stat
+          label="decisions changed"
+          value={report.compile ? `${report.compile.decisions_changed} / ${report.compile.n_rows.toLocaleString()}` : "—"}
+        />
+      </div>
+      <table className="w-full text-[11px]">
+        <thead className="text-[var(--color-ink-dim)]">
+          <tr className="border-b border-[var(--color-border)]">
+            <th className="text-left font-normal px-3 py-1.5">flows / s at batch</th>
+            {batches.map((b) => (
+              <th key={b} className="text-right font-normal px-3 py-1.5">
+                {b.toLocaleString()}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(engines).map(([name, engine]) => (
+            <tr key={name} className="border-b border-[var(--color-border)]">
+              <td className="px-3 py-1.5">{name}</td>
+              {engine.points.map((p) => (
+                <td key={p.batch_size} className="px-3 py-1.5 text-right tabular-nums">
+                  {Math.round(p.flows_per_second).toLocaleString()}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Caption>
+        The compiled scorer runs the forests as flat arrays below a batch size it measures at startup, and checks that no
+        decision changes before it is used. Still a batch scorer, and still far outside an inline-blocking budget.
       </Caption>
     </Panel>
   );

@@ -126,6 +126,13 @@ def main(out: Path) -> Path:
         caption(page, "Correlation with ground truth: the incident the model calls DoS Hulk is really Friday's DDoS.", 5)
         show(page, "in-distribution vs under shift")
         caption(page, "Calibration holds in-distribution and gets worse under shift - so p_attack says where it was calibrated.", 6)
+        show(page, "threshold drift")
+        caption(page, "Under drift a 1% target realised 10.2%. Re-fitting thresholds restores 1.06% - and shows the unseen-attack recall had been bought with false positives (E8).", 7)
+        caption(page, "A baseline that is 5% attack traffic costs a quarter of unseen-attack recall while the FPR falls. Poisoning the baseline looks like tuning.", 6)
+        show(page, "re-baselined on a real network")
+        caption(page, "Our own laptops: out of the box every flow alerts. Re-baselined with no labels: ordinary flows 70% -> 4.9%, scan flows detected 92.9%.", 7)
+        show(page, "speed")
+        caption(page, "One flow scored in 12.6 ms (was 139). Flat-array forests, checked at startup to change no decision.", 5)
 
         goto(page, "/drift")
         caption(page, "Conformal coverage as a label-free drift alarm: abstention rises as the data moves away from training.", 6)
