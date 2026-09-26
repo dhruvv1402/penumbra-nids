@@ -100,6 +100,10 @@ class LoadReport:
     median_flow_bytes: int = 0
     points: list[ThroughputPoint] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # Which scorer: "sklearn" (PenumbraDetector) or "compiled" (models.compiled, flat forests).
+    engine: str = "sklearn"
+    # Anything measured alongside: the other engine, compile parity, alert building.
+    extra: dict[str, Any] = field(default_factory=dict)
 
     @property
     def fixed_overhead_ms(self) -> float:
@@ -140,6 +144,7 @@ class LoadReport:
     def to_dict(self) -> dict[str, Any]:
         return {
             "dataset": self.dataset,
+            "engine": self.engine,
             "n_rows": self.n_rows,
             "cores": self.cores,
             "mean_flow_bytes": self.mean_flow_bytes,
@@ -156,6 +161,7 @@ class LoadReport:
                 for p in self.points
             ],
             "notes": self.notes,
+            **self.extra,
         }
 
     def summary(self) -> str:
@@ -164,7 +170,7 @@ class LoadReport:
             "  THROUGHPUT AND LATENCY",
             "=" * 88,
             "",
-            f"  {self.n_rows:,} flows from {self.dataset}, {self.cores} cores, no GPU",
+            f"  {self.n_rows:,} flows from {self.dataset}, {self.cores} cores, no GPU, {self.engine} scorer",
             "",
             f"  {'batch':>8} {'flows/s':>12} {'p50 ms':>10} {'p95 ms':>10} {'p99 ms':>10} {'batches':>9}",
         ]
@@ -179,20 +185,23 @@ class LoadReport:
         best = self.best
         if best:
             mbps = self.monitored_mbps(best.flows_per_second)
-            per_flow_ms = self.points[0].batch_latency_ms.p50 if self.points else 0.0
+            first, last = self.points[0], self.points[-1]
+            per_flow_ms = first.batch_latency_ms.p50
+            ratio = last.batch_latency_ms.p50 / max(per_flow_ms, 1e-9)
             lines += [
                 f"  Best sustained: {best.flows_per_second:,.0f} flows/s at batch "
                 f"{best.batch_size:,}, p99 {best.batch_latency_ms.p99:.1f} ms per batch.",
                 "",
                 "  THIS IS A BATCH SCORER, AND THAT IS THE HEADLINE.",
                 "",
-                f"  About {self.fixed_overhead_ms:,.0f} ms of every call is FIXED - it does not scale with",
+                f"  About {self.fixed_overhead_ms:,.1f} ms of every call is FIXED - it does not scale with",
                 f"  batch size - against {self.marginal_ms_per_flow:.3f} ms of marginal cost per flow. A",
-                "  one-flow call and a two-thousand-flow call therefore cost nearly the same.",
+                f"  {last.batch_size:,}-flow call costs {ratio:.1f}x a one-flow call, not {last.batch_size:,}x.",
                 "",
-                f"  So scoring one flow at a time costs about {per_flow_ms:,.0f} ms. No inline",
-                "  enforcement decision can be made on that budget whatever the policy says, which",
-                "  makes ADR-0001 a performance fact as well as an ethical one.",
+                f"  So scoring one flow at a time costs about {per_flow_ms:,.1f} ms, or "
+                f"{first.flows_per_second:,.0f} flows/s.",
+                "  That is far outside an inline enforcement budget (microseconds per packet at line",
+                "  rate), which makes ADR-0001 a performance fact as well as an ethical one.",
                 "",
                 "  FLOWS PER SECOND IS NOT LINK SPEED.",
                 "",

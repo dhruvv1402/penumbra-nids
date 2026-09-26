@@ -11,6 +11,8 @@ caught it.
 
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -97,56 +99,81 @@ def _build_positioned(
     ranked = _ranked_importances(detector)
     version = getattr(getattr(detector, "metadata", None), "version", "0.1.0")
 
-    out: list[tuple[int, Alert]] = []
-    for pos, (_, row) in enumerate(scored.iterrows()):
-        fired = int(row["fired"])
-        abstains = bool(row.get("conformal_abstains", False))
-        # A row neither head flagged still reaches an analyst if the model declined to commit on it.
-        # That is the point of the abstention lane: "I don't know" is a reportable answer.
-        if fired == 0 and not abstains and not include_benign:
-            continue
+    n = len(scored)
+    fired = scored["fired"].to_numpy(dtype=int)
+    abstains = (
+        scored["conformal_abstains"].to_numpy(dtype=bool)
+        if "conformal_abstains" in scored
+        else np.zeros(n, dtype=bool)
+    )
+    # A row neither head flagged still reaches an analyst if the model declined to commit on it.
+    # That is the point of the abstention lane: "I don't know" is a reportable answer.
+    keep = np.arange(n) if include_benign else np.flatnonzero((fired != 0) | abstains)
+    if not len(keep):
+        return []
 
+    # Column arrays and one pass over the kept rows. Per-row `iterrows` plus three `X.iloc[pos]`
+    # lookups per alert made building 20k alerts take 16 s, several times longer than scoring them.
+    p_attack = scored["p_attack"].to_numpy(dtype=float)
+    novelty = scored["novelty_percentile"].to_numpy(dtype=float)
+    agreement = scored["agreement"].to_numpy(dtype=int) if "agreement" in scored else np.zeros(n, dtype=int)
+    families = scored["family"].tolist() if "family" in scored else [None] * n
+    sets = scored["conformal_set"].tolist() if "conformal_set" in scored else [None] * n
+    rows = X.iloc[keep].to_dict("records")
+
+    out: list[tuple[int, Alert]] = []
+    for pos, row in zip(keep.tolist(), rows, strict=True):
+        f = int(fired[pos])
         # SUSPECTED_NOVEL is precisely "novelty fired and supervised did not", so a novelty-only
         # detection carries no family - naming one would contradict the verdict.
-        raw_family = row.get("family")
-        family = raw_family if (fired in (1, 3) and isinstance(raw_family, str)) else None
+        raw_family = families[pos]
+        family = raw_family if (f in (1, 3) and isinstance(raw_family, str)) else None
 
         alert = build_alert(
-            p_attack=float(row["p_attack"]),
-            novelty_percentile=float(row["novelty_percentile"]),
+            p_attack=float(p_attack[pos]),
+            novelty_percentile=float(novelty[pos]),
             policy=policy,
             family=family,
             dataset=dataset,
-            agreement=int(row.get("agreement", 0)),
-            conformal_ambiguous=bool(row.get("conformal_abstains", False)),
-            conformal_set=list(row.get("conformal_set") or []),
-            network=_network_for(X, pos, entities),
-            contributions=_contributions(X, pos, ranked),
+            agreement=int(agreement[pos]),
+            conformal_ambiguous=bool(abstains[pos]),
+            conformal_set=list(sets[pos] or []),
+            network=_network_for(row, entities[pos] if entities and pos < len(entities) else None),
+            contributions=_contributions(row, ranked),
             model_version=version,
         )
         # The full feature row travels with the alert. An analyst verdict is only a training
         # example if the features it labels can be recovered later, and the alert is the one
         # record that survives from scoring to promotion.
-        alert.raw_features = feature_payload(X.iloc[pos])
+        alert.raw_features = feature_payload(row)
         out.append((pos, alert))
     return out
 
 
-def feature_payload(row: pd.Series) -> dict[str, Any]:
+def feature_payload(row: Mapping[str, Any]) -> dict[str, Any]:
     """A feature row as JSON-safe scalars. Non-finite numbers become None."""
-    payload: dict[str, Any] = {}
-    for name, value in row.items():
-        if isinstance(value, (bool, np.bool_)):
-            payload[str(name)] = bool(value)
-        elif isinstance(value, (int, np.integer)):
-            payload[str(name)] = int(value)
-        elif isinstance(value, (float, np.floating)):
-            payload[str(name)] = float(value) if np.isfinite(value) else None
-        elif value is None or (isinstance(value, float) and np.isnan(value)):
-            payload[str(name)] = None
-        else:
-            payload[str(name)] = str(value)
-    return payload
+    return {str(name): _json_scalar(value) for name, value in row.items()}
+
+
+def _json_scalar(value: Any) -> Any:
+    # Exact-type checks first: `to_dict("records")` hands back plain Python scalars, and these cover
+    # nearly every value. The isinstance chain below is the general case (numpy scalars, NA).
+    kind = type(value)
+    if kind is float:
+        return value if math.isfinite(value) else None
+    if kind is int or kind is bool:
+        return value
+    if kind is str:
+        return value
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        return float(value) if np.isfinite(value) else None
+    if value is None:
+        return None
+    return str(value)
 
 
 def _ranked_importances(detector: Any) -> list[tuple[str, float]]:
@@ -160,22 +187,21 @@ def _ranked_importances(detector: Any) -> list[tuple[str, float]]:
     return []
 
 
-def _network_for(X: pd.DataFrame, pos: int, entities: list[str] | None) -> NetworkContext:
-    row = X.iloc[pos]
+def _network_for(row: Mapping[str, Any], src_ip: str | None) -> NetworkContext:
     return NetworkContext(
-        src_ip=entities[pos] if entities and pos < len(entities) else None,
+        src_ip=src_ip,
         dst_port=_as_int(row.get("dst_port")),
         protocol=str(row.get("proto") or row.get("protocol_type") or "") or None,
-        src_bytes=_as_int(row.get("sbytes") if "sbytes" in row.index else row.get("src_bytes")),
-        dst_bytes=_as_int(row.get("dbytes") if "dbytes" in row.index else row.get("dst_bytes")),
+        src_bytes=_as_int(row.get("sbytes") if "sbytes" in row else row.get("src_bytes")),
+        dst_bytes=_as_int(row.get("dbytes") if "dbytes" in row else row.get("dst_bytes")),
         src_packets=_as_int(row.get("spkts")),
         dst_packets=_as_int(row.get("dpkts")),
-        duration_ms=_as_float(row.get("dur") if "dur" in row.index else row.get("duration")),
+        duration_ms=_as_float(row.get("dur") if "dur" in row else row.get("duration")),
     )
 
 
 def _contributions(
-    X: pd.DataFrame, pos: int, ranked: list[tuple[str, float]], top: int = 5
+    row: Mapping[str, Any], ranked: list[tuple[str, float]], top: int = 5
 ) -> list[Contribution]:
     """Top feature contributions, rendered in plain English.
 
@@ -184,9 +210,6 @@ def _contributions(
     compatibility, but these are importance weights and the eval path is where exact attributions
     belong.
     """
-    if not ranked:
-        return []
-    row = X.iloc[pos]
     return [
         Contribution(
             feature=name,
@@ -196,7 +219,7 @@ def _contributions(
             narrative=narrate(name, row.get(name)),
         )
         for name, weight in ranked[:top]
-        if name in row.index
+        if name in row
     ]
 
 
@@ -212,7 +235,7 @@ def _as_int(value: Any) -> int | None:
 def _as_float(value: Any) -> float | None:
     try:
         f = float(value)
-        return f if np.isfinite(f) else None
+        return f if math.isfinite(f) else None
     except (TypeError, ValueError):
         return None
 

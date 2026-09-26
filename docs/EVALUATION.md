@@ -650,40 +650,97 @@ than a failure mode.
 
 ### 10.7 Throughput, latency, and what the detector is actually for
 
-`penumbra loadtest -d unsw`. 20,000 UNSW test flows, 8 CPU cores, no GPU, scoring both heads.
+`penumbra loadtest -d unsw`. 20,000 UNSW test flows, 8 CPU cores, no GPU, scoring both heads. Two
+scorers are measured on the same rows: the sklearn detector, and the compiled one ("Where the 139 ms went",
+below: flat forests below a batch size measured at startup, sklearn above it).
 
-| batch | flows/s | p50 ms | p95 ms | p99 ms | batches |
+| batch | v1.0 flows/s | sklearn flows/s | **compiled flows/s** | compiled p50 ms | compiled p99 ms |
 |---:|---:|---:|---:|---:|---:|
-| 1 | 7 | 139.1 | 169.7 | 192.3 | 200 |
-| 32 | 199 | 157.5 | 187.7 | 228.5 | 200 |
-| 256 | 1,350 | 184.6 | 237.6 | 255.1 | 78 |
-| 2,048 | **7,296** | 271.5 | 312.0 | 312.0 | 9 |
+| 1 | 7 | 21 | **47** | 12.6 | 43.3 |
+| 32 | 199 | 472 | **705** | 44.9 | 67.4 |
+| 256 | 1,350 | 2,965 | **3,137** | 78.5 | 108.2 |
+| 2,048 | 7,296 | 11,509 | **11,052** | 182.3 | 210.4 |
 
-Batch size is swept rather than fixed, because the answer moves by three orders of magnitude across
-it and quoting the best one without saying which is how a throughput figure becomes marketing.
+Batch size is swept rather than fixed, because the answer moves by two to three orders of magnitude
+across it and quoting the best one without saying which is how a throughput figure becomes
+marketing. At 2,048 rows both scorers run the same sklearn code (the compiled one hands large
+batches back), so the 4% between them there is run-to-run noise, not a difference.
 
-#### The headline is not 7,296 flows/s. It is that this is a batch scorer.
+#### The headline is still that this is a batch scorer - with a much smaller fixed cost
 
-**About 139 ms of every call is fixed**, against **0.065 ms of marginal cost per flow**. A one-flow
-call and a two-thousand-flow call cost nearly the same. That single fact explains the whole table:
-throughput at batch 2,048 is a thousand times batch 1 not because the model got faster but because
-the fixed cost got amortised.
+| | v1.0 | now (compiled) |
+|---|---:|---:|
+| fixed cost per call | 139 ms | **12.5 ms** |
+| marginal cost per flow | 0.065 ms | 0.083 ms |
+| one flow at a time | 139 ms (7 flows/s) | **12.6 ms (47 flows/s)** |
+| one quiet benign flow (no alert, so no family model) | - | **11.4 ms** |
+| building alerts, 19,799 from 20,000 rows | 16.5 s | **1.8 s** (11,000 alerts/s) |
 
-It has a consequence worth stating plainly:
+A 2,048-flow call still costs 14x a one-flow call rather than 2,048x, so batching still wins by
+two orders of magnitude and the replay path still batches. But the fixed cost is now small enough
+that a stream scored a flow at a time is no longer absurd: 47 flows/s from one process.
 
-> Scoring one flow at a time costs about **139 ms**. No inline enforcement decision can be made on
-> that budget, whatever the policy said.
+It does not change the enforcement argument:
 
-So **ADR-0001 is a performance fact as well as an ethical one**. We do not block, and it turns out
-we could not have blocked inline even if we had wanted to. Saying that is stronger than the ethical
-argument alone, because it cannot be waved away as a preference.
+> Scoring one flow at a time costs about **12.6 ms**. An inline enforcement decision at line rate
+> has a budget in microseconds per packet. Neither 139 ms nor 12.6 ms is in that regime.
+
+So **ADR-0001 is a performance fact as well as an ethical one**. We do not block, and we could not
+block inline even if we wanted to. That is stronger than the ethical argument alone, because it
+cannot be waved away as a preference.
+
+#### Where the 139 ms went
+
+Profiled per component, one UNSW flow, before any change: supervised forest 55 ms, family forest
+57 ms, novelty detectors 47 ms scored **twice** (once for the fused score, once again for the
+agreement count), preprocessing 6 ms. Four changes, each checked for identical output on all 82,332
+test rows before the next:
+
+1. **Novelty detectors run once per batch.** `score` and `agreement` both recomputed every
+   detector's percentiles; they now share one pass. Pure waste removed.
+2. **One thread for small batches.** Both forests were fitted with `n_jobs=-1`, so every predict
+   went through a joblib thread pool: 59 ms for one row on all cores, 31 ms on one. The crossover
+   is between 256 and 2,048 rows, so below 1,024 the forests now predict single-threaded
+   (`models/threads.py`). Same trees; the per-tree probabilities are summed in a different order,
+   which moves `p_attack` by at most 4.4e-16 and changed no verdict, family or alert field.
+3. **The family model only sees rows that become alerts.** Nothing reads a predicted family for a
+   row that neither head flagged and the conformal layer did not abstain on, so the second forest
+   is skipped for those. On this attack-heavy test split 99% of rows alert, so the table barely
+   shows it; on live traffic, which is overwhelmingly benign, it is most of the family model's
+   cost. Families of alerting rows: identical.
+4. **Flat forests below a measured batch size** (`models/flat_forest.py`, `models/compiled.py`).
+   scikit-learn scores a forest tree by tree, a Python loop over 200-300 estimators. The flat
+   version puts every tree's nodes in one set of arrays and pushes the whole batch down all trees
+   together, one vectorised step per depth level. One row: 0.29 ms instead of 16.7 for the
+   supervised forest, 0.07 ms instead of 11.0 for the IsolationForest. It uses sklearn's own split
+   test (features cast to float32, `<=` against the float64 threshold) and the fitted leaf values,
+   so it is exact up to summation order: max |Δ| 7.8e-16, **0 decisions changed on 20,000 rows**,
+   checked at startup every time. It loses on large batches, where the (rows x trees) working set
+   outgrows the cache, so `compile_detector` times both paths and uses the flat one only up to the
+   largest batch at which it measured at least as fast (this run: 32 rows for the supervised
+   forest, 512 for the IsolationForest). Compiling takes 0.14 s.
+
+And alert building, which the load test does not time: per-row `iterrows` plus three `X.iloc[pos]`
+lookups per alert made building 20,000 alerts take 16.5 s, **several times longer than scoring
+them**. One `to_dict("records")` over the alerting rows, column arrays for the scores, and exact
+type dispatch for the JSON payload took it to 1.8 s with every alert field identical.
+
+**Why flat forests and not ONNX**, which was tried first and measured: onnxruntime runs the
+supervised forest's graph in 0.2 ms for one row, but (a) the IsolationForest graph is 8x *slower*
+than sklearn at 20,000 rows, because skl2onnx expresses the path-length arithmetic as generic
+tensor ops; (b) the ten-class family forest exceeds protobuf's 2 GB message limit and cannot be
+serialised at all; (c) converting the two forests takes about three minutes at every startup; and
+(d) the Python-side feed preparation was costing 35 ms per call regardless of batch size (fixed
+in `onnx_export.feed`, which also sped up `export-onnx`). The flat forest has none of those
+problems and needs no extra dependency. The ONNX export stays, for what it is actually for: a
+scoring artifact that loads without unpickling anything (§10.7g).
 
 #### Flows per second is not link speed
 
 | assumption | conversion |
 |---|---:|
-| 21,227-byte **mean** flow | ~1,239 Mbps monitored |
-| 880-byte **median** flow | ~51 Mbps monitored |
+| 21,227-byte **mean** flow | ~1,877 Mbps monitored (v1.0: ~1,239) |
+| 880-byte **median** flow | ~78 Mbps monitored (v1.0: ~51) |
 
 **Those differ by 24×**, because UNSW-NB15's flow sizes are violently skewed — a handful of very
 large transfers carry most of the bytes. The mean is the arithmetically correct multiplier for total
@@ -708,9 +765,8 @@ creation and counting it would badly understate steady state at small batch size
 The first throughput measurement of the replay path was **38 flows/s**. The cause was
 `_importances()` rebuilding and re-sorting the model's global feature-importance dictionary once per
 scored row — a quantity that depends on the fitted model and not on the row. Caching it gave an 18×
-speedup with no change to output. The figures above are higher again because they measure scoring
-alone, without alert construction; the replay path number in `penumbra replay` is the end-to-end one
-and remains the right figure to quote for the demo.
+speedup with no change to output. The figures above measure scoring alone; alert construction is
+timed separately (1.8 s per 20,000 rows) and `penumbra replay` is the end-to-end figure.
 
 ### 10.7b Mined detection rules — the model writes signatures for the SIEM
 

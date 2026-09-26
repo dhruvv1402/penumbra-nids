@@ -176,10 +176,45 @@ class PenumbraDetector:
             raise RuntimeError("detector is not fitted")
 
         p_attack = supervised.attack_scores(self.supervised_model, X)
-        Z = self.novelty_prep.transform(X)
-        novelty_raw = self.novelty.score(Z, how="max")
-        agreement = self.novelty.agreement(Z, percentile=0.99)
+        # Each detector runs once: the fused score and the agreement count read the same percentiles.
+        raw = self.novelty.raw_scores(self.novelty_prep.transform(X))
+        return self.assemble(X.index, p_attack, raw, self.family_predictor(X))
+
+    def family_predictor(self, X: pd.DataFrame) -> Any:
+        """Family labels for chosen row positions of `X`, or None without a family model."""
+        if self.family_model is None:
+            return None
+
+        def predict(rows: np.ndarray) -> np.ndarray:
+            subset = X if len(rows) == len(X) else X.iloc[rows]
+            return supervised.predict_families(self.family_model, self.family_encoder, subset)
+
+        return predict
+
+    def assemble(
+        self,
+        index: pd.Index,
+        p_attack: np.ndarray,
+        raw_novelty: dict[str, np.ndarray],
+        family_predictor: Any,
+    ) -> pd.DataFrame:
+        """The scored frame from the heads' raw outputs, however they were computed.
+
+        Split out of `score` so the compiled path (`models.compiled`) produces its frame through the
+        same fusion, gate and conformal code rather than a copy of it.
+
+        Families are predicted only for rows that become alerts (either head fired, or the conformal
+        layer abstained). Nothing reads a family anywhere else - the alert builder drops rows that
+        are neither - and on live traffic, which is overwhelmingly benign, that skips the second
+        forest for almost every flow.
+        """
+        if self.novelty is None or self.gate is None:
+            raise RuntimeError("detector is not fitted")
+        pcts = self.novelty.percentiles_from_raw(raw_novelty)
+        novelty_raw = self.novelty.fuse(pcts, how="max")
+        agreement = self.novelty.agreement_from(pcts, percentile=0.99)
         which = self.gate.which_fired(p_attack, novelty_raw)
+        n = len(index)
 
         # Conformal abstention: an ambiguous or empty prediction set means the model declines to
         # commit, which is a different statement from a low score and routes to human review.
@@ -188,13 +223,14 @@ class PenumbraDetector:
             abstains = sets.abstains
             set_labels = sets.as_strings()
         else:
-            abstains = np.zeros(len(X), dtype=bool)
-            set_labels = [[] for _ in range(len(X))]
+            abstains = np.zeros(n, dtype=bool)
+            set_labels = [[] for _ in range(n)]
 
-        families: list[str | None] = [None] * len(X)
-        if self.family_model is not None:
-            predicted = supervised.predict_families(self.family_model, self.family_encoder, X)
-            families = [None if str(f).lower() in {"normal", "benign"} else str(f) for f in predicted]
+        families: list[str | None] = [None] * n
+        alertable = np.flatnonzero((which > 0) | abstains)
+        if family_predictor is not None and len(alertable):
+            for row, f in zip(alertable.tolist(), family_predictor(alertable), strict=True):
+                families[row] = None if str(f).lower() in {"normal", "benign"} else str(f)
 
         return pd.DataFrame(
             {
@@ -206,7 +242,7 @@ class PenumbraDetector:
                 "conformal_abstains": abstains,
                 "conformal_set": set_labels,
             },
-            index=X.index,
+            index=index,
         )
 
     def ranked_importances(self, top: int = 8) -> list[tuple[str, float]]:

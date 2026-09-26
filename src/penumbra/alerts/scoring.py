@@ -19,8 +19,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-import numpy as np
-
 from penumbra.alerts.models import (
     Alert,
     Contribution,
@@ -167,8 +165,8 @@ def build_alert(
         verdict=verdict,
         lane=lane,
         severity=policy.severity_for(p_attack, novelty_percentile),
-        p_attack=float(np.clip(p_attack, 0.0, 1.0)),
-        novelty_percentile=float(np.clip(novelty_percentile, 0.0, 1.0)),
+        p_attack=min(1.0, max(0.0, float(p_attack))),
+        novelty_percentile=min(1.0, max(0.0, float(novelty_percentile))),
         priority=priority_score(p_attack, novelty_percentile, agreement=agreement),
         family=effective_family,
         family_confidence=family_confidence,

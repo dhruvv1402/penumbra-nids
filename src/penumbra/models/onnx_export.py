@@ -72,11 +72,41 @@ def export(pipeline: Any, X_example: pd.DataFrame, categorical: list[str]) -> by
     return bytes(model.SerializeToString())
 
 
-def feed(X: pd.DataFrame, categorical: list[str]) -> dict[str, np.ndarray]:
-    return {
-        c: X[[c]].astype(str).to_numpy() if c in categorical else X[[c]].astype(np.float32).to_numpy()
-        for c in X.columns
-    }
+def feed(
+    X: pd.DataFrame,
+    categorical: list[str],
+    categories: dict[str, tuple[set[str], bool]] | None = None,
+) -> dict[str, np.ndarray]:
+    """One (n, 1) array per graph input.
+
+    The numeric block is converted once, column-major, so each input is a contiguous column view.
+    Converting column by column through `X[[c]]` cost ~35 ms per call whatever the batch size -
+    150 times the 0.2 ms the graph itself takes to score one row.
+
+    With `categories`, rare and unseen values go to the rare bucket the way sklearn's encoder sends
+    them to its infrequent column; a value with nowhere to go raises `UnseenCategory`.
+    """
+    categories = categories or {}
+    numeric = [c for c in X.columns if c not in categorical]
+    out: dict[str, np.ndarray] = {}
+    if numeric:
+        block = np.asfortranarray(X[numeric].to_numpy(dtype=np.float32))
+        out.update({c: block[:, i : i + 1] for i, c in enumerate(numeric)})
+    for c in categorical:
+        values = X[c].astype(str).to_numpy(dtype=object)
+        if c in categories:
+            known, has_rare = categories[c]
+            other = ~np.isin(values, list(known))
+            if other.any():
+                if not has_rare:
+                    raise UnseenCategory(
+                        f"{c}={sorted(set(values[other]))[:5]} never seen in training and there is no "
+                        "rare bucket; sklearn scores it as an all-zero indicator, which the ONNX encoder "
+                        "cannot express. Use the sklearn detector for these rows."
+                    )
+                values = np.where(other, RARE, values).astype(object)
+        out[c] = values.reshape(-1, 1)
+    return out
 
 
 class UnseenCategory(ValueError):
@@ -158,26 +188,8 @@ class OnnxScorer:
         self.categorical = categorical
         self.categories = categories or {}
 
-    def _prepare(self, X: pd.DataFrame) -> pd.DataFrame:
-        if not self.categories:
-            return X
-        X = X.copy()
-        for col, (known, has_rare) in self.categories.items():
-            values = X[col].astype(str)
-            other = ~values.isin(known)
-            if other.any():
-                if not has_rare:
-                    raise UnseenCategory(
-                        f"{col}={sorted(set(values[other]))[:5]} never seen in training and there is no "
-                        "rare bucket; sklearn scores it as an all-zero indicator, which the ONNX encoder "
-                        "cannot express. Use the sklearn detector for these rows."
-                    )
-                values = values.where(~other, RARE)
-            X[col] = values
-        return X
-
     def attack_scores(self, X: pd.DataFrame) -> np.ndarray:
-        probabilities = self.session.run(None, feed(self._prepare(X), self.categorical))[1]
+        probabilities = self.session.run(None, feed(X, self.categorical, self.categories))[1]
         return np.asarray(probabilities[:, 1], dtype=np.float64)
 
 

@@ -24,6 +24,7 @@ from xgboost import XGBClassifier
 
 from penumbra.data.loaders.base import Dataset
 from penumbra.features.preprocess import supervised_pipeline
+from penumbra.models.threads import threads_for
 from penumbra.seeds import SEED
 
 
@@ -143,7 +144,13 @@ def attack_scores(model: Pipeline, X: Any) -> np.ndarray:
     spreads thinly across several attack families is still an attack the SOC should be told about,
     and taking the max would discard exactly that evidence.
     """
-    proba = model.predict_proba(X)
+    with threads_for(model, len(X)):
+        proba = model.predict_proba(X)
+    return attack_scores_from_proba(model, proba)
+
+
+def attack_scores_from_proba(model: Any, proba: np.ndarray) -> np.ndarray:
+    """`attack_scores` for probabilities computed elsewhere (the compiled path)."""
     if proba.shape[1] == 2:
         return np.asarray(proba[:, 1], dtype=float)
 
@@ -176,4 +183,5 @@ def fit_multiclass(name: str, ds: Dataset, *, balanced: bool = True) -> tuple[Pi
 
 def predict_families(model: Pipeline, encoder: LabelEncoder, X: Any) -> np.ndarray:
     """Predicted family labels as strings."""
-    return np.asarray(encoder.inverse_transform(model.predict(X)))
+    with threads_for(model, len(X)):
+        return np.asarray(encoder.inverse_transform(model.predict(X)))

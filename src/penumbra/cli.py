@@ -333,6 +333,10 @@ def replay(
         Path | None,
         typer.Option("--from-fixture", help="Replay pre-scored alerts. No model, no dataset."),
     ] = None,
+    compiled: Annotated[
+        bool,
+        typer.Option("--compiled/--sklearn", help="Flat-forest scorer below its measured batch size."),
+    ] = True,
 ) -> None:
     """Stream a dataset through the detector as if it were live traffic."""
     seed_everything()
@@ -345,6 +349,8 @@ def replay(
     det = _deployed_detector(dataset)
     ds = _load(dataset)
     X = ds.X_test
+    if compiled:
+        det = _compiled(det, X)
 
     if inject_drift:
         from penumbra.drift import injector
@@ -388,6 +394,28 @@ def replay(
     if fixture_out:
         path = engine.write_fixture(alerts, incidents, fixture_out)
         console.print(f"\n[dim]fixture written to {path}[/dim]")
+
+
+def _compiled(det: Any, X: pd.DataFrame) -> Any:
+    """The detector with flat forests, parity-checked on up to 5,000 of the rows about to be scored.
+
+    Any disagreement keeps the sklearn detector: the compiled one is an optimisation, never a
+    different model.
+    """
+    from penumbra.models.compiled import CompileRefused, compile_detector
+
+    sample = X.head(5000).copy()
+    sample.attrs = {}
+    try:
+        fast = compile_detector(det, sample)
+    except CompileRefused as exc:
+        console.print(f"[yellow]compiled scorer refused, using sklearn:[/yellow] {exc}")
+        return det
+    console.print(
+        f"[dim]compiled scorer: flat forests up to {fast.parity['flat_up_to_rows']} rows, "
+        f"{fast.parity['decisions_changed']} of {len(sample):,} decisions changed[/dim]"
+    )
+    return fast
 
 
 def _registry(dataset: str):
@@ -730,13 +758,17 @@ def loadtest(
 ) -> None:
     """Measure scoring throughput and latency, and convert it honestly.
 
-    Reports flows/s and p99 per batch across several batch sizes, then converts the best figure to
-    monitored Mbps with the assumption stated. Flows per second is not link speed and the output
-    says so - a link carrying long-lived connections produces far fewer flows per second than one
-    carrying a scan.
+    Reports flows/s and p99 per batch across several batch sizes for both scorers - the sklearn
+    detector and the compiled one (flat forests below a measured batch size) - then converts the
+    best figure to monitored Mbps with the assumption stated. Flows per second is not link speed and
+    the output says so. Alert building is timed separately, since scoring is not the whole path.
     """
+    import time
+
     seed_everything()
+    from penumbra.alerts.builder import alerts_with_positions
     from penumbra.eval import loadtest as lt
+    from penumbra.models.compiled import compile_detector
     from penumbra.models.detector import PenumbraDetector
 
     model_dir = settings().model_dir / dataset.lower()
@@ -747,18 +779,65 @@ def loadtest(
     det = PenumbraDetector.load(model_dir)
     ds = _load(dataset)
     mean_bytes, median_bytes = lt.estimate_flow_bytes(ds.X_test)
-    report = lt.measure_scoring(
-        det,
-        ds.X_test,
-        max_rows=rows,
-        dataset=ds.name,
-        mean_flow_bytes=mean_bytes,
-        on_progress=lambda m: console.print(f"[dim]  {m}[/dim]"),
+    X = ds.X_test.head(rows).reset_index(drop=True)
+    X.attrs = {}
+
+    console.print("[dim]compiling (flat forests; parity checked on the load-test rows)...[/dim]")
+    compiled = compile_detector(det, X)
+    console.print(
+        f"[dim]  {compiled.parity['decisions_changed']} of {len(X):,} decisions changed; flat forests up to "
+        f"{compiled.parity['flat_up_to_rows']} rows[/dim]"
     )
-    report.median_flow_bytes = median_bytes
+
+    reports = {}
+    for engine, scorer in (("sklearn", det), ("compiled", compiled)):
+        console.print(f"[dim]{engine}:[/dim]")
+        reports[engine] = lt.measure_scoring(
+            scorer,
+            X,
+            max_rows=rows,
+            dataset=ds.name,
+            mean_flow_bytes=mean_bytes,
+            on_progress=lambda m: console.print(f"[dim]  {m}[/dim]"),
+        )
+        reports[engine].engine = engine
+        reports[engine].median_flow_bytes = median_bytes
+
+    scored = det.score(X)
+    began = time.perf_counter()
+    built = alerts_with_positions(det, X, scored, dataset=ds.name)
+    build_s = time.perf_counter() - began
+    alertable = int(((scored["fired"] > 0) | scored["conformal_abstains"]).sum())
+
+    report = reports["compiled"]
+    report.notes.append(
+        f"Alert building, measured separately: {len(built):,} alerts from {len(X):,} rows in "
+        f"{build_s:.2f} s ({len(built) / build_s:,.0f} alerts/s)."
+    )
+    report.notes.append(
+        f"{alertable:,} of {len(X):,} rows ({alertable / len(X):.0%}) become alerts. The family model "
+        "runs only on those, so a mostly-benign live stream scores faster per flow than this "
+        "attack-heavy test split."
+    )
+    report.extra = {
+        "engines": {name: r.to_dict() for name, r in reports.items()},
+        "compile": compiled.parity,
+        "alert_building": {
+            "rows": len(X),
+            "alerts": len(built),
+            "seconds": build_s,
+            "alerts_per_second": len(built) / build_s,
+        },
+    }
 
     console.print()
     console.print(report.summary())
+    console.print()
+    console.print(
+        "  engine      " + "".join(f"{p.batch_size:>10,}" for p in report.points) + "   (flows/s by batch)"
+    )
+    for name, r in reports.items():
+        console.print(f"  {name:<10}  " + "".join(f"{p.flows_per_second:>10,.0f}" for p in r.points))
 
     if api:
         from penumbra.eval.loadtest import measure_api

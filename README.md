@@ -14,6 +14,7 @@ honestly how much it actually catches.
 | **Real traffic** | nmap between two of our laptops: out of the box everything alerts; the novelty head re-baselined on the network's own traffic, with no labels, reaches **AUC 0.97**. |
 | **Human in the loop, attacked** | One stolen analyst account poisons a thin attack type (0.84 → 0.19 recall), but only at full dose; a per-family peer check flagged every flip on two targets. Pre-registered. |
 | **Honesty checks** | Leak audit, SMOTE-leakage demo, calibration that breaks under shift, a deep model that lost, 13 bugs found by review and fixed. |
+| **Speed** | One flow scored in **12.6 ms** (was 139), ~11,000 flows/s batched, 11,000 alerts/s built. Flat-forest scorer, exact: 0 decisions changed, checked at every startup. |
 | **Never blocks** | No enforcement code path, CI-enforced. Alerts a SOC; a human decides. |
 | **Try it** | `uv run penumbra demo` - API, console and real incidents in one command, no dataset needed. |
 

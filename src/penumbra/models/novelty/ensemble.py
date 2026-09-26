@@ -65,13 +65,32 @@ class NoveltyEnsemble:
 
     def percentiles(self, X: np.ndarray) -> dict[str, np.ndarray]:
         """Per-detector percentile rank against the benign reference, in [0, 1]."""
+        return self.percentiles_from_raw(self.raw_scores(X))
+
+    def percentiles_from_raw(self, raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        """As `percentiles`, from raw detector scores computed elsewhere (the compiled path)."""
         out: dict[str, np.ndarray] = {}
         for det in self.detectors:
             ref = self.reference_[det.name]
             # searchsorted gives how many benign scores this one exceeds.
-            idx = np.searchsorted(ref, det.score(X), side="left")
+            idx = np.searchsorted(ref, raw[det.name], side="left")
             out[det.name] = idx / max(len(ref), 1)
         return out
+
+    def fuse(self, pcts: dict[str, np.ndarray], *, how: str = "mean") -> np.ndarray:
+        """Fuse per-detector percentiles into one score. See `score`."""
+        stacked = np.column_stack([pcts[d.name] for d in self.detectors])
+        if how == "mean":
+            return np.asarray(stacked.mean(axis=1), dtype=float)
+        if how == "max":
+            return np.asarray(stacked.max(axis=1), dtype=float)
+        if how == "median":
+            return np.asarray(np.median(stacked, axis=1), dtype=float)
+        raise ValueError(f"unknown fusion {how!r}; expected mean, max or median")
+
+    def agreement_from(self, pcts: dict[str, np.ndarray], *, percentile: float = 0.99) -> np.ndarray:
+        """As `agreement`, from percentiles already computed."""
+        return np.asarray(np.sum([pcts[d.name] >= percentile for d in self.detectors], axis=0), dtype=int)
 
     def score(self, X: np.ndarray, *, how: str = "mean") -> np.ndarray:
         """Fused novelty percentile in [0, 1]. Higher = more unusual.
@@ -85,14 +104,7 @@ class NoveltyEnsemble:
         """
         if not self.fitted_:
             raise RuntimeError("score called before fit")
-        stacked = np.column_stack([self.percentiles(X)[d.name] for d in self.detectors])
-        if how == "mean":
-            return np.asarray(stacked.mean(axis=1), dtype=float)
-        if how == "max":
-            return np.asarray(stacked.max(axis=1), dtype=float)
-        if how == "median":
-            return np.asarray(np.median(stacked, axis=1), dtype=float)
-        raise ValueError(f"unknown fusion {how!r}; expected mean, max or median")
+        return self.fuse(self.percentiles(X), how=how)
 
     def threshold_for_fpr(
         self, X_benign_holdout: np.ndarray, target_fpr: float, *, how: str = "mean"
@@ -111,5 +123,4 @@ class NoveltyEnsemble:
         Useful in the console: "all three detectors flagged this" is a different message to an
         analyst than "one of three did", and the fused score alone hides the distinction.
         """
-        pcts = self.percentiles(X)
-        return np.asarray(np.sum([pcts[d.name] >= percentile for d in self.detectors], axis=0), dtype=int)
+        return self.agreement_from(self.percentiles(X), percentile=percentile)
