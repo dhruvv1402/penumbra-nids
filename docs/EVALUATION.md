@@ -1180,7 +1180,7 @@ and checks parity on **every** test row, not a sample:
 | graph size | 10.2 MB |
 | max / mean \|Δp_attack\| vs scikit-learn | 7.2e-7 / 2.2e-7 (float32 inside the graph) |
 | decisions flipped at the deployed threshold (0.1231) | **0 of 22,544** |
-| latency, batch 2,048, same machine, idle | 66.0 ms sklearn → 46.6 ms onnxruntime (×1.4; a second run gave ×1.4) |
+| latency, batch 2,048, same machine | 67.9 ms sklearn → 22.1 ms onnxruntime (**×3.1**; ×1.4 before the input-feed fix in §10.7, which was spending 35 ms per call building the graph's inputs one column at a time) |
 
 **Why bother:** an ONNX graph is data, and loading it executes no Python. The joblib artifact is a
 pickle, and loading a pickle is code execution. The registry guards that with hash verification
