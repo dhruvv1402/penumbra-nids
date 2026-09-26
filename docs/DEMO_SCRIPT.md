@@ -16,8 +16,9 @@ thing once with the network cable pulled.
 uv run penumbra demo
 ```
 
-It starts the API, loads 3,154 scored alerts and the 203 real CICIDS incidents, starts the console
-on http://localhost:3000, and prints the logins. No model, no dataset, no network. `--fresh` (the
+It starts the API, loads 3,154 scored alerts and the 203 real CICIDS incidents, starts the site
+on http://localhost:3000 (the landing page; the analyst console is at /console), and prints the
+logins. No model, no dataset, no network. `--fresh` (the
 default) resets the demo store, so every rehearsal starts identically. Ctrl+C stops everything.
 Open each console page once before you go on stage: the first load of a page compiles it.
 

@@ -81,7 +81,7 @@ export default function Governance() {
     return (
       <main className="h-screen grid place-items-center">
         <p className="text-[12px] text-[var(--color-ink-dim)]">
-          <Link href="/" className="underline">
+          <Link href="/console" className="underline">
             Sign in on the queue page
           </Link>{" "}
           to view governance.
@@ -94,7 +94,7 @@ export default function Governance() {
     <main className="min-h-screen flex flex-col">
       <header className="flex items-center gap-4 px-3 py-2 border-b border-[var(--color-border)] shrink-0">
         <Link
-          href="/"
+          href="/console"
           className="text-[11px] tracking-[0.14em] uppercase text-[var(--color-ink-dim)] hover:text-[var(--color-ink)]"
         >
           ← queue

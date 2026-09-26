@@ -197,7 +197,7 @@ cd console && npm install && cd ..
 uv run penumbra demo                       # API + console + 3,154 alerts + 203 real incidents
 ```
 
-Open http://localhost:3000. No trained model, no dataset download and no network needed: the demo
+Open http://localhost:3000 (landing page) or http://localhost:3000/console (the analyst console). No trained model, no dataset download and no network needed: the demo
 runs from checked-in fixtures. To score live instead, `penumbra fit -d nslkdd`, then `penumbra
 serve` with `npm run dev` in `console/`, and stream with `penumbra replay -d nslkdd --ingest`.
 

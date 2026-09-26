@@ -72,6 +72,11 @@ def main(out: Path) -> Path:
         page.evaluate("localStorage.clear()")
         goto(page, "/")
         caption(page, "PENUMBRA - an ML network detector that alerts a SOC and never blocks traffic.", 4)
+        for _ in range(3):
+            page.mouse.wheel(0, 900)
+            page.wait_for_timeout(1400)
+        caption(page, "Two heads: one names the attacks it knows, one flags what it has never seen. Every number here is measured.", 5)
+        goto(page, "/console")
         page.locator("input").nth(0).fill("senior")
         page.locator("input").nth(1).fill("senior")
         page.get_by_role("button", name="Sign in").click()

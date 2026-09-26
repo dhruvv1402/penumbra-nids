@@ -1815,7 +1815,8 @@ def demo_cmd(
         console.print()
         console.print("[green]demo ready[/green]")
         if console_url:
-            console.print(f"  console   {console_url}   (first load compiles; give it ~10 s)")
+            console.print(f"  site      {console_url}   (first load compiles; give it ~10 s)")
+            console.print(f"  console   {console_url}/console")
         console.print(f"  API       {base}/docs")
         console.print("  sign in   analyst / senior / admin   (password = username)")
         console.print("  loaded    3,154 NSL-KDD alerts, 203 CICIDS incidents (94,115 events)")
