@@ -60,7 +60,9 @@ def _fill(shape, color):
         shape.fill.fore_color.rgb = color
 
 
-def box(slide, x, y, w, h, fill=WHT, line=BLK, lw=2.5, radius=0.08, shadow=0.07, shape=MSO_SHAPE.ROUNDED_RECTANGLE):
+def box(
+    slide, x, y, w, h, fill=WHT, line=BLK, lw=2.5, radius=0.08, shadow=0.07, shape=MSO_SHAPE.ROUNDED_RECTANGLE
+):
     """A flat block with a thick black outline and a hard offset shadow - the site's card."""
     if shadow:
         s = slide.shapes.add_shape(shape, Inches(x + shadow), Inches(y + shadow), Inches(w), Inches(h))
@@ -175,7 +177,9 @@ def picture(slide, path, x, y, w=None, h=None):
 
 def framed_shot(slide, path, x, y, w, h):
     box(slide, x, y, w, h, fill=BLK, radius=0.04, shadow=0.07)
-    pic = slide.shapes.add_picture(str(path), Inches(x + 0.04), Inches(y + 0.04), Inches(w - 0.08), Inches(h - 0.08))
+    pic = slide.shapes.add_picture(
+        str(path), Inches(x + 0.04), Inches(y + 0.04), Inches(w - 0.08), Inches(h - 0.08)
+    )
     return pic
 
 
@@ -243,10 +247,36 @@ def title_slide(prs, team, art, logos):
     _fill(edge, BLK)
     edge.line.fill.background()
     picture(s, art / "eclipse.png", 9.95, 1.25, w=2.55)
-    text(s, 9.1, 3.72, 4.23, 0.6, [[("ROUND 1", DISPLAY, 40, BLK)]], align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    text(
+        s,
+        9.1,
+        3.72,
+        4.23,
+        0.6,
+        [[("ROUND 1", DISPLAY, 40, BLK)]],
+        align=PP_ALIGN.CENTER,
+        anchor=MSO_ANCHOR.MIDDLE,
+    )
     pill(s, 10.13, 4.36, 2.2, 0.42, "IDEA SUBMISSION", fill=WHT, size=11)
-    text(s, 9.1, 5.0, 4.23, 0.62, [[("PENUMBRA", DISPLAY, 34, BLK)]], align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
-    text(s, 9.1, 5.58, 4.23, 0.4, [[("see the unseen · alert, never block", BODY_BLACK, 12, BLK)]], align=PP_ALIGN.CENTER)
+    text(
+        s,
+        9.1,
+        5.0,
+        4.23,
+        0.62,
+        [[("PENUMBRA", DISPLAY, 34, BLK)]],
+        align=PP_ALIGN.CENTER,
+        anchor=MSO_ANCHOR.MIDDLE,
+    )
+    text(
+        s,
+        9.1,
+        5.58,
+        4.23,
+        0.4,
+        [[("see the unseen · alert, never block", BODY_BLACK, 12, BLK)]],
+        align=PP_ALIGN.CENTER,
+    )
     dl = team["deadline"]
     text(s, 9.1, 6.4, 4.23, 0.4,
          [[(f"Submission deadline: {dl}" if dl else "[FILL: submission deadline]", BODY_BOLD, 11, BLK if dl else FILLRED)]],
@@ -256,7 +286,14 @@ def title_slide(prs, team, art, logos):
 def team_slide(prs, team, art):
     s = prs.slides.add_slide(prs.slide_layouts[0])
     chrome(s, "Team Details", 2, team["team_name"])
-    cols = [("S. NO.", 0.75), ("FULL NAME", 2.55), ("ENROLLMENT NO.", 1.95), ("PROGRAMME & YEAR", 2.3), ("EMAIL", 2.85), ("ROLE", 1.73)]
+    cols = [
+        ("S. NO.", 0.75),
+        ("FULL NAME", 2.55),
+        ("ENROLLMENT NO.", 1.95),
+        ("PROGRAMME & YEAR", 2.3),
+        ("EMAIL", 2.85),
+        ("ROLE", 1.73),
+    ]
     members = team["members"] or [{}]
     x0, y0, row_h, head_h = 0.6, 1.45, 0.56, 0.52
     total_h = head_h + row_h * len(members)
@@ -268,11 +305,20 @@ def team_slide(prs, team, art):
     for name, w in cols:
         text(s, x + 0.12, y0, w - 0.2, head_h, [[(name, BODY_BLACK, 11, YEL)]], anchor=MSO_ANCHOR.MIDDLE)
         x += w
-    keys = [None, ("name", "name"), ("enrollment", "enrollment no."), ("programme", "programme, year"), ("email", "email"), ("role", "role")]
+    keys = [
+        None,
+        ("name", "name"),
+        ("enrollment", "enrollment no."),
+        ("programme", "programme, year"),
+        ("email", "email"),
+        ("role", "role"),
+    ]
     for r, m in enumerate(members):
         y = y0 + head_h + r * row_h
         if r % 2:
-            band = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x0 + 0.03), Inches(y), Inches(12.07), Inches(row_h))
+            band = s.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE, Inches(x0 + 0.03), Inches(y), Inches(12.07), Inches(row_h)
+            )
             _fill(band, CRM)
             band.line.fill.background()
         if r:
@@ -280,7 +326,7 @@ def team_slide(prs, team, art):
             _fill(line, BLK)
             line.line.fill.background()
         x = x0
-        for (col, w), key in zip(cols, keys, strict=True):
+        for (_col, w), key in zip(cols, keys, strict=True):
             if key is None:
                 run = (str(r + 1), DISPLAY, 18, BLK)
             else:
@@ -321,7 +367,16 @@ def problem_slide(prs, team, art):
         ("Headline accuracy hides the failure: ", "balanced test sets are not real networks."),
     ], dot=PUR, size=12.5)  # fmt: skip
     box(s, 8.95, 4.55, 3.5, 1.95, fill=YEL, radius=0.1, shadow=0.06)
-    text(s, 9.1, 4.62, 3.2, 0.95, [[("ONLY 5%", DISPLAY, 46, RED)]], align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    text(
+        s,
+        9.1,
+        4.62,
+        3.2,
+        0.95,
+        [[("ONLY 5%", DISPLAY, 46, RED)]],
+        align=PP_ALIGN.CENTER,
+        anchor=MSO_ANCHOR.MIDDLE,
+    )
     text(s, 9.1, 5.55, 3.2, 0.9, [[("of never-seen attack types caught by a standard ML classifier at 1% false alarms (NSL-KDD, measured)", BODY_BOLD, 10.5, BLK)]],
          align=PP_ALIGN.CENTER)  # fmt: skip
 
@@ -355,7 +410,15 @@ def solution_slide(prs, team, art, shot):
         ("Alert, never block: ", "a human always decides."),
     ], dot=RED, size=11.5, space=4)  # fmt: skip
     framed_shot(s, shot, 10.18, 4.15, 2.35, 1.47)
-    text(s, 10.1, 5.7, 2.5, 0.9, [[("Live on Azure →", BODY_BLACK, 9.5, BLK)], [(LIVE, BODY, 7.5, BLK)]], align=PP_ALIGN.CENTER)
+    text(
+        s,
+        10.1,
+        5.7,
+        2.5,
+        0.9,
+        [[("Live on Azure →", BODY_BLACK, 9.5, BLK)], [(LIVE, BODY, 7.5, BLK)]],
+        align=PP_ALIGN.CENTER,
+    )
 
 
 def technical_slide(prs, team, art, shot):
