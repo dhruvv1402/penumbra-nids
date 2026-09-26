@@ -80,6 +80,7 @@ DOCUMENTED = [
     ["lab", "--help"],
     ["rebaseline", "--help"],
     ["refit-drill", "--help"],
+    ["family-ceiling", "--help"],
     ["loadtest", "--help"],
 ]
 

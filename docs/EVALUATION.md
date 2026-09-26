@@ -391,6 +391,49 @@ artifact: DoS flows are being absorbed into Exploits, whose precision (0.62) is 
 depressed. This is the boundary-overlap problem that makes multiclass recall the wrong primary
 metric for LOAFO — the SOC still receives an alert for those flows.
 
+#### The weak UNSW families are at, or held under, a ceiling in the data
+
+"Family-confusion artifact" was an explanation without a measurement. Measured, on the
+artifact-free features: many UNSW-NB15 attack rows are **exact duplicates** of rows labelled with a
+different family, and no function of the features can give identical inputs different answers.
+
+| family | test rows | share an exact vector with another family's row, in test | best recall any function of the features can reach (majority label per vector) | model |
+|---|---:|---:|---:|---:|
+| Analysis | 677 | **91.4%** | **0.086** | 0.090 |
+| Backdoor | 583 | **90.2%** | **0.111** | 0.093 |
+| DoS | 4,089 | 69.2% | 0.838 | 0.125 |
+| Exploits | 11,132 | 28.7% | 0.834 | 0.821 |
+| Fuzzers | 6,062 | 20.6% | 0.795 | 0.555 |
+| Generic · Recon · Shellcode · Worms | | ≤ 10% | ≥ 0.90 | |
+
+Across all 45,332 attack test rows, the family-accuracy ceiling for *any* classifier on these
+features is **0.884**.
+
+- **Analysis and Backdoor are at the ceiling.** The model's 0.090 and 0.093 are what the data allows;
+  no model choice, weighting or resampling can move them, and none should be tried.
+- **DoS is held under its ceiling by the labels, not the model.** Within the test set, DoS vectors
+  are mostly labelled DoS (ceiling 0.838). But 49% of DoS test rows have an exact twin in *training*,
+  and for 98.4% of those the training majority is a different family (Backdoor 942, Analysis 763,
+  Exploits 262). The two official splits label the same flows differently. A model trained on the
+  training labels learns the training answer; the most it could score on DoS from training evidence
+  is about 0.52, and only by being right on every vector training never saw.
+- **So the SOC-relevant fact is unchanged:** these flows are detected as attacks (§10.3b: even
+  with the family removed from training, Backdoor, DoS and Analysis are detected at 0.997-1.000),
+  and the family name on them is unreliable in a way the data guarantees. For those four families
+  an analyst should read the family as a hint.
+
+*Reproduce: `penumbra family-ceiling -d unsw` (`artifacts/reports/family_ceiling_unsw.json`).*
+
+#### Which model is deployed, and why
+
+RF and XGBoost are operationally indistinguishable on both datasets: UNSW ROC-AUC 0.9833 vs 0.9817
+(RF ahead, intervals just apart), NSL-KDD 0.9668 vs 0.9685 (XGB ahead, intervals overlapping), and
+McNemar RF vs XGB on UNSW at 1,598 against 1,729 discordant pairs (odds 0.92). The deployed
+supervised head is RF, for reasons that are not accuracy: TreeSHAP-compatible attribution; the
+flat-forest scorer (§10.7), which is exact for sklearn forests and is what brings one-flow scoring
+to 12.6 ms; and one model family across both heads' tooling. The per-family table above uses XGB
+because that is the eval run it comes from; the ceiling analysis is model-independent.
+
 **NSL-KDD r2l at 0.0589 recall is the single most informative number in this table.** Eight of the
 seventeen attack types that appear only in the test set are r2l. The model is not failing to
 classify r2l; it is failing to classify attacks it was never shown. That is the problem this project

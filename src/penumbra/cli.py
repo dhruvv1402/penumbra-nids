@@ -1038,6 +1038,12 @@ def reproduce_all(
             lambda: None if have("nslkdd") else "nslkdd not fetched",
         ),
         (
+            "family-ceiling unsw",
+            lambda: family_ceiling_cmd("unsw"),
+            False,
+            lambda: None if have("unsw") else "unsw not fetched",
+        ),
+        (
             "refit-drill nslkdd",
             lambda: refit_drill(),
             True,  # one champion fit plus 38 re-baselines
@@ -2073,6 +2079,39 @@ def retrain(
         console.print("  gate [red]FAILED[/red] - this version cannot be promoted:")
         for reason in result.reasons:
             console.print(f"    {reason}")
+
+
+@app.command("family-ceiling")
+def family_ceiling_cmd(
+    dataset: DatasetName = "unsw",
+    save: Annotated[bool, typer.Option("--save/--no-save")] = True,
+) -> None:
+    """The best family recall ANY classifier can reach on these features, from exact duplicates."""
+    from penumbra.eval import family_ceiling
+
+    ds = _load(dataset, drop_artifacts=True)
+    benign = "normal" if dataset.lower().startswith("nsl") else "Normal"
+    report = family_ceiling.run(ds, benign_label=benign)
+    table = Table(title=f"{ds.name}: family ceiling (overall {report['overall_ceiling']:.3f})")
+    for col in ("family", "test rows", "shares a vector", "ceiling", "has a train twin", "train agrees"):
+        table.add_column(col)
+    for fam, r in sorted(report["families"].items(), key=lambda kv: kv[1]["ceiling"]):
+        table.add_row(
+            fam,
+            f"{r['test_rows']:,}",
+            f"{r['shared']:.1%}",
+            f"{r['ceiling']:.3f}",
+            f"{r['train_twin']:.1%}",
+            f"{r['train_majority_agrees']:.1%}"
+            if r["train_majority_agrees"] == r["train_majority_agrees"]
+            else "-",
+        )
+    console.print(table)
+    if save:
+        out = settings().report_dir / f"family_ceiling_{dataset.lower()}.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        console.print(f"[dim]written to {out}[/dim]")
 
 
 @app.command("refit-drill")
