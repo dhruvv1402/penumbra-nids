@@ -342,7 +342,8 @@ def team_slide(prs, team, art):
          [[("Faculty Mentor:  ", BODY_BLACK, 14, BLK),
            (mentor or "[FILL: name, department, email - or remove this line]", BODY_BOLD, 14, BLK if mentor else FILLRED)]],
          anchor=MSO_ANCHOR.MIDDLE)  # fmt: skip
-    picture(s, art / "packet.png", 10.9, 4.35, w=1.55)
+    if len(members) <= 3:  # the mascot only where the table leaves room for it
+        picture(s, art / "packet.png", 10.9, 4.35, w=1.55)
 
 
 def problem_slide(prs, team, art):
