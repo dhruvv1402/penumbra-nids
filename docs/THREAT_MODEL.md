@@ -189,6 +189,13 @@ models are never touched by a re-baseline, so known-family detection cannot be e
 only the novelty head's notion of normal can be shifted. `--exclude` drops flows involving hosts
 the operator knows to be noisy or suspect before anything is fitted.
 
+**Measured (E8, EXPERIMENTS.md).** On NSL-KDD, a baseline window that is 1% attack traffic cost
+0.109 unseen-attack recall after re-baselining; 5% cost 0.235. **The realised false-positive rate
+fell at the same time** (1% → 0.3% at the 5% dose), because the attack rows push the thresholds up.
+Poisoning the baseline therefore looks exactly like successful tuning to anyone watching the FPR.
+The runbook says so: a re-baseline that lowers the FPR by more than it was asked to is a reason to
+look at the window, not to promote.
+
 **Not built:** comparing two independently recorded windows before accepting either, which is the
 real defence. It needs a second capture on a different day.
 

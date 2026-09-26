@@ -46,15 +46,19 @@ from penumbra.models.fusion import per_head_budget
 from penumbra.seeds import SEED
 
 SPLIT = (0.5, 0.3, 0.2)
+# Thresholds-only fits nothing, so the window is calibration and holdout alone.
+SPLITS = {"full": SPLIT, "thresholds": (0.0, 0.8, 0.2)}
+MODES = tuple(SPLITS)
 MIN_EXCEEDANCES = 5
 HOLDOUT_CONFIDENCE = 0.99
 
 
-def split(n: int, seed: int = SEED) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def split(n: int, seed: int = SEED, mode: str = "full") -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Positions of the fit, calibration and holdout slices of an n-row benign window."""
+    fractions = SPLITS[mode]
     order = np.random.default_rng(seed).permutation(n)
-    a = int(round(n * SPLIT[0]))
-    b = a + int(round(n * SPLIT[1]))
+    a = int(round(n * fractions[0]))
+    b = a + int(round(n * fractions[1]))
     return np.sort(order[:a]), np.sort(order[a:b]), np.sort(order[b:])
 
 
@@ -63,9 +67,9 @@ def minimum_calibration_rows(target_fpr: float) -> int:
     return math.ceil(MIN_EXCEEDANCES / per_head_budget(target_fpr, 2))
 
 
-def minimum_window(target_fpr: float) -> int:
+def minimum_window(target_fpr: float, mode: str = "full") -> int:
     """Benign flows a window needs in total for R1 to pass at this target."""
-    return math.ceil(minimum_calibration_rows(target_fpr) / SPLIT[1])
+    return math.ceil(minimum_calibration_rows(target_fpr) / SPLITS[mode][1])
 
 
 def holdout_limit(n: int, target_fpr: float) -> int:
@@ -98,17 +102,23 @@ def run(
     seed: int = SEED,
     X_attack: pd.DataFrame | None = None,
     known: tuple[pd.DataFrame, np.ndarray] | None = None,
+    mode: str = "full",
 ) -> tuple[Any, dict[str, Any]]:
     """Re-baseline `detector` on `X_benign` and gate the result. Returns (detector or None, report).
 
+    `mode` - "full" re-learns normal (`rebaselined`: a network the model has never seen);
+    "thresholds" moves only the operating point (`rethresholded`: the same network, drifted; E8).
     `X_attack` - labelled attack flows from the same network, if there are any (a lab capture).
     `known` - (X, y) from a labelled dataset, for the known-attack trade-off. Both are evidence only.
     """
+    if mode not in SPLITS:
+        raise ValueError(f"mode must be one of {MODES}")
     X_benign = X_benign.reset_index(drop=True)
-    fit_idx, cal_idx, hold_idx = split(len(X_benign), seed)
+    fit_idx, cal_idx, hold_idx = split(len(X_benign), seed, mode)
     need_cal = minimum_calibration_rows(target_fpr)
     report: dict[str, Any] = {
         "kind": "rebaseline",
+        "mode": mode,
         "source": source,
         "target_fpr": target_fpr,
         "seed": seed,
@@ -128,19 +138,22 @@ def run(
         "passed": r1,
         "calibration_flows": len(cal_idx),
         "needed": need_cal,
-        "window_needed": minimum_window(target_fpr),
+        "window_needed": minimum_window(target_fpr, mode),
     }
     if not r1:
         report["reasons"].append(
             f"R1: {len(cal_idx):,} calibration flows cannot place a {per_head_budget(target_fpr, 2):.2%} "
-            f"per-head threshold (need {need_cal:,}; a window of {minimum_window(target_fpr):,} benign "
+            f"per-head threshold (need {need_cal:,}; a window of {minimum_window(target_fpr, mode):,} benign "
             f"flows). Record a longer window, or re-baseline at a higher target FPR."
         )
         report["passed"] = False
         return None, report
 
     X_fit, X_cal, X_hold = (X_benign.iloc[i] for i in (fit_idx, cal_idx, hold_idx))
-    rebased = detector.rebaselined(X_fit, X_cal, target_fpr=target_fpr, source=source)
+    if mode == "full":
+        rebased = detector.rebaselined(X_fit, X_cal, target_fpr=target_fpr, source=source)
+    else:
+        rebased = detector.rethresholded(X_cal, target_fpr=target_fpr, source=source)
 
     stock_window = detector.score(pd.concat([X_fit, X_cal]))
     report["evidence"]["current_detector_on_window"] = _rates(stock_window)

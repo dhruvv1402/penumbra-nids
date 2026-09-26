@@ -65,6 +65,19 @@ flow alerted (EVALUATION §10.7h). Re-baseline before relying on the queues.
 Re-baseline again after a large, deliberate change to the network (a new site, a new class of
 service). Not on a schedule: see "Triggers" above.
 
+**Same network, drifted: `--mode thresholds`.** When the realised FPR has walked away from the
+target on a network the detector already knows, move the operating point instead of re-learning
+normal. E8 measured both on NSL-KDD's shifted split: thresholds-only restored 1% from 10.2% and was
+stable from 500 rows; re-learning normal was no better on unseen attacks and unstable below about
+1,000 calibration rows. Expect recall to fall when the FPR is brought back down, since part of
+what the drifted operating point caught, it caught by over-alerting. That is the honest operating
+point, not a regression.
+
+**If a re-baseline lowers the FPR by more than you asked for, look at the window before
+promoting.** A window containing attack traffic raises the thresholds and looks exactly like
+successful tuning (E8: at 5% contamination the FPR fell to 0.3% while unseen-attack recall fell by
+0.235).
+
 ## Drift response
 
 **Drift alarm fires — first question: did the network change, or did the model degrade?**
@@ -204,6 +217,8 @@ penumbra poison-drill                   # E7: the feedback-loop poisoning drill
 penumbra poison-drill --flags-only      # the integrity flags alone, no refits (minutes)
 penumbra export-onnx -d nslkdd          # supervised head to ONNX; parity on every test row
 penumbra rebaseline <window.pcap> --model unsw  # learn this network's normal; gated candidate, not promoted
+penumbra rebaseline <window.pcap> --mode thresholds  # same network, drifted: move the operating point only
+penumbra refit-drill                    # E8: thresholds vs re-learning normal, measured under drift
 penumbra drift -d nslkdd [--inject abrupt]  # per-feature PSI + BH-corrected KS
 penumbra reproduce-all                  # regenerates every number in the report
 ```

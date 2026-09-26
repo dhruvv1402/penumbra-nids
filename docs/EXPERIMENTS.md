@@ -696,6 +696,59 @@ costs under 0.05 unseen-17 recall. **Every refutation gets published.**
 
 ---
 
+### RESULT — H8a, H8b, H8e survive; H8c and H8d are refuted
+
+Recorded after the run. The predictions above were committed first (`e1ed326`) and are not edited.
+Evaluation slice: 7,887 rows, 3,399 benign, 1,309 unseen-17. Recent pool: 3,399 benign, 4,494 attack.
+`penumbra refit-drill` reproduces every number (`artifacts/reports/threshold_refit_nslkdd.json`).
+
+At N = all 3,399 recent benign rows, 1% target:
+
+| arm | realised FPR [95% CI] | recall | unseen-17 recall | seen recall | benign reaching an analyst |
+|---|---|---:|---:|---:|---:|
+| A0 shipped | 10.18% [9.21, 11.24] | 0.831 | 0.769 | 0.857 | 16.3% |
+| A1 thresholds only | **1.06%** [0.77, 1.46] | 0.606 | 0.428 | 0.679 | 16.3% |
+| A2 re-learn normal | 1.27% [0.94, 1.70] | 0.588 | 0.377 | 0.675 | **11.0%** |
+
+1. **P1 held.** A0 realised 10.18%.
+2. **H8a survives.** Moving the thresholds alone puts the realised FPR at 1.06%, inside the band,
+   CI covering the target. The 10.2% was a threshold problem.
+3. **H8b survives, and the price is large.** Unseen-17 recall 0.769 → 0.428 (−0.34). Most of what
+   the shipped operating point caught of the unseen types, it caught *because* it was over-alerting
+   ten-fold. That is the honest reading of the headline 0.77: at the FPR the detector claims, it is
+   0.43.
+4. **H8c is refuted.** Re-learning normal recalls *less* of the unseen types than moving thresholds
+   (0.377 vs 0.428) at a slightly higher FPR. The hedge in the prediction was the right one:
+   NSL-KDD's shift is mostly new attack types, not new benign behaviour, so there is little new
+   "normal" to learn, and a head fitted on 2,124 rows (5/8 of the window) is noisier than one fitted
+   on 53,875. Re-learning normal did one thing better: with its benign conformal quantile
+   re-fitted, **a third fewer benign rows reach an analyst** (16.3% → 11.0%), because the conformal
+   layer stops abstaining on ordinary traffic it was not calibrated for.
+5. **H8d is refuted, as registered.** The A1 FPR spread across five windows is 0.24 points at
+   N = 500 and 0.19 at N = 2,000: a ratio of 1.3, not 2. Re-fitting only thresholds is stable even on
+   500 rows, so R1 is stricter than thresholds-only needs.
+
+   *Exploratory, not registered:* the rule is not too strict for what `penumbra rebaseline`
+   actually does. A2 calibrates on 3/8 of the window, which is below R1's 998 rows for every window
+   up to 2,000. There its FPR is both biased and unstable: mean 2.35% / 1.65% / 1.72% at N = 500 /
+   1,000 / 2,000, spread 1.28 / 1.23 / 0.66 points, one window at 4.59%. At N = all (1,275
+   calibration rows, above R1) it lands at 1.27%. The failure R1 exists to prevent is real; it is
+   the novelty head's, not the thresholds'.
+6. **H8e survives, and the attack is silent.** A window that is 1% attack traffic (34 rows) costs
+   0.109 unseen-17 recall; at 5% (179 rows) it costs 0.235 (one seed lost 0.33, leaving 0.046).
+   **And the realised FPR falls** - to 0.6% at the 1% dose and 0.3% at 5%. An operator watching the
+   false-positive rate sees the re-baseline as an improvement. That is the whole danger of T9 in
+   one number: poisoning the baseline looks like tuning.
+
+**What changes because of this.** `penumbra rebaseline` gains `--mode thresholds`, which is A1 (plus
+the benign conformal quantile, the one thing A2 did better): the repair for a network that is the
+same network, drifting. `--mode full` stays the default and stays the tool for a network the model
+has never seen, where the lab capture showed the stock novelty head is no better than chance (ROC-AUC
+0.60 → 0.97 re-baselined, §10.7h). THREAT_MODEL T9 gains the measured cost and the observation that
+a falling FPR after a re-baseline is a reason to look harder, not to relax.
+
+---
+
 ## Standing rules for all experiments
 
 - **Prevalence is stated with every precision-family number.** UNSW-NB15's test set is ~55% attack;

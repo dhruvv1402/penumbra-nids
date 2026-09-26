@@ -32,6 +32,27 @@ def new_network(n: int, seed: int = 1) -> pd.DataFrame:
     )
 
 
+def drifted(n: int, seed: int = 3) -> pd.DataFrame:
+    """The SAME network's benign traffic, moved a little: what thresholds-only is for."""
+    rng = np.random.default_rng(seed)
+    return pd.DataFrame(
+        {
+            "a": rng.normal(0.15, 1.1, n),
+            "b": rng.normal(0.1, 1.05, n),
+            "c": rng.exponential(1.1, n),
+            "proto": rng.choice(["tcp", "udp"], n),
+        }
+    )
+
+
+@pytest.fixture(scope="module")
+def roomy() -> PenumbraDetector:
+    # Percentiles are ranks against the benign reference. With the ~100-row reference of the small
+    # fixture, a few percent of even mildly drifted flows outrank all of it and tie at 1.0, which is
+    # a property of the fixture rather than of re-thresholding (NSL-KDD's reference is 13,468 rows).
+    return PenumbraDetector(target_fpr=0.05).fit(tiny_dataset(n=4000))
+
+
 def attacks_on_new_network(n: int, seed: int = 2) -> pd.DataFrame:
     X = new_network(n, seed)
     X["b"] = X["b"] + 6.0  # far from this network's normal
@@ -93,6 +114,31 @@ class TestRebaselined:
         assert loaded.metadata.baseline == new.metadata.baseline
 
 
+class TestRethresholded:
+    def test_heads_are_untouched_and_only_the_operating_point_moves(self, detector) -> None:
+        X = new_network(800)
+        new = detector.rethresholded(X, source="drift")
+        assert new.novelty is detector.novelty
+        assert new.novelty_prep is detector.novelty_prep
+        assert new.supervised_model is detector.supervised_model
+        assert new.gate is not detector.gate
+        assert new.conformal.quantiles_[ATTACK] == detector.conformal.quantiles_[ATTACK]
+        assert new.metadata.baseline["mode"] == "thresholds"
+        assert detector.metadata.baseline is None
+
+    def test_fpr_holds_on_the_drifted_network(self, roomy) -> None:
+        X = drifted(3000)
+        new = roomy.rethresholded(X.iloc[:2400], target_fpr=0.05)
+        assert (new.score(X.iloc[2400:])["fired"] > 0).mean() <= 0.10
+
+    def test_a_network_outside_the_reference_is_refused_not_rethresholded(self, detector) -> None:
+        # Every flow scores above the whole benign reference, so novelty percentiles saturate at
+        # 1.0 and no threshold separates anything. R2 must catch it; the fix is --mode full.
+        out, report = rb.run(detector, new_network(1500), target_fpr=0.05, source="new", mode="thresholds")
+        assert report["passed"] is False
+        assert report["gates"]["R2_holdout_fpr"]["passed"] is False
+
+
 class TestGate:
     def test_minimum_rows(self) -> None:
         # 5% total over two heads is 2.53% per head; five exceedances need 198 calibration flows.
@@ -109,6 +155,18 @@ class TestGate:
         assert len(f) + len(c) + len(h) == 1000
         assert len(set(f) | set(c) | set(h)) == 1000
         assert (len(f), len(c), len(h)) == (500, 300, 200)
+
+    def test_thresholds_mode_uses_the_whole_window_but_the_holdout(self, roomy) -> None:
+        f, c, h = rb.split(1000, mode="thresholds")
+        assert (len(f), len(c), len(h)) == (0, 800, 200)
+        assert rb.minimum_window(0.01, "thresholds") == 1248
+        out, report = rb.run(roomy, drifted(1500), target_fpr=0.05, source="drift", mode="thresholds")
+        assert report["mode"] == "thresholds" and report["passed"] is True, report["reasons"]
+        assert out.novelty is roomy.novelty
+
+    def test_unknown_mode_is_refused(self, detector) -> None:
+        with pytest.raises(ValueError, match="mode"):
+            rb.run(detector, new_network(100), target_fpr=0.05, source="x", mode="magic")
 
     def test_short_window_is_refused_before_fitting(self, detector) -> None:
         out, report = rb.run(detector, new_network(300), target_fpr=0.01, source="short")

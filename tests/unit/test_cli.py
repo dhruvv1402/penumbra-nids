@@ -79,6 +79,7 @@ DOCUMENTED = [
     ["demo", "--help"],
     ["lab", "--help"],
     ["rebaseline", "--help"],
+    ["refit-drill", "--help"],
     ["loadtest", "--help"],
 ]
 
@@ -100,6 +101,7 @@ def test_documented_commands_exist(argv: list[str]) -> None:
         (["replay", "--help"], "--compiled"),
         (["rebaseline", "--help"], "--exclude"),
         (["rebaseline", "--help"], "--target-fpr"),
+        (["rebaseline", "--help"], "--mode"),
     ],
 )
 def test_documented_flags_exist(argv: list[str], flag: str) -> None:

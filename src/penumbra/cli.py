@@ -1037,6 +1037,12 @@ def reproduce_all(
             True,  # six full two-head fits, ~13 minutes
             lambda: None if have("nslkdd") else "nslkdd not fetched",
         ),
+        (
+            "refit-drill nslkdd",
+            lambda: refit_drill(),
+            True,  # one champion fit plus 38 re-baselines
+            lambda: None if have("nslkdd") else "nslkdd not fetched",
+        ),
     ]
 
     outcomes: list[tuple[str, str, float, str]] = []
@@ -1514,6 +1520,14 @@ def rebaseline_cmd(
         str, typer.Option("--model", help="Detector to re-baseline (registry champion if any).")
     ] = "unsw",
     target_fpr: Annotated[float, typer.Option("--target-fpr")] = 0.05,
+    mode: Annotated[
+        str,
+        typer.Option(
+            "--mode",
+            help="full: re-learn normal (a network the model has never seen). "
+            "thresholds: move only the operating point (the same network, drifted; E8).",
+        ),
+    ] = "full",
     exclude: Annotated[
         list[str] | None, typer.Option("--exclude", help="Drop flows involving this address (repeatable).")
     ] = None,
@@ -1548,6 +1562,10 @@ def rebaseline_cmd(
 
     from penumbra.alerts.scoring import ScoringPolicy
     from penumbra.eval import rebaseline as rb
+
+    if mode not in rb.MODES:
+        console.print(f"[red]--mode must be one of {', '.join(rb.MODES)}.[/red]")
+        raise typer.Exit(1)
 
     det = _deployed_detector(model)
     features = det._feature_names
@@ -1614,6 +1632,7 @@ def rebaseline_cmd(
         source=source.name,
         X_attack=attack_rows,
         known=known,
+        mode=mode,
     )
 
     gates = report["gates"]
@@ -1670,6 +1689,7 @@ def rebaseline_cmd(
             parent=parent,
             training={
                 "kind": "rebaseline",
+                "mode": mode,
                 "source": source.name,
                 "benign_flows": len(benign),
                 "feedback_rows": 0,
@@ -2053,6 +2073,60 @@ def retrain(
         console.print("  gate [red]FAILED[/red] - this version cannot be promoted:")
         for reason in result.reasons:
             console.print(f"    {reason}")
+
+
+@app.command("refit-drill")
+def refit_drill(
+    model: Annotated[str, typer.Option("--model", "-m")] = "rf",
+    seed: Annotated[int, typer.Option("--seed")] = 42,
+    save: Annotated[bool, typer.Option("--save/--no-save")] = True,
+) -> None:
+    """E8: under drift, move the thresholds or re-learn normal? Measured on NSL-KDD's shifted test split."""
+    seed_everything()
+    from penumbra.data.loaders import nsl_kdd
+    from penumbra.eval import threshold_refit
+
+    ds, fine_train, fine_test = nsl_kdd.load_with_fine_labels()
+    unseen = nsl_kdd.unseen_mask(fine_test).to_numpy()
+    report = threshold_refit.run(
+        ds,
+        fine_train,
+        fine_test,
+        unseen,
+        model_name=model,
+        seed=seed,
+        on_progress=lambda m: console.print(f"[dim]  {m}[/dim]"),
+    )
+
+    table = Table(title="E8 at N = all recent benign rows (evaluation slice, 1% target)")
+    for col in ("arm", "realised FPR [95% CI]", "recall", "unseen-17 recall", "seen recall", "benign reach"):
+        table.add_column(col)
+    full = next(w for w in report["windows"] if w["seed"] is None)
+    for name, arm in (
+        ("A0 shipped", report["A0"]),
+        ("A1 thresholds", full["A1"]),
+        ("A2 re-learn", full["A2"]),
+    ):
+        lo, hi = arm["fpr"]["ci95"]
+        table.add_row(
+            name,
+            f"{arm['fpr']['rate']:.2%} [{lo:.2%}, {hi:.2%}]",
+            f"{arm['recall_all']['rate']:.3f}",
+            f"{arm['recall_unseen17']['rate']:.3f}",
+            f"{arm['recall_seen']['rate']:.3f}",
+            f"{arm['benign_reach']['rate']:.2%}",
+        )
+    console.print(table)
+    for key, result in report["summary"].items():
+        held = result.get("held")
+        mark = "" if held is None else ("[green]held[/green]" if held else "[red]refuted[/red]")
+        detail = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in result.items() if k != "held"}
+        console.print(f"  {key:<28} {mark}  {detail}")
+    if save:
+        out = settings().report_dir / "threshold_refit_nslkdd.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2, default=float), encoding="utf-8")
+        console.print(f"[dim]written to {out}[/dim]")
 
 
 @app.command("poison-drill")

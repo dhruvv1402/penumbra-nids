@@ -1265,6 +1265,44 @@ step. Same caveats as above: one session, one attacker, and a holdout from the s
 *Reproduce: `penumbra rebaseline <capture.pcap> --attacker <ip> --target <ip>`; for a real
 deployment, just `penumbra rebaseline <quiet-week.pcap>`, optionally `--exclude <scanner-ip>`.*
 
+### 10.7i Threshold drift: move the operating point, or re-learn normal? (E8)
+
+The detector targets 1% FPR and realises 10.2% on NSL-KDD's own shifted test split (§7, condition
+B). E8, pre-registered in `docs/EXPERIMENTS.md` before its code existed, compares the two repairs
+on the same windows of recent benign traffic, and scores both on a slice neither touched:
+
+| at 3,399 recent benign rows, 1% target | realised FPR [95% CI] | unseen-17 recall | benign reaching an analyst |
+|---|---|---:|---:|
+| shipped | 10.18% [9.21, 11.24] | 0.769 | 16.3% |
+| move thresholds only | **1.06%** [0.77, 1.46] | 0.428 | 16.3% |
+| re-learn normal | 1.27% [0.94, 1.70] | 0.377 | **11.0%** |
+
+Three findings, two of which refuted what we predicted:
+
+- **The 10.2% is a threshold problem, and fixing it costs a lot of recall.** Moving the thresholds
+  alone restores 1.06%. Unseen-attack recall falls from 0.769 to 0.428: most of what the shipped
+  operating point caught of attack types it had never seen, it caught *because* it was
+  over-alerting ten-fold. At the FPR the detector actually claims, its unseen-17 recall on this
+  shifted data is 0.43, and that is the number to quote.
+- **Re-learning normal did not beat moving thresholds here** (predicted +0.05; measured −0.05),
+  and below ~1,000 calibration rows it was unstable (FPR 0.85-4.59% across windows). NSL-KDD's
+  shift is mostly new attack types, not new benign behaviour, so there is little new normal to
+  learn. What it did do: with the benign conformal quantile re-fitted, a third fewer benign rows
+  reach an analyst.
+- **A dirty baseline is silent.** Re-learning normal from a window that is 5% attack traffic cost
+  0.235 unseen-17 recall, and 1% cost 0.109. The realised FPR *fell* while it happened (to 0.3%). An
+  operator watching false positives sees a re-baseline that looks like an improvement
+  (THREAT_MODEL T9).
+
+**What changed because of it:** `penumbra rebaseline --mode thresholds` moves only the operating
+point (plus the benign conformal quantile), for the same network drifting; `--mode full` remains
+the default for a network the model has never seen, where the lab capture showed the stock novelty
+head at chance (§10.7h). Thresholds-only cannot rescue traffic outside everything the novelty head
+was referenced on: those flows' percentiles saturate at 1.0, no threshold separates them, and the
+held-out check refuses the result. That case is in the test suite.
+
+*Reproduce: `penumbra refit-drill` (`artifacts/reports/threshold_refit_nslkdd.json`).*
+
 ### 10.8 Reproduction
 
 ```bash
@@ -1279,6 +1317,7 @@ uv run penumbra correlate                   # CICIDS alert->incident correlation
 uv run penumbra export-onnx -d nslkdd       # ONNX export with full-test-set parity
 uv run penumbra lab <pcap> --attacker <ip> --target <ip>   # a real capture, scored and re-baselined
 uv run penumbra rebaseline <pcap> [--attacker <ip> --target <ip>]  # deployable re-baseline, gated, registered
+uv run penumbra refit-drill                 # E8: move thresholds or re-learn normal, under real drift
 uv run penumbra gate                        # the CI regression gate, locally
 uv run penumbra calibrate -d unsw           # Brier/ECE before and after calibration, in and out of distribution
 uv run penumbra reproduce-all               # everything, with reasons for what it skips

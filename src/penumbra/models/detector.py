@@ -244,8 +244,62 @@ class PenumbraDetector:
             new.metadata.supervised_threshold = new.gate.supervised_threshold
             new.metadata.novelty_threshold = new.gate.novelty_threshold
             new.metadata.baseline = {
+                "mode": "full",
                 "source": source,
                 "fit_rows": len(X_fit),
+                "calibration_rows": len(X_cal),
+                "previous_supervised_threshold": self.gate.supervised_threshold,
+                "previous_novelty_threshold": self.gate.novelty_threshold,
+            }
+        return new
+
+    def rethresholded(
+        self,
+        X_cal: pd.DataFrame,
+        *,
+        target_fpr: float | None = None,
+        source: str = "recent benign traffic",
+    ) -> PenumbraDetector:
+        """A copy with the same heads and a new operating point, for a network that has drifted.
+
+        Re-fits both thresholds and the benign conformal quantile on `X_cal`; the novelty head,
+        its references and every model are untouched. E8 (EXPERIMENTS.md) is why this exists
+        beside `rebaselined`: on NSL-KDD's shifted test split, moving the thresholds brought a
+        realised 10.2% FPR back to 1.06%, stably from 500 rows, while re-learning normal from the
+        same rows did no better on unseen attacks and was unstable below ~1,000 calibration rows.
+        Re-learning normal is for a network the model has never seen; this is for the same network,
+        moved.
+
+        It cannot rescue traffic outside everything the novelty head was referenced on: those flows
+        all score above the whole benign reference, their percentiles saturate at 1.0, and no
+        threshold separates them. The held-out check in `eval.rebaseline` (R2) refuses that case.
+        """
+        if self.supervised_model is None or self.novelty is None or self.gate is None:
+            raise RuntimeError("detector is not fitted")
+        if len(X_cal) == 0:
+            raise ValueError("need benign rows to calibrate on")
+        import copy
+
+        target = self.target_fpr if target_fpr is None else target_fpr
+        new = copy.copy(self)
+        new.target_fpr = target
+        benign_p = supervised.attack_scores(self.supervised_model, X_cal)
+        benign_n = self.novelty.score(self.novelty_prep.transform(X_cal), how="max")
+        new.gate = OrGate.fit(benign_p, benign_n, total_fpr=target, use_novelty=True)
+        if self.conformal is not None:
+            from penumbra.models.conformal import BENIGN
+
+            new.conformal = self.conformal.recalibrated(BENIGN, benign_p)
+        if self.metadata is not None:
+            new.metadata = copy.copy(self.metadata)
+            new.metadata.trained_at = datetime.now(UTC).isoformat()
+            new.metadata.target_fpr = target
+            new.metadata.supervised_threshold = new.gate.supervised_threshold
+            new.metadata.novelty_threshold = new.gate.novelty_threshold
+            new.metadata.baseline = {
+                "mode": "thresholds",
+                "source": source,
+                "fit_rows": 0,
                 "calibration_rows": len(X_cal),
                 "previous_supervised_threshold": self.gate.supervised_threshold,
                 "previous_novelty_threshold": self.gate.novelty_threshold,
