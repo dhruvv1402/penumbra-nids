@@ -9,6 +9,9 @@ const config: NextConfig = {
   // Traced output: the runtime image carries the server plus the files it actually imports, rather
   // than the whole of node_modules.
   output: "standalone",
+  // No route badge on screen during the live demo or the recorded walkthrough. Compile and runtime
+  // errors are still surfaced.
+  devIndicators: false,
   // The API runs separately (uvicorn on 8000). Proxying through Next keeps the browser on one
   // origin, which avoids CORS entirely in development and means the demo works with the API
   // reachable only on localhost.

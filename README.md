@@ -177,15 +177,14 @@ uv run penumbra loafo  --dataset nslkdd    # the unseen-17 experiment, across op
 ### The demo
 
 ```bash
-uv run penumbra fit -d nslkdd              # train and save the two-head detector
-uv run penumbra serve                      # API on :8000
-cd console && npm install && npm run dev   # console on :3000
-uv run penumbra replay -d nslkdd --ingest  # stream alerts into it
+uv sync --extra eval --extra api --extra rag --extra drift
+cd console && npm install && cd ..
+uv run penumbra demo                       # API + console + 3,154 alerts + 203 real incidents
 ```
 
-**Fallback with no model and no dataset:**
-`uv run penumbra replay --from-fixture tests/fixtures/demo_alerts.json --ingest` pushes 3,154
-pre-scored alerts into the running API.
+Open http://localhost:3000. No trained model, no dataset download and no network needed: the demo
+runs from checked-in fixtures. To score live instead, `penumbra fit -d nslkdd`, then `penumbra
+serve` with `npm run dev` in `console/`, and stream with `penumbra replay -d nslkdd --ingest`.
 
 Sign in as `analyst`, `senior` or `admin` (password = username). The roles differ: an analyst sees
 only its own network segments and can record a verdict but **cannot promote it into the training

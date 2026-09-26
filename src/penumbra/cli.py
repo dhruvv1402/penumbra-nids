@@ -1425,6 +1425,119 @@ def lab_cmd(
         console.print(f"[dim]written to {out}[/dim]")
 
 
+@app.command("demo")
+def demo_cmd(
+    port: Annotated[int, typer.Option("--port")] = 8000,
+    fresh: Annotated[bool, typer.Option("--fresh/--keep", help="Start from an empty demo store.")] = True,
+    with_console: Annotated[
+        bool, typer.Option("--console/--no-console", help="Also start the Next.js console.")
+    ] = True,
+) -> None:
+    """Everything the live demo needs, in one command: API, both fixtures, console.
+
+    No model, no dataset, no network beyond loopback. Uses its own state directory
+    (artifacts/demo-state) so the demo never touches your working database, and --fresh (the
+    default) empties it first so every rehearsal starts identically. Ctrl+C stops everything.
+    """
+    import os
+    import shutil
+    import subprocess
+    import sys
+    import time
+    import urllib.request
+
+    root = Path(__file__).resolve().parents[2]
+    fixtures = [
+        root / "tests" / "fixtures" / "demo_alerts.json",
+        root / "tests" / "fixtures" / "incidents_cicids.json",
+    ]
+    missing = [f for f in fixtures if not f.exists()]
+    if missing:
+        console.print(f"[red]Missing fixtures: {missing}[/red]")
+        raise typer.Exit(1)
+
+    state_dir = settings().artifact_root / "demo-state"
+    if fresh and state_dir.exists():
+        shutil.rmtree(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "PENUMBRA_ALLOW_DEMO_USERS": "1", "PENUMBRA_STATE_ROOT": str(state_dir)}
+
+    # Subprocesses below run fixed argv lists with no shell (B603); taskkill (B607) ends the npm tree.
+    procs: list[subprocess.Popen[bytes]] = []
+    try:
+        console.print(f"[dim]starting API on :{port}...[/dim]")
+        procs.append(
+            subprocess.Popen(  # nosec B603
+                [
+                    sys.executable,
+                    "-m",
+                    "uvicorn",
+                    "penumbra.api.app:app",
+                    "--port",
+                    str(port),
+                    "--log-level",
+                    "warning",
+                ],
+                env=env,
+            )
+        )
+        base = f"http://127.0.0.1:{port}"
+        for _ in range(60):
+            try:
+                with urllib.request.urlopen(f"{base}/health", timeout=2):  # nosec B310
+                    break
+            except OSError:
+                time.sleep(1)
+        else:
+            console.print("[red]API did not come up.[/red]")
+            raise typer.Exit(1)
+
+        for fixture in fixtures:
+            _replay_fixture(fixture, ingest=True, api=base, delay=0.0, rows=10_000_000)
+
+        console_url = None
+        if with_console:
+            npm = shutil.which("npm")
+            console_dir = root / "console"
+            if npm and (console_dir / "node_modules").exists():
+                console.print("[dim]starting console on :3000...[/dim]")
+                procs.append(
+                    subprocess.Popen(  # nosec B603
+                        [npm, "run", "dev"],
+                        cwd=console_dir,
+                        env={**env, "PENUMBRA_API_URL": base},
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                )
+                console_url = "http://localhost:3000"
+            else:
+                console.print("[yellow]console not started: run `npm install` in console/ first.[/yellow]")
+
+        console.print()
+        console.print("[green]demo ready[/green]")
+        if console_url:
+            console.print(f"  console   {console_url}   (first load compiles; give it ~10 s)")
+        console.print(f"  API       {base}/docs")
+        console.print("  sign in   analyst / senior / admin   (password = username)")
+        console.print("  loaded    3,154 NSL-KDD alerts, 203 CICIDS incidents (94,115 events)")
+        console.print("[dim]Ctrl+C to stop everything.[/dim]")
+        while all(p.poll() is None for p in procs):
+            time.sleep(1)
+        console.print("[yellow]a demo process exited; stopping the rest.[/yellow]")
+    except KeyboardInterrupt:
+        console.print("\n[dim]stopping...[/dim]")
+    finally:
+        for p in procs:
+            if p.poll() is None:
+                if sys.platform == "win32":
+                    subprocess.run(  # nosec B603 B607
+                        ["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True, check=False
+                    )
+                else:
+                    p.terminate()
+
+
 # =================================================================================================
 # Model registry, retraining from promoted verdicts, and the poisoning drill
 # =================================================================================================

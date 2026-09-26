@@ -149,7 +149,7 @@ Suspected training-data poisoning (see `THREAT_MODEL.md` T1):
 Rehearsed, in this order:
 
 1. Freeze the build well before the deadline. Tag it. Rehearse against the frozen tag, not against
-   `main`.
+   `main`. `penumbra demo` brings the whole stack up with both fixtures in one command.
 2. `penumbra replay --from-fixture tests/fixtures/demo_alerts.json --ingest` pushes pre-scored
    alerts from checked-in JSON into the API. **No model inference, no dataset, no network beyond
    loopback.** This is the fallback.

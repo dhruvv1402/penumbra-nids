@@ -10,6 +10,23 @@ thing once with the network cable pulled.
 
 ## Before you start
 
+**The one-command way (use this on the day):**
+
+```bash
+uv run penumbra demo
+```
+
+It starts the API, loads 3,154 scored alerts and the 203 real CICIDS incidents, starts the console
+on http://localhost:3000, and prints the logins. No model, no dataset, no network. `--fresh` (the
+default) resets the demo store, so every rehearsal starts identically. Ctrl+C stops everything.
+Open each console page once before you go on stage: the first load of a page compiles it.
+
+**If the live demo fails:** play `artifacts/demo/penumbra-walkthrough.webm`, a 2.5-minute captioned
+recording of this same flow. Re-record it after any console change: start `penumbra demo`, then
+`uv run --with playwright python scripts/record_walkthrough.py`.
+
+**The long way, with live scoring instead of fixtures:**
+
 ```bash
 uv run penumbra fit -d nslkdd              # ~2 min, do this beforehand
 uv run penumbra serve                      # terminal 1

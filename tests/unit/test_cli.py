@@ -76,6 +76,8 @@ DOCUMENTED = [
     ["registry", "shadow", "--help"],
     ["copilot", "build", "--help"],
     ["copilot", "ask", "--help"],
+    ["demo", "--help"],
+    ["lab", "--help"],
 ]
 
 
