@@ -78,6 +78,8 @@ DOCUMENTED = [
     ["copilot", "ask", "--help"],
     ["demo", "--help"],
     ["lab", "--help"],
+    ["rebaseline", "--help"],
+    ["loadtest", "--help"],
 ]
 
 
@@ -95,6 +97,9 @@ def test_documented_commands_exist(argv: list[str]) -> None:
         (["poison-drill", "--help"], "--flags-only"),
         (["poison-drill", "--help"], "--exclude-target"),
         (["drift", "--help"], "--inject"),
+        (["replay", "--help"], "--compiled"),
+        (["rebaseline", "--help"], "--exclude"),
+        (["rebaseline", "--help"], "--target-fpr"),
     ],
 )
 def test_documented_flags_exist(argv: list[str], flag: str) -> None:

@@ -45,6 +45,26 @@ audit log.
 
 ---
 
+## Deploying on a new network
+
+A detector trained on a public dataset does not know your network: on our own lab capture, every
+flow alerted (EVALUATION §10.7h). Re-baseline before relying on the queues.
+
+1. Record a window of traffic you believe is ordinary: a quiet week if you can, at least the size
+   the tool asks for. At a 5% target that is 660 flows; at 1%, 3,327.
+2. `penumbra rebaseline <window.pcap> --model unsw [--exclude <known-scanner>] --by <you>`.
+   It refuses up front (R1) if the window is too short for the target, and says how long it needs
+   to be. Otherwise it fits, checks the held-out false-positive rate (R2) and registers a
+   **candidate** version with the report attached.
+3. Read the report before promoting, especially the line saying how much of the window the current
+   detector fires on. If it is much higher than you expect for this network, the window may contain
+   an intrusion (THREAT_MODEL T9). Do not promote; record another window.
+4. `penumbra registry promote <version> -d unsw --by <someone else>`. Rollback is the usual
+   pointer change.
+
+Re-baseline again after a large, deliberate change to the network (a new site, a new class of
+service). Not on a schedule: see "Triggers" above.
+
 ## Drift response
 
 **Drift alarm fires — first question: did the network change, or did the model degrade?**
@@ -183,6 +203,7 @@ penumbra correlate                      # CICIDS alert->incident correlation on 
 penumbra poison-drill                   # E7: the feedback-loop poisoning drill
 penumbra poison-drill --flags-only      # the integrity flags alone, no refits (minutes)
 penumbra export-onnx -d nslkdd          # supervised head to ONNX; parity on every test row
+penumbra rebaseline <window.pcap> --model unsw  # learn this network's normal; gated candidate, not promoted
 penumbra drift -d nslkdd [--inject abrupt]  # per-feature PSI + BH-corrected KS
 penumbra reproduce-all                  # regenerates every number in the report
 ```

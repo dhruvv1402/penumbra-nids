@@ -1208,6 +1208,63 @@ and the abstention lane that carry detection until analysts' verdicts accumulate
 
 *Reproduce with your own capture: `penumbra lab <capture.pcap> --attacker <ip> --target <ip>`.*
 
+#### From an experiment to a deployable detector: `penumbra rebaseline`
+
+The table above re-fits the novelty head and reports ROC-AUC, which says the head *can* separate
+the traffic. It does not give a detector anyone can run: the thresholds, the verdict policy and the
+conformal layer all still belong to UNSW-NB15. `penumbra rebaseline` produces the whole deployable
+thing and puts a gate in front of it.
+
+What it re-fits, all from benign flows only (no labels): the novelty head; **both** thresholds
+(the supervised head's scores shift on a new network too - at its UNSW threshold it fired on 57% of
+this network's ordinary flows); and the benign side of the Mondrian conformal layer, which is
+calibrated per class, so benign rows alone are enough to re-fit that class honestly. What it does
+not touch: the supervised and family models, and the attack-side conformal quantile. Benign
+traffic carries no information about attacks.
+
+The benign window (912 non-scan flows) is split 50/30/20 into fit, calibration and a holdout. At a
+5% target:
+
+| | UNSW detector as shipped | re-baselined |
+|---|---:|---:|
+| held-out ordinary flows that fired (182) | 69.8% | **4.9%** |
+| held-out ordinary flows reaching an analyst (fired or abstained) | 100% | **12.6%** |
+| scan flows that fired (2,067) | 0.3% | **92.9%** |
+| scan flows reaching an analyst | 100% | 92.9% |
+| supervised threshold / novelty threshold | 0.536 / 0.998 | 0.824 / 0.978 |
+| conformal benign quantile | 0.229 | 0.757 |
+
+Out of the box, 100% of both kinds reached an analyst: the detector was a coin that always lands
+"look at this". Re-baselined, 92.9% of the scan and 12.6% of ordinary traffic do. The 12.6% is
+4.9% fired plus 7.7% conformal abstentions, which is what alpha = 0.1 buys on the benign class. The
+detections come from the novelty head alone (1,920 of 1,920). The supervised head fires on no scan
+flow, as it did not before, which is the thesis again.
+
+**The gate.** Two blocking checks, both computed from the new network's own benign traffic:
+
+- **R1, window size**, checked *before* fitting. A threshold at per-head FPR q is an order
+  statistic; below 5/q calibration flows it rests on fewer than five benign exceedances. At 5%
+  that is 198 flows (we had 274: pass). **At 1% it is 998, so the same capture is refused at 1%**,
+  with the message that a window of 3,327 benign flows is needed. That is the honest answer to
+  "why not 1%": 25 minutes of one laptop is not enough traffic to place a 1% threshold, and the
+  tool says so rather than emitting one.
+- **R2, held-out false-positive rate.** 9 of 182 held-out flows fired; the binomial 99% bound at 5%
+  allows 17. Pass.
+
+Evidence the gate reports without blocking on it: how much of the baseline window the *current*
+detector's supervised head fires on (57% here, which is expected on a network it was not trained
+on, and is also the only available warning that an intrusion was underway while the baseline was
+recorded, THREAT_MODEL T9); and the known-attack trade on UNSW's own test data at the new
+thresholds (attack recall 0.974 → 0.921, benign FPR 0.185 → 0.143). The re-baselined detector is
+tuned to *this* network, so its UNSW numbers are a stated cost, not a target.
+
+The result is registered as a new, non-champion version (`v002`, parent the shipped `v001`) with
+the gate report in its signed manifest. Promotion is the registry's existing, separate, audited
+step. Same caveats as above: one session, one attacker, and a holdout from the same 25 minutes.
+
+*Reproduce: `penumbra rebaseline <capture.pcap> --attacker <ip> --target <ip>`; for a real
+deployment, just `penumbra rebaseline <quiet-week.pcap>`, optionally `--exclude <scanner-ip>`.*
+
 ### 10.8 Reproduction
 
 ```bash
@@ -1221,6 +1278,7 @@ uv run penumbra poison-drill                # E7: poison the feedback loop, meas
 uv run penumbra correlate                   # CICIDS alert->incident correlation, real source IPs
 uv run penumbra export-onnx -d nslkdd       # ONNX export with full-test-set parity
 uv run penumbra lab <pcap> --attacker <ip> --target <ip>   # a real capture, scored and re-baselined
+uv run penumbra rebaseline <pcap> [--attacker <ip> --target <ip>]  # deployable re-baseline, gated, registered
 uv run penumbra gate                        # the CI regression gate, locally
 uv run penumbra calibrate -d unsw           # Brier/ECE before and after calibration, in and out of distribution
 uv run penumbra reproduce-all               # everything, with reasons for what it skips

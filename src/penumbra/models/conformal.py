@@ -179,6 +179,24 @@ class MondrianConformal:
             self.n_calibration_[cls] = n
         return self
 
+    def recalibrated(self, cls: int, p_attack_cal: np.ndarray) -> MondrianConformal:
+        """A copy with one class's quantile re-fitted; the other class is left as it was.
+
+        Mondrian calibration is per class, so this is the same procedure as `fit` restricted to one
+        class, not an approximation of it. It is what makes a benign-only re-baseline possible: a new
+        network supplies benign rows and no attacks, which is enough to re-fit BENIGN and nothing else.
+        """
+        p = np.asarray(p_attack_cal, dtype=float)
+        n = len(p)
+        if n == 0:
+            raise ValueError("no calibration rows")
+        scores = 1.0 - (p if cls == ATTACK else 1.0 - p)
+        level = min(1.0, np.ceil((n + 1) * (1.0 - self.alpha)) / n)
+        out = MondrianConformal(alpha=self.alpha)
+        out.quantiles_ = {**self.quantiles_, cls: float(np.quantile(scores, level, method="higher"))}
+        out.n_calibration_ = {**self.n_calibration_, cls: n}
+        return out
+
     def predict_sets(self, p_attack: np.ndarray) -> ConformalSets:
         """Admit each label whose nonconformity falls below that class's calibrated quantile."""
         if not self.quantiles_:

@@ -170,6 +170,28 @@ anything was shed in the last five minutes; Prometheus exposes `penumbra_ingest_
 and `penumbra_ingest_shed_alerts_total`; shedding is audit-logged at most once a minute so a flood
 cannot also flood the audit chain.
 
+### T9 — Poisoning the baseline
+
+**Severity: medium.**
+
+`penumbra rebaseline` learns what normal looks like from a window of the network's own traffic, with
+no labels. An intruder already active during that window is part of what gets learnt: their
+traffic sets the novelty head's reference and pushes the thresholds up, and afterwards it is, by
+construction, not unusual. This is the benign-only analogue of T1, and it needs no stolen account,
+only patience.
+
+**Mitigations, built:** the re-baselined detector is registered as a *candidate*, never promoted
+automatically, with its gate report in the signed manifest; promotion is a separate, audited
+action. The report states how much of the window the *current* detector's supervised head fires on,
+which is the one available signal that the window was not clean (it is high on any network the
+model was not trained on, so it informs a human rather than gating). The supervised and family
+models are never touched by a re-baseline, so known-family detection cannot be erased this way;
+only the novelty head's notion of normal can be shifted. `--exclude` drops flows involving hosts
+the operator knows to be noisy or suspect before anything is fitted.
+
+**Not built:** comparing two independently recorded windows before accepting either, which is the
+real defence. It needs a second capture on a different day.
+
 ---
 
 ## Part 3 — Risks the architecture deliberately does not have

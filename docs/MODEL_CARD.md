@@ -18,6 +18,8 @@ Structured per Mitchell et al., *Model Cards for Model Reporting* (FAT\* 2019).
 | Calibration | Isotonic on a held-out split; Platt compared |
 | Uncertainty | Mondrian (class-conditional) split-conformal prediction |
 | Portable form | Supervised head exports to ONNX (`penumbra export-onnx`); parity verified on all 22,544 NSL-KDD test rows, 0 decisions flipped. The novelty head and conformal layer are not exported |
+| New networks | Re-baseline before use (`penumbra rebaseline`): novelty head, both thresholds and the benign conformal quantile re-fitted on the network's own benign traffic, gated on a held-out slice, registered as a candidate. On our lab capture: ordinary flows alerting 100% → 4.9%, scan flows detected 92.9% (EVALUATION §10.7h) |
+| Scoring engines | scikit-learn, or the compiled scorer (flat forests below a measured batch size; exact to summation order, parity checked at every startup). One flow: 12.6 ms (EVALUATION §10.7) |
 | Owner | Dhruv Gupta |
 | Licence | MIT |
 | Repository | https://github.com/dhruvv1402/penumbra-nids |

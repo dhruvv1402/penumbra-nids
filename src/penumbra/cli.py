@@ -1504,6 +1504,199 @@ def lab_cmd(
         console.print(f"[dim]written to {out}[/dim]")
 
 
+@app.command("rebaseline")
+def rebaseline_cmd(
+    source: Annotated[
+        Path,
+        typer.Argument(help="Benign traffic from the network: a .pcap/.pcapng, or a .csv/.parquet of flows."),
+    ],
+    model: Annotated[
+        str, typer.Option("--model", help="Detector to re-baseline (registry champion if any).")
+    ] = "unsw",
+    target_fpr: Annotated[float, typer.Option("--target-fpr")] = 0.05,
+    exclude: Annotated[
+        list[str] | None, typer.Option("--exclude", help="Drop flows involving this address (repeatable).")
+    ] = None,
+    attacker: Annotated[
+        str | None, typer.Option("--attacker", help="Lab ground truth: attacking address.")
+    ] = None,
+    target: Annotated[
+        str | None, typer.Option("--target", help="Lab ground truth: attacked address.")
+    ] = None,
+    known_check: Annotated[
+        bool,
+        typer.Option("--known-check/--no-known-check", help="Known-attack trade-off on the model's dataset."),
+    ] = True,
+    register: Annotated[bool, typer.Option("--register/--no-register")] = True,
+    by: Annotated[str, typer.Option("--by", help="Who is registering it.")] = "admin",
+    save: Annotated[bool, typer.Option("--save/--no-save")] = True,
+) -> None:
+    """Learn what normal looks like on THIS network, gate it, and register it as a candidate.
+
+    Refits the novelty head, both thresholds and the benign conformal quantile on the source's own
+    benign flows; the supervised and family models are untouched. The window is split 50/30/20 into
+    fit, calibration and a holdout the gate checks. Refused up front if the window is too short for
+    the target FPR. The result is registered as a new, NON-champion version with the gate report
+    attached; `penumbra registry promote` is the separate, audited step that puts it into service.
+
+    The source must be traffic you believe is benign. A window recorded during an intrusion teaches
+    the detector that the intruder is normal; the report prints how much of it the current detector
+    flags, which is the only warning available (THREAT_MODEL T9).
+    """
+    seed_everything()
+    from dataclasses import replace
+
+    from penumbra.alerts.scoring import ScoringPolicy
+    from penumbra.eval import rebaseline as rb
+
+    det = _deployed_detector(model)
+    features = det._feature_names
+    exclude = exclude or []
+    attack_rows = None
+
+    suffix = source.suffix.lower()
+    if suffix in {".pcap", ".pcapng", ".cap"}:
+        from penumbra.pcap import assemble
+
+        frame = assemble.assemble(source)
+        meta = frame.attrs["meta"].reset_index(drop=True)
+        X = frame.copy()
+        X.attrs = {}
+        X = X[features].reset_index(drop=True)
+        src, dst = meta["Src IP"].astype(str).to_numpy(), meta["Dst IP"].astype(str).to_numpy()
+        dropped = np.isin(src, exclude) | np.isin(dst, exclude)
+        if attacker and target:
+            from penumbra.eval import lab
+
+            attack = lab.attack_mask(meta, attacker, target)
+            attack_rows = X[attack & ~dropped]
+            dropped = dropped | attack
+        elif attacker or target:
+            console.print("[red]--attacker and --target go together.[/red]")
+            raise typer.Exit(1)
+    elif suffix in {".csv", ".parquet"}:
+        X = pd.read_parquet(source) if suffix == ".parquet" else pd.read_csv(source)
+        missing = [f for f in features if f not in X.columns]
+        if missing:
+            console.print(
+                f"[red]{source.name} lacks {len(missing)} detector features, e.g. {missing[:5]}[/red]"
+            )
+            raise typer.Exit(1)
+        if exclude or attacker or target:
+            console.print("[red]--exclude/--attacker/--target need addresses; use a capture.[/red]")
+            raise typer.Exit(1)
+        X = X[features].reset_index(drop=True)
+        dropped = np.zeros(len(X), dtype=bool)
+    else:
+        console.print(
+            f"[red]Unsupported source {source.name}; expected .pcap, .pcapng, .csv or .parquet.[/red]"
+        )
+        raise typer.Exit(1)
+
+    benign = X[~dropped].reset_index(drop=True)
+    console.print(
+        f"[dim]{len(X):,} flows, {int(dropped.sum()):,} excluded, {len(benign):,} in the benign window[/dim]"
+    )
+
+    known = None
+    if known_check:
+        try:
+            ds = _load(model)
+            sample = ds.X_test.sample(min(20_000, len(ds.X_test)), random_state=0)
+            known = (sample, ds.y_test.loc[sample.index].to_numpy())
+        except (typer.BadParameter, FileNotFoundError, OSError) as exc:
+            console.print(f"[dim]known-attack check skipped: {exc}[/dim]")
+
+    rebased, report = rb.run(
+        det,
+        benign,
+        target_fpr=target_fpr,
+        source=source.name,
+        X_attack=attack_rows,
+        known=known,
+    )
+
+    gates = report["gates"]
+    for name, gate in gates.items():
+        mark = "[green]pass[/green]" if gate["passed"] else "[red]FAIL[/red]"
+        detail = {k: v for k, v in gate.items() if k != "passed"}
+        console.print(f"  {name:<22} {mark}  {detail}")
+    for reason in report["reasons"]:
+        console.print(f"  [red]{reason}[/red]")
+
+    if rebased is not None:
+        # The verdict policy follows the new operating point. With the defaults, a flow the new
+        # gate flags as novel but that sits below the default 0.99 percentile would be emitted and
+        # then labelled BENIGN - an alert that contradicts itself.
+        base = det.policy or ScoringPolicy()
+        known_cut = max(base.known_threat_threshold, rebased.gate.supervised_threshold)
+        rebased.policy = replace(
+            base,
+            known_threat_threshold=known_cut,
+            novelty_percentile_threshold=rebased.gate.novelty_threshold,
+            uncertain_band=(min(base.uncertain_band[0], known_cut), known_cut),
+        )
+        ev = report["evidence"]
+        cur, new = ev["holdout"]["current"], ev["holdout"]["rebaselined"]
+        console.print()
+        console.print(
+            f"  held-out benign ({cur['flows']:,}): fired {cur['fired_rate']:.1%} -> {new['fired_rate']:.1%}, "
+            f"reached an analyst {cur['reach_rate']:.1%} -> {new['reach_rate']:.1%}"
+        )
+        window = ev["current_detector_on_window"]
+        console.print(
+            f"  current detector's supervised head fires on {window['supervised_fired'] / max(window['flows'], 1):.1%} "
+            "of the baseline window (high on a network it was not trained on; a warning sign otherwise)"
+        )
+        if "attack_flows" in ev:
+            a0, a1 = ev["attack_flows"]["current"], ev["attack_flows"]["rebaselined"]
+            console.print(
+                f"  labelled attack flows ({a0['flows']:,}): fired {a0['fired_rate']:.1%} -> {a1['fired_rate']:.1%}, "
+                f"reached an analyst {a0['reach_rate']:.1%} -> {a1['reach_rate']:.1%}"
+            )
+        if "known_dataset" in ev:
+            k0, k1 = ev["known_dataset"]["current"], ev["known_dataset"]["rebaselined"]
+            console.print(
+                f"  {model} test sample: attack recall {k0['attack_recall']:.3f} -> {k1['attack_recall']:.3f}, "
+                f"benign FPR {k0['benign_fpr']:.3f} -> {k1['benign_fpr']:.3f} (a different network; the trade, not a target)"
+            )
+
+    if rebased is not None and register:
+        reg = _registry(model)
+        parent = reg.champion()
+        info = reg.register(
+            rebased,
+            created_by=by,
+            parent=parent,
+            training={
+                "kind": "rebaseline",
+                "source": source.name,
+                "benign_flows": len(benign),
+                "feedback_rows": 0,
+            },
+        )
+        reg.attach_gate(info.version, report)
+        _audit(
+            by,
+            "model.rebaseline",
+            info.version,
+            {"dataset": model, "parent": parent, "passed": report["passed"], "source": source.name},
+        )
+        verdict = "[green]gate passed[/green]" if report["passed"] else "[red]gate failed[/red]"
+        console.print(
+            f"\nregistered [bold]{info.version}[/bold] ({verdict}), not champion. "
+            f"`penumbra registry promote {info.version} -d {model}` puts it into service."
+        )
+
+    if save:
+        out = settings().report_dir / f"rebaseline_{model.lower()}.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2, default=float), encoding="utf-8")
+        console.print(f"[dim]written to {out}[/dim]")
+    if not report["passed"]:
+        raise typer.Exit(1)
+
+
 @app.command("demo")
 def demo_cmd(
     port: Annotated[int, typer.Option("--port")] = 8000,

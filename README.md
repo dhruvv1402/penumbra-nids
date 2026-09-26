@@ -11,7 +11,7 @@ honestly how much it actually catches.
 |---|---|
 | **The thesis, measured** | On 17 attack types never seen in training, a supervised classifier recalls **5%** at 1% FPR; adding a benign-only novelty head: **35%**. At 10% FPR the same head *costs* 9 points. Both reported. |
 | **Alert fatigue** | Real CICIDS2017 source IPs: **94,115 alerts → 203 incidents**; 99.93% of attack flows reach an analyst. |
-| **Real traffic** | nmap between two of our laptops: out of the box everything alerts; the novelty head re-baselined on the network's own traffic, with no labels, reaches **AUC 0.97**. |
+| **Real traffic** | nmap between two of our laptops: out of the box everything alerts. `penumbra rebaseline` learns the network's normal with no labels: ordinary flows alerting **100% → 4.9%**, scan flows detected **92.9%**, gated and registered as a candidate. |
 | **Human in the loop, attacked** | One stolen analyst account poisons a thin attack type (0.84 → 0.19 recall), but only at full dose; a per-family peer check flagged every flip on two targets. Pre-registered. |
 | **Honesty checks** | Leak audit, SMOTE-leakage demo, calibration that breaks under shift, a deep model that lost, 13 bugs found by review and fixed. |
 | **Speed** | One flow scored in **12.6 ms** (was 139), ~11,000 flows/s batched, 11,000 alerts/s built. Flat-forest scorer, exact: 0 decisions changed, checked at every startup. |

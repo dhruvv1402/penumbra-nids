@@ -57,6 +57,8 @@ class DetectorMetadata:
     features: list[str] = field(default_factory=list)
     quarantined_features: list[str] = field(default_factory=list)
     seed: int = SEED
+    # Set by `rebaselined`: where this detector's idea of normal came from.
+    baseline: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
@@ -167,6 +169,88 @@ class PenumbraDetector:
             features=self._feature_names,
         )
         return self
+
+    # --- re-baseline -----------------------------------------------------------------------------
+
+    def rebaselined(
+        self,
+        X_fit: pd.DataFrame,
+        X_cal: pd.DataFrame,
+        *,
+        target_fpr: float | None = None,
+        source: str = "local benign traffic",
+    ) -> PenumbraDetector:
+        """A copy whose idea of normal is learnt from a new network's benign traffic.
+
+        What changes, and why each piece has to:
+
+          * **the novelty head** (its preprocessing, the three detectors, their benign references),
+            refitted on `X_fit` and referenced on `X_cal`. "Unusual" is only meaningful against the
+            network being watched; against the training testbed, everything real is unusual.
+          * **both thresholds**, from `X_cal` at the same total budget. The supervised head's scores
+            shift on a new network too - on the lab capture it fired on 519 of 912 benign flows at
+            its UNSW threshold - so an operating point fitted elsewhere does not hold here.
+          * **the benign side of the conformal layer**, re-fitted on `X_cal`. Mondrian calibration is
+            per class, so benign rows alone are enough to re-fit that class honestly.
+
+        What does not change: the supervised model and the family model. Benign traffic carries no
+        information about attacks, so nothing learnt about attacks is touched, and the attack-side
+        conformal quantile stays as calibrated.
+
+        `X_fit` and `X_cal` must be disjoint and must be benign. That second condition is an
+        assumption about the capture window, not something this method can check - a baseline
+        recorded while an intruder was active teaches the novelty head that the intruder is normal
+        (THREAT_MODEL T9). The CLI reports how much of the window the champion itself flags.
+        """
+        if self.supervised_model is None or self.novelty is None or self.gate is None:
+            raise RuntimeError("detector is not fitted")
+        if len(X_fit) == 0 or len(X_cal) == 0:
+            raise ValueError("need benign rows to fit and to calibrate on")
+        if set(X_fit.index) & set(X_cal.index):
+            raise ValueError("fit and calibration rows overlap; the thresholds would be optimistic")
+        import copy
+
+        target = self.target_fpr if target_fpr is None else target_fpr
+        categorical = [c for c in X_fit.columns if not pd.api.types.is_numeric_dtype(X_fit[c])]
+        numeric = [c for c in X_fit.columns if c not in categorical]
+        zeros = pd.Series(np.zeros(len(X_fit), dtype=int), index=X_fit.index)
+        normal = pd.Series(["normal"] * len(X_fit), index=X_fit.index)
+        local = Dataset(
+            "local", X_fit, zeros, normal, X_fit, zeros, normal, categorical=categorical, numeric=numeric
+        )
+
+        new = copy.copy(self)
+        new.target_fpr = target
+        new.novelty_prep = benign_only_pipeline(local)
+        Z_fit = new.novelty_prep.fit_transform(X_fit)
+        Z_cal = new.novelty_prep.transform(X_cal)
+        new.novelty = NoveltyEnsemble().fit(Z_fit)
+        new.novelty.calibrate_on(Z_cal)
+
+        benign_p = supervised.attack_scores(self.supervised_model, X_cal)
+        benign_n = new.novelty.score(Z_cal, how="max")
+        new.gate = OrGate.fit(benign_p, benign_n, total_fpr=target, use_novelty=True)
+        if self.conformal is not None:
+            from penumbra.models.conformal import BENIGN
+
+            new.conformal = self.conformal.recalibrated(BENIGN, benign_p)
+
+        if self.metadata is not None:
+            new.metadata = copy.copy(self.metadata)
+            new.metadata.trained_at = datetime.now(UTC).isoformat()
+            new.metadata.n_benign_fit = len(X_fit)
+            new.metadata.n_benign_calibration = len(X_cal)
+            new.metadata.target_fpr = target
+            new.metadata.supervised_threshold = new.gate.supervised_threshold
+            new.metadata.novelty_threshold = new.gate.novelty_threshold
+            new.metadata.baseline = {
+                "source": source,
+                "fit_rows": len(X_fit),
+                "calibration_rows": len(X_cal),
+                "previous_supervised_threshold": self.gate.supervised_threshold,
+                "previous_novelty_threshold": self.gate.novelty_threshold,
+            }
+        return new
 
     # --- score -----------------------------------------------------------------------------------
 
