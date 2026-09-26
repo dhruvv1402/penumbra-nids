@@ -688,6 +688,17 @@ async def _ingest(body: IngestRequest, principal: Principal) -> dict[str, Any]:
         try:
             sent = await asyncio.to_thread(state.siem.send, records)
             out["siem"] = {"connector": state.siem.name, "accepted": sent.accepted, "rejected": sent.rejected}
+            if sent.rejected:
+                # The reason travels with the count. The first live run against Sentinel was rejected
+                # for minutes (a new app's permission had not applied yet) and the response said only
+                # "rejected: 1"; finding out why took a manual probe.
+                out["siem"]["problems"] = sent.problems[:5]
+                state.audit.append(
+                    actor=principal.username,
+                    role=principal.role.value,
+                    action="siem.forward_rejected",
+                    detail={"rejected": sent.rejected, "problems": sent.problems[:5]},
+                )
         except Exception as exc:  # noqa: BLE001 - see above
             out["siem"] = {"connector": state.siem.name, "accepted": 0, "error": type(exc).__name__}
             state.audit.append(

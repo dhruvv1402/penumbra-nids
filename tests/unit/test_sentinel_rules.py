@@ -67,6 +67,29 @@ def test_rule_queries_go_through_the_asim_parser(path: Path) -> None:
     assert "ASimNetworkSessionPenumbra" in load(path)["query"]
 
 
+@pytest.mark.parametrize("path", RULES, ids=lambda p: p.name)
+def test_alert_overrides_respect_the_placeholder_limit(path: Path) -> None:
+    # Found against a live workspace: the API refuses an alertDescriptionFormat with more than three
+    # {{column}} placeholders ("The maximum allowed is 3"). Display name has the same cap.
+    overrides = load(path).get("alertDetailsOverride") or {}
+    for field in ("alertDisplayNameFormat", "alertDescriptionFormat"):
+        placeholders = re.findall(r"\{\{(\w+)\}\}", overrides.get(field, ""))
+        assert len(placeholders) <= 3, f"{path.name} {field} uses {len(placeholders)} placeholders"
+
+
+@pytest.mark.parametrize("path", RULES, ids=lambda p: p.name)
+def test_override_and_detail_columns_are_produced_by_the_query(path: Path) -> None:
+    rule = load(path)
+    query = rule["query"]
+    overrides = rule.get("alertDetailsOverride") or {}
+    columns = set(re.findall(r"\{\{(\w+)\}\}", " ".join(str(v) for v in overrides.values())))
+    columns |= set((rule.get("customDetails") or {}).values())
+    if overrides.get("alertSeverityColumnName"):
+        columns.add(overrides["alertSeverityColumnName"])
+    missing = [c for c in columns if not re.search(rf"\b{c}\b", query)]
+    assert not missing, f"{path.name}: {missing} are referenced but never produced by the query"
+
+
 def test_parser_pair_exists_with_standard_filter_parameters() -> None:
     assert (ROOT / "Parsers" / "ASimNetworkSessionPenumbra.kql").exists()
     vim = (ROOT / "Parsers" / "vimNetworkSessionPenumbra.kql").read_text(encoding="utf-8")

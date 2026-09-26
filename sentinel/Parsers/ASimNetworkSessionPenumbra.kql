@@ -1,9 +1,10 @@
 // ASimNetworkSessionPenumbra
 //
 // Parameter-less ASIM normalizing parser for Penumbra alerts, following Microsoft's documented
-// naming convention (ASimNetworkSession<Vendor><Product>). Once this and its vim* counterpart are
-// deployed, the _Im_NetworkSession unifying parser picks Penumbra's data up automatically and
-// every Microsoft-authored ASIM analytics rule works against it without us writing any of them.
+// naming convention (ASimNetworkSession<Vendor><Product>). It normalises to ASIM NetworkSession, so
+// ASIM content works against it when pointed at this function. Measured on a live workspace
+// (2026-09-26): the built-in _Im_NetworkSession unifying parser does NOT include it, not even with
+// ASimNetworkSessionCustom / vimNetworkSessionCustom hooks deployed. See sentinel/README.md "Live".
 //
 // Source table: PenumbraAlerts_CL, populated through the Logs Ingestion API via a "kind": "Direct"
 // data collection rule.

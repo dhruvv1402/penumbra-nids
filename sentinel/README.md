@@ -11,13 +11,41 @@ Sigma/            mined rules that Sigma can express honestly
 Workbooks/        PenumbraOverview.json: lanes, verdict mix, suppressions, abstention, ADR-0001 check
 ```
 
-## The claim worth making
+## Live, not simulated (2026-09-26)
 
-Shipping `ASimNetworkSessionPenumbra` under Microsoft's documented parser naming convention means
-the `_Im_NetworkSession` unifying parser picks Penumbra's table up automatically — and **every
-Microsoft-authored ASIM analytics rule then runs against Penumbra output without us writing any of
-them**. That is the difference between integrating with Sentinel and joining its detection
-ecosystem.
+Deployed into a real Sentinel workspace (Azure for Students, Central India) with
+`scripts/deploy_sentinel.py`, fed by `penumbra demo` with `PENUMBRA_SIEM=sentinel`, and queried back:
+
+| | measured in the workspace |
+|---|---|
+| records ingested through the DCR | 8,332 (4,160 distinct alerts, each sent twice) |
+| `DvcAction = "Allow"` | **8,332 of 8,332** |
+| records with a source IP that carry a pseudonym (`pseudo:...`), not an address | **2,022 of 2,022** |
+| normalised by `ASimNetworkSessionPenumbra` | 8,332, `EventSchema = NetworkSession`, `EventType = IDS` |
+| `vimNetworkSessionPenumbra(dvcaction=dynamic(['Deny']))` | 0, as designed: Penumbra never denies |
+| incidents raised by `PenumbraNovelTraffic.yaml` | **13**, "Unrecognised network behaviour from pseudo:...", one per source |
+
+Unique alerts by severity: High 1,769, Informational 1,654, Medium 643, Low 100.
+
+**What the live run found, that the test suite had not:**
+
+1. **The analytics rule was invalid.** Sentinel refuses an `alertDescriptionFormat` with more than
+   three `{{column}}` placeholders; ours had five. Fixed, and
+   `tests/unit/test_sentinel_rules.py` now enforces the limit, and checks that every column an
+   override or custom detail names is produced by the query.
+2. **The "joins the ASIM ecosystem automatically" claim was false.** This README used to say that
+   shipping `ASimNetworkSessionPenumbra` under Microsoft's naming convention makes the built-in
+   `_Im_NetworkSession` unifying parser pick Penumbra up. Measured: `_Im_NetworkSession` returns
+   **0** Penumbra rows, and still 0 with `ASimNetworkSessionCustom` / `vimNetworkSessionCustom`
+   hooks deployed (which do work when called directly: 8,332 rows). What holds is narrower:
+   Penumbra's parsers normalise to ASIM NetworkSession 0.2.7, so an ASIM rule works against them when
+   it queries `ASimNetworkSessionPenumbra` (or the Custom hooks) instead of the built-in parser.
+3. **A new app's permission takes minutes to apply.** Until it does, Sentinel answers 403 and the
+   first batches are refused. `/ingest` now returns the reason with the count, `siem.forward_rejected`
+   is audit-logged, and a 403 names the likely cause (role missing or not yet applied).
+
+Reproduce: `az login`, `uv run python scripts/deploy_sentinel.py`, then the environment block it
+prints (the client secret is created straight into your shell and never printed or stored).
 
 ## Alert-not-block, in Microsoft's own vocabulary
 
@@ -37,8 +65,8 @@ ASIM record through a `SiemConnector`. `PENUMBRA_SIEM=mock` (the default) valida
 appends it to `<state dir>/siem/PenumbraAlerts_CL.jsonl` (`PENUMBRA_STATE_ROOT`, default `artifacts/`), which is exactly what Sentinel would
 receive. `PENUMBRA_SIEM=sentinel` posts to the Logs Ingestion API and refuses to start without
 `PENUMBRA_SENTINEL_ENDPOINT`, `PENUMBRA_SENTINEL_DCR_ID` and the three `PENUMBRA_AZURE_*` values.
-It never falls back to the mock silently. The Sentinel client is tested against a fake transport;
-it has not been run against a live workspace.
+It never falls back to the mock silently. The Sentinel client is tested against a fake transport,
+and has been run against a live workspace (above).
 
 Logs Ingestion API through a `"kind": "Direct"` data collection rule:
 
@@ -75,7 +103,8 @@ Production use would require Microsoft to allocate a designator. We use our own 
 ## Running this for real
 
 `integrations/siem/` binds `LocalMockSiem` by default and `AzureSentinelSiem` raises
-`NotConfigured` until credentials exist — the demo never depends on a live Azure call. Azure for
+`NotConfigured` until credentials exist, so the demo never *depends* on a live Azure call; with
+`PENUMBRA_SIEM=sentinel` it makes them (see "Live" above). Azure for
 Students provides $100 with no credit card, and enabling Sentinel grants 10 GB/day free for 31 days,
 which is orders of magnitude more than this alert volume needs.
 

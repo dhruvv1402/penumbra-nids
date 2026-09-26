@@ -16,6 +16,7 @@ honestly how much it actually catches.
 | **Human in the loop, attacked** | One stolen analyst account poisons a thin attack type (0.84 → 0.19 recall), but only at full dose; a per-family peer check flagged every flip on two targets. Pre-registered. |
 | **Honesty checks** | Leak audit, SMOTE-leakage demo, calibration that breaks under shift, a deep model that lost, 13 bugs found by review and fixed. |
 | **Speed** | One flow scored in **12.6 ms** (was 139), ~11,000 flows/s batched, 11,000 alerts/s built. Flat-forest scorer, exact: 0 decisions changed, checked at every startup. |
+| **Microsoft Sentinel, live** | Deployed to a real workspace: 8,332 records in through the Logs Ingestion API, **every one `DvcAction = Allow`**, every IP a pseudonym, and **13 Sentinel incidents** raised by our analytics rule. The live run found two defects the tests had missed; both fixed and now tested. |
 | **Never blocks** | No enforcement code path, CI-enforced. Alerts a SOC; a human decides. |
 | **Try it** | `uv run penumbra demo` - API, console and real incidents in one command, no dataset needed. |
 
@@ -250,5 +251,5 @@ Built: every phase in `docs/ROADMAP.md`. The supervised head also exports to ONN
 parity. Not built, and deliberately so: OpenTelemetry
 spans (Prometheus `/metrics` exists), Postgres (SQLite behind the `Repository` Protocol), and Grafana,
 all on the cut list. A real capture from our own laptops is measured
-(EVALUATION §10.7h). Not done: Sentinel against a live workspace (the solution files exist; running
-them needs Azure credentials).
+(EVALUATION §10.7h), and so is Microsoft Sentinel: `scripts/deploy_sentinel.py` stands the solution up
+in a real workspace (sentinel/README.md "Live").

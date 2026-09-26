@@ -210,6 +210,23 @@ Then **threshold drift (E8)**.
 
 ---
 
+## 5c — In Microsoft Sentinel, for real (45s — optional, needs the portal open)
+
+Before the talk: run the demo with `PENUMBRA_SIEM=sentinel` (sentinel/README.md "Live"). Open
+portal.azure.com → Microsoft Sentinel → `penumbra-law`. Show **Incidents** first.
+
+> "These are Sentinel incidents, raised by our analytics rule over data our API shipped through the
+> Logs Ingestion API. Note the source: a pseudonym, never an IP. And every record carries
+> `DvcAction = Allow`: Penumbra told Sentinel it saw something and did nothing about it."
+
+Then **Logs**: `PenumbraAlerts_CL | summarize count() by DvcAction`.
+
+> "Running it live found two bugs our test suite had missed: a rule Sentinel refused, and a claim in
+> our own README that Microsoft's parser would pick us up automatically. It doesn't. Both are fixed,
+> the first now has a test, and the README says what we measured."
+
+---
+
 ## 6 — Alert, never block (45s)
 
 > "There is no blocking code path in this repository. Not disabled — absent. CI greps the tree and

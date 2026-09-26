@@ -2,8 +2,9 @@
 //
 // Parametrized ASIM filtering parser for Penumbra alerts - the counterpart to
 // ASimNetworkSessionPenumbra, following Microsoft's naming convention (vim<Schema><Vendor><Product>).
-// The _Im_NetworkSession unifying parser calls this with its standard filtering parameters, so an
-// ASIM rule asking for "sessions from 10.0.0.0/8 to port 445 in the last hour" gets exactly those.
+// It takes ASIM's standard filtering parameters, so a caller asking for "sessions from 10.0.0.0/8 to
+// port 445 in the last hour" gets exactly those. (Microsoft's built-in _Im_NetworkSession did not
+// call it on a live workspace; call it directly, or through vimNetworkSessionCustom. sentinel/README.md.)
 //
 // Parameters are the NetworkSession filtering set; each default means "no filter". `disabled` lets
 // a workspace take Penumbra out of the unifying parser without deleting anything.

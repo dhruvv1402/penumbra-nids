@@ -354,6 +354,27 @@ def test_siem_outage_does_not_fail_the_ingest(client: TestClient) -> None:
     assert "siem.forward_failed" in [e.action for e in state.audit.tail(5)]
 
 
+def test_siem_rejection_reports_why_and_is_audited(client: TestClient) -> None:
+    from penumbra.integrations.siem.base import SendResult
+
+    class Refusing:
+        name = "azure-sentinel"
+
+        def send(self, records):
+            return SendResult(
+                rejected=len(records), batches=1, problems=["batch of 1 rejected with HTTP 403: ..."]
+            )
+
+    state.siem = Refusing()
+    resp = client.post(
+        "/ingest", json={"alerts": [_alert(951).model_dump(mode="json")]}, headers=_token(client, "senior")
+    )
+    assert resp.status_code == 200
+    siem = resp.json()["siem"]
+    assert siem["rejected"] == 1 and "403" in siem["problems"][0]
+    assert "siem.forward_rejected" in [e.action for e in state.audit.tail(5)]
+
+
 class TestVerdictRaces:
     """Review findings: a re-recorded label could slip past the approver, or out of the pool."""
 

@@ -45,14 +45,16 @@ customDetails:
   NoveltyPercentile: MaxNovelty
   SessionCount: SessionCount
   DistinctDest: DistinctDest
+  DistinctPorts: DistinctPorts
   ModelVersion: ModelVersion
 alertDetailsOverride:
   alertDisplayNameFormat: Unrecognised network behaviour from {{SrcIpAddr}}
+  # Sentinel allows at most three {{placeholders}} here (the API refuses more). The novelty
+  # percentile and port count are in customDetails instead.
   alertDescriptionFormat: |
-    Penumbra flagged {{SessionCount}} sessions from {{SrcIpAddr}} as statistically unlike the benign
-    baseline, reaching the {{MaxNovelty}} percentile, across {{DistinctDest}} destinations and
-    {{DistinctPorts}} ports. No known attack family matched. This may be a new legitimate service
-    rather than an attack; confirm with the asset owner before escalating.
+    Penumbra flagged {{SessionCount}} sessions from {{SrcIpAddr}} across {{DistinctDest}} destinations
+    as statistically unlike the benign baseline. No known attack family matched. This may be a new
+    legitimate service rather than an attack; confirm with the asset owner before escalating.
   alertSeverityColumnName: DynamicSeverity
 entityMappings:
   - entityType: IP

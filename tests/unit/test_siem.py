@@ -94,6 +94,14 @@ class TestSentinel:
         assert slept == [2.0]
         assert result.rejected == 1 and "429" in result.problems[0]
 
+    def test_forbidden_says_what_to_check(self) -> None:
+        # What the first live run hit: a new app's role on the DCR had not applied yet.
+        t = FakeTransport([403])
+        siem = AzureSentinelSiem(SentinelConfig.from_env(ENV), transport=t, sleep=lambda s: None)
+        result = siem.send([record()])
+        assert result.rejected == 1
+        assert "403" in result.problems[0] and "Monitoring Metrics Publisher" in result.problems[0]
+
     def test_expired_token_is_refreshed_once(self) -> None:
         t = FakeTransport([401, 204])
         siem = AzureSentinelSiem(SentinelConfig.from_env(ENV), transport=t, sleep=lambda s: None)

@@ -114,8 +114,10 @@ notes, with the LLM path behind an interface and off by default.
   window.
 - ✅ **Correlation reproducible** (`penumbra correlate`) with ground truth per incident, and an
   incidents tab in the console.
-- ⬜ Sentinel connector against a live workspace (the Protocol and the mock exist; the plan was
-  always mock-first, and a live run needs credentials).
+- ✅ **Sentinel against a live workspace** (Azure for Students): DCR ingestion, parsers, workbook,
+  an analytics rule raising 13 incidents, all deployed by `scripts/deploy_sentinel.py`. It found an
+  invalid rule (five placeholders where Sentinel allows three) and a false claim about ASIM's
+  built-in unifying parser; sentinel/README.md "Live".
 - ✅ A real lab capture (two owned laptops on a phone hotspot, nmap scans). Out of the box the
   UNSW-trained detector alerts on every flow, scans and browsing alike; the benign-only head,
   re-baselined on the network's own traffic with no labels, reaches AUC 0.971 and 0.947 recall at

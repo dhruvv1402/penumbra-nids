@@ -219,6 +219,7 @@ penumbra export-onnx -d nslkdd          # supervised head to ONNX; parity on eve
 penumbra rebaseline <window.pcap> --model unsw  # learn this network's normal; gated candidate, not promoted
 penumbra rebaseline <window.pcap> --mode thresholds  # same network, drifted: move the operating point only
 penumbra refit-drill                    # E8: thresholds vs re-learning normal, measured under drift
+uv run python scripts/deploy_sentinel.py  # Sentinel workspace, DCR, parsers, workbook, rules (az login first)
 penumbra drift -d nslkdd [--inject abrupt]  # per-feature PSI + BH-corrected KS
 penumbra reproduce-all                  # regenerates every number in the report
 ```

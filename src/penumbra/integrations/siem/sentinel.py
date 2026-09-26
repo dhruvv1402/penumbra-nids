@@ -41,6 +41,14 @@ API_VERSION = "2023-01-01"
 SCOPE = "https://monitor.azure.com/.default"
 MAX_BATCH_BYTES = 900_000  # under the 1 MB request cap, with room for the envelope
 MAX_RETRY_AFTER = 10.0
+HINTS = {
+    403: (
+        ": the app lacks Monitoring Metrics Publisher on the DCR, or the assignment has not applied "
+        "yet (a new one can take several minutes)"
+    ),
+    404: ": wrong DCR immutable id or stream name for this endpoint",
+    413: ": batch over the 1 MB request limit",
+}
 
 # (method, url, headers, body) -> (status, headers, body)
 Transport = Callable[[str, str, dict[str, str], bytes], tuple[int, dict[str, str], bytes]]
@@ -159,7 +167,8 @@ class AzureSentinelSiem:
                 result.accepted += len(batch)
             else:
                 result.rejected += len(batch)
-                result.problems.append(f"batch of {len(batch)} rejected with HTTP {status}")
+                hint = HINTS.get(status, "")
+                result.problems.append(f"batch of {len(batch)} rejected with HTTP {status}{hint}")
         return result
 
     def _post(self, body: bytes) -> int:
