@@ -27,6 +27,8 @@ import jwt
 from penumbra.api.security.rbac import Principal, Role
 
 ALGORITHM = "HS256"
+MIN_PASSWORD = 16
+GUEST_TTL = timedelta(hours=2)
 TOKEN_TTL = timedelta(hours=8)  # one shift
 _PBKDF2_ROUNDS = 240_000
 
@@ -108,6 +110,30 @@ class UserStore:
         self.add("senior", "senior", Role.SENIOR)
         self.add("admin", "admin", Role.ADMIN)
 
+    def seed_configured_users(self, env: dict[str, str] | None = None) -> list[str]:
+        """One user per role whose password is set in the environment: PENUMBRA_<ROLE>_PASSWORD.
+
+        This is how a deployment gets logins without shipping known ones. A password shorter than
+        MIN_PASSWORD refuses startup rather than creating a guessable account on a public host.
+        """
+        env = dict(os.environ) if env is None else env
+        created = []
+        for role, segments in (
+            (Role.ANALYST, frozenset({"dmz", "corp"})),
+            (Role.SENIOR, frozenset()),
+            (Role.ADMIN, frozenset()),
+        ):
+            password = env.get(f"PENUMBRA_{role.value.upper()}_PASSWORD", "")
+            if not password:
+                continue
+            if len(password) < MIN_PASSWORD:
+                raise RuntimeError(
+                    f"PENUMBRA_{role.value.upper()}_PASSWORD is shorter than {MIN_PASSWORD} characters"
+                )
+            self.add(role.value, password, role, segments)
+            created.append(role.value)
+        return created
+
 
 def issue_token(user: User, *, ttl: timedelta = TOKEN_TTL) -> str:
     now = datetime.now(UTC)
@@ -119,6 +145,12 @@ def issue_token(user: User, *, ttl: timedelta = TOKEN_TTL) -> str:
         "exp": int((now + ttl).timestamp()),
     }
     return jwt.encode(payload, _secret(), algorithm=ALGORITHM)
+
+
+def guest_user() -> User:
+    """The read-only principal behind "view as guest". It has no password and cannot log in; a token
+    for it is issued only by the guest endpoint, and only when PENUMBRA_GUEST_ACCESS is set."""
+    return User("guest", "", Role.GUEST, frozenset())
 
 
 class InvalidToken(ValueError):

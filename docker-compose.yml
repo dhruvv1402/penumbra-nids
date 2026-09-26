@@ -70,6 +70,10 @@ services:
     build:
       context: ./console
       dockerfile: Dockerfile
+      # Build-time: Next.js compiles the /api rewrite into the image. Setting it only under
+      # `environment` (as this file used to) left the proxy pointing at the container's own loopback.
+      args:
+        PENUMBRA_API_URL: http://api:8000
     image: penumbra-console:local
     restart: unless-stopped
     ports:

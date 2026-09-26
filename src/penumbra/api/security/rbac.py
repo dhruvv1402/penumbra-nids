@@ -31,6 +31,9 @@ from enum import StrEnum
 
 
 class Role(StrEnum):
+    # Read-only, for a public deployment: a judge can open the console and see everything the demo
+    # holds, and can change nothing - no verdict, no suppression, no promotion.
+    GUEST = "guest"
     ANALYST = "analyst"
     SENIOR = "senior"
     ADMIN = "admin"
@@ -53,10 +56,10 @@ class Permission(StrEnum):
     READ_AUDIT = "audit:read"
 
 
-_ANALYST: frozenset[Permission] = frozenset(
+_GUEST: frozenset[Permission] = frozenset({Permission.READ_ALERTS, Permission.READ_INCIDENTS})
+
+_ANALYST: frozenset[Permission] = _GUEST | frozenset(
     {
-        Permission.READ_ALERTS,
-        Permission.READ_INCIDENTS,
         Permission.TRIAGE,
         Permission.RECORD_VERDICT,
     }
@@ -81,6 +84,7 @@ _ADMIN: frozenset[Permission] = _SENIOR | frozenset(
 )
 
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
+    Role.GUEST: _GUEST,
     Role.ANALYST: _ANALYST,
     Role.SENIOR: _SENIOR,
     Role.ADMIN: _ADMIN,
@@ -125,7 +129,7 @@ def require(principal: Principal, permission: Permission) -> None:
 
 def required_role(permission: Permission) -> Role:
     """Lowest role that holds this permission, for error messages that are actually helpful."""
-    for role in (Role.ANALYST, Role.SENIOR, Role.ADMIN):
+    for role in (Role.GUEST, Role.ANALYST, Role.SENIOR, Role.ADMIN):
         if permission in ROLE_PERMISSIONS[role]:
             return role
     return Role.ADMIN
@@ -136,15 +140,15 @@ def matrix() -> str:
     perms = sorted(Permission, key=lambda p: p.value)
     width = max(len(p.value) for p in perms) + 2
     lines = [
-        f"  {'permission':<{width}} {'analyst':>9} {'senior':>8} {'admin':>7}",
-        f"  {'-' * width} {'-' * 9} {'-' * 8} {'-' * 7}",
+        f"  {'permission':<{width}} {'guest':>7} {'analyst':>9} {'senior':>8} {'admin':>7}",
+        f"  {'-' * width} {'-' * 7} {'-' * 9} {'-' * 8} {'-' * 7}",
     ]
     for perm in perms:
         marks = [
             "  yes  " if perm in ROLE_PERMISSIONS[r] else "   -   "
-            for r in (Role.ANALYST, Role.SENIOR, Role.ADMIN)
+            for r in (Role.GUEST, Role.ANALYST, Role.SENIOR, Role.ADMIN)
         ]
-        lines.append(f"  {perm.value:<{width}} {marks[0]:>9} {marks[1]:>8} {marks[2]:>7}")
+        lines.append(f"  {perm.value:<{width}} {marks[0]:>7} {marks[1]:>9} {marks[2]:>8} {marks[3]:>7}")
     lines += [
         "",
         "  Two boundaries that are security decisions rather than UI choices:",

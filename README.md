@@ -18,7 +18,7 @@ honestly how much it actually catches.
 | **Speed** | One flow scored in **12.6 ms** (was 139), ~11,000 flows/s batched, 11,000 alerts/s built. Flat-forest scorer, exact: 0 decisions changed, checked at every startup. |
 | **Microsoft Sentinel, live** | Deployed to a real workspace: 8,332 records in through the Logs Ingestion API, **every one `DvcAction = Allow`**, every IP a pseudonym, and **13 Sentinel incidents** raised by our analytics rule. The live run found two defects the tests had missed; both fixed and now tested. |
 | **Never blocks** | No enforcement code path, CI-enforced. Alerts a SOC; a human decides. |
-| **Try it** | `uv run penumbra demo` - API, console and real incidents in one command, no dataset needed. |
+| **Try it** | **Live: https://penumbra-console.kindmoss-9a9e65e5.centralindia.azurecontainerapps.io** (click *View as guest*; read-only). Or locally: `uv run penumbra demo` - API, console and real incidents in one command, no dataset needed. Deployment notes: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). |
 
 The penumbra is the region between full shadow and full light. It is where novel attacks live: not matching a
 known-bad signature, not looking like known-good either.

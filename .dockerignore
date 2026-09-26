@@ -20,3 +20,9 @@ requirements-audit.txt
 *.joblib
 *.db
 *.jsonl
+
+# Re-included for deploy/api.Dockerfile only (the main Dockerfile never copies them): the reports the
+# console renders and the two demo fixtures. Absent in a clean checkout, which is fine.
+!artifacts/reports/
+!tests/fixtures/demo_alerts.json
+!tests/fixtures/incidents_cicids.json

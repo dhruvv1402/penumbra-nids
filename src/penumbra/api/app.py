@@ -20,6 +20,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
@@ -36,8 +37,15 @@ from penumbra.alerts.schemas import asim
 from penumbra.api import reports
 from penumbra.api.security import rbac
 from penumbra.api.security.audit import ACTION_SUPPRESS, AuditLog
-from penumbra.api.security.auth import InvalidToken, UserStore, decode_token, issue_token
-from penumbra.api.security.rbac import Permission, Principal
+from penumbra.api.security.auth import (
+    GUEST_TTL,
+    InvalidToken,
+    UserStore,
+    decode_token,
+    guest_user,
+    issue_token,
+)
+from penumbra.api.security.rbac import Permission, Principal, Role
 from penumbra.config import DEV_PII_KEY, settings
 from penumbra.feedback import active, integrity
 from penumbra.integrations.siem import SiemConnector
@@ -90,6 +98,7 @@ class AppState:
         self.repo = SqliteRepository(settings().state_dir / "penumbra.db")
         self.users = UserStore()
         self.users.seed_demo_users()
+        self.users.seed_configured_users()
         self.audit = AuditLog(settings().state_dir / "audit.jsonl")
         # Socket -> who is on the other end. The stream carries full alerts, so it is scoped by
         # segment exactly like the REST reads; a restricted analyst must not receive every
@@ -144,8 +153,39 @@ class AppState:
 state = AppState()
 
 
+def seed_fixtures(directory: Path) -> tuple[int, int]:
+    """Load the demo fixtures into an EMPTY store. A deployment that restarts (or scales to zero)
+    comes back with the same demo data instead of an empty queue. Never touches a store that already
+    holds alerts, and never forwards the seed to the SIEM."""
+    from penumbra.replay.engine import read_fixture
+
+    admin = Principal(username="seed", role=Role.ADMIN)
+    if state.repo.counts(admin).get("alerts_total", 0):
+        return 0, 0
+    n_alerts = n_incidents = 0
+    for path in sorted(directory.glob("*.json")):
+        alerts, incidents = read_fixture(path)
+        state.repo.save_alerts(alerts)
+        shipped = {a.alert_id for a in alerts}
+        for raw in incidents:
+            if set(raw.get("alert_ids", [])) & shipped:
+                state.repo.save_incident(Incident.model_validate(raw))
+                n_incidents += 1
+        n_alerts += len(alerts)
+    state.audit.append(
+        actor="system",
+        role="admin",
+        action="demo.seeded",
+        detail={"alerts": n_alerts, "incidents": n_incidents},
+    )
+    return n_alerts, n_incidents
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    seed = os.environ.get("PENUMBRA_SEED_FIXTURES")
+    if seed:
+        seed_fixtures(Path(seed))
     yield
     state.repo.close()
 
@@ -162,7 +202,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    # Plus the deployed console's origin, if there is one. The console normally proxies /api, so this
+    # matters only for a browser talking to the API directly.
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"]
+    + [o for o in os.environ.get("PENUMBRA_CORS_ORIGINS", "").split(",") if o],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -315,6 +358,22 @@ async def health() -> dict[str, Any]:
 @app.get("/metrics", tags=["ops"])
 async def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.post("/auth/guest", response_model=TokenResponse, tags=["auth"])
+async def guest_login(request: Request) -> TokenResponse:
+    """A read-only session with no credentials, for a public demo. Off unless PENUMBRA_GUEST_ACCESS
+    is set; the guest role can read alerts and incidents and change nothing."""
+    if not os.environ.get("PENUMBRA_GUEST_ACCESS"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "guest access is not enabled")
+    user = guest_user()
+    state.audit.append(
+        actor=user.username,
+        role=user.role.value,
+        action="auth.guest",
+        detail={"ip": request.client.host if request.client else "unknown"},
+    )
+    return TokenResponse(access_token=issue_token(user, ttl=GUEST_TTL), role=user.role.value, segments=[])
 
 
 @app.post("/auth/login", response_model=TokenResponse, tags=["auth"])

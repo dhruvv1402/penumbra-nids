@@ -1,0 +1,6 @@
+# The image installs its own dependencies (npm ci) and builds its own .next; shipping the local ones
+# would upload hundreds of MB and could leak a dev build into production.
+node_modules/
+.next/
+npm-debug.log*
+.env*

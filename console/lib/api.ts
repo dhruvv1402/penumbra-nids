@@ -169,6 +169,14 @@ export async function login(username: string, password: string): Promise<Session
   return { token: body.access_token, role: body.role, segments: body.segments };
 }
 
+/** A read-only session with no credentials. The API serves it only when PENUMBRA_GUEST_ACCESS is set. */
+export async function guestLogin(): Promise<Session> {
+  const body = await request<{ access_token: string; role: string; segments: string[] }>("/auth/guest", null, {
+    method: "POST",
+  });
+  return { token: body.access_token, role: body.role, segments: body.segments };
+}
+
 export const getAlerts = (token: string, lane?: Lane, limit = 200) =>
   request<Alert[]>(`/alerts?limit=${limit}${lane ? `&lane=${lane}` : ""}`, token);
 

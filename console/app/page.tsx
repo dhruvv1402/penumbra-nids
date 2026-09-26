@@ -25,6 +25,7 @@ import {
   type Stats,
   type TriageNote,
   getAlerts,
+  guestLogin,
   getIncident,
   getIncidents,
   createSuppression,
@@ -677,9 +678,13 @@ function VerdictButton({
   );
 }
 
+// Set at build time for a public deployment: no prefilled demo credentials, and "view as guest"
+// is the main way in.
+const PUBLIC_DEPLOYMENT = process.env.NEXT_PUBLIC_PENUMBRA_PUBLIC === "1";
+
 function LoginScreen({ onSession }: { onSession: (s: Session) => void }) {
-  const [username, setUsername] = useState("analyst");
-  const [password, setPassword] = useState("analyst");
+  const [username, setUsername] = useState(PUBLIC_DEPLOYMENT ? "" : "analyst");
+  const [password, setPassword] = useState(PUBLIC_DEPLOYMENT ? "" : "analyst");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -690,6 +695,17 @@ function LoginScreen({ onSession }: { onSession: (s: Session) => void }) {
       onSession(await login(username, password));
     } catch {
       setError("Invalid credentials, or the API is not running on :8000.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const asGuest = async () => {
+    setBusy(true);
+    try {
+      onSession(await guestLogin());
+    } catch {
+      setError("Guest access is not enabled on this deployment.");
     } finally {
       setBusy(false);
     }
@@ -715,10 +731,23 @@ function LoginScreen({ onSession }: { onSession: (s: Session) => void }) {
         >
           {busy ? "…" : "Sign in"}
         </button>
+        {PUBLIC_DEPLOYMENT && (
+          <button
+            type="button"
+            onClick={asGuest}
+            disabled={busy}
+            className="w-full text-[12px] py-1.5 rounded border border-[var(--color-accent,#3b82f6)] text-[var(--color-ink)] hover:bg-[var(--color-panel-2)] disabled:opacity-40"
+          >
+            View as guest (read-only)
+          </button>
+        )}
         <p className="text-[9px] text-[var(--color-ink-faint)] leading-snug">
-          Demo users (analyst / senior / admin) exist only when the API runs with
-          PENUMBRA_ALLOW_DEMO_USERS set. Roles differ: an analyst sees only its own segments and
-          cannot promote a verdict into training.
+          {PUBLIC_DEPLOYMENT
+            ? "Guest is read-only: you can open every page and every alert, and change nothing. " +
+              "Verdicts, suppressions and promotions need an analyst, senior or admin login."
+            : "Demo users (analyst / senior / admin) exist only when the API runs with " +
+              "PENUMBRA_ALLOW_DEMO_USERS set. Roles differ: an analyst sees only its own segments and " +
+              "cannot promote a verdict into training."}
         </p>
       </form>
     </main>

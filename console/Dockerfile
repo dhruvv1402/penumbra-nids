@@ -23,6 +23,12 @@ COPY . .
 # Telemetry is off during the build as well as at runtime. A build step that phones home is a build
 # step that fails behind a conference firewall.
 ENV NEXT_TELEMETRY_DISABLED=1
+# Both are read at BUILD time. Next.js compiles rewrites into the routes manifest, so the API address
+# the /api proxy points at is fixed here, not at `docker run`; and NEXT_PUBLIC_* is inlined into the
+# client bundle. PENUMBRA_PUBLIC=1 drops the prefilled demo credentials and offers guest access.
+ARG PENUMBRA_API_URL=http://api:8000
+ARG NEXT_PUBLIC_PENUMBRA_PUBLIC=0
+ENV PENUMBRA_API_URL=$PENUMBRA_API_URL     NEXT_PUBLIC_PENUMBRA_PUBLIC=$NEXT_PUBLIC_PENUMBRA_PUBLIC
 RUN npm run build
 
 
