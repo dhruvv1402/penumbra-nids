@@ -258,25 +258,6 @@ def title_slide(prs, team, art, logos):
         anchor=MSO_ANCHOR.MIDDLE,
     )
     pill(s, 10.13, 4.36, 2.2, 0.42, "IDEA SUBMISSION", fill=WHT, size=11)
-    text(
-        s,
-        9.1,
-        5.0,
-        4.23,
-        0.62,
-        [[("PENUMBRA", DISPLAY, 34, BLK)]],
-        align=PP_ALIGN.CENTER,
-        anchor=MSO_ANCHOR.MIDDLE,
-    )
-    text(
-        s,
-        9.1,
-        5.58,
-        4.23,
-        0.4,
-        [[("see the unseen · alert, never block", BODY_BLACK, 12, BLK)]],
-        align=PP_ALIGN.CENTER,
-    )
     dl = team["deadline"]
     text(s, 9.1, 6.4, 4.23, 0.4,
          [[(f"Submission deadline: {dl}" if dl else "[FILL: submission deadline]", BODY_BOLD, 11, BLK if dl else FILLRED)]],
@@ -334,8 +315,6 @@ def team_slide(prs, team, art):
                 run = (run[0], run[1], 11.5 if key[0] == "email" else 12.5, run[3])
             text(s, x + 0.12, y, w - 0.2, row_h, [[run]], anchor=MSO_ANCHOR.MIDDLE)
             x += w
-    note_y = y0 + total_h + 0.15
-    text(s, 0.6, note_y, 12.1, 0.4, [[("Teams of 2 to 6 members.", BODY, 11, BLK)]])
     box(s, 0.6, 5.85, 12.13, 0.75, fill=YEL, radius=0.2, shadow=0.06)
     mentor = team["mentor"]
     text(s, 0.85, 5.85, 11.6, 0.75,
@@ -352,34 +331,20 @@ def problem_slide(prs, team, art):
     card(s, 0.6, 1.45, 5.95, 2.6, "1", "What is the problem?", RED)
     bullets(s, 0.95, 2.4, 5.35, 1.55, [
         ("Signatures miss new attacks: ", "an IDS rule exists only after someone has seen the attack."),
-        ("ML repeats the failure: ", "a classifier files anything unfamiliar as “normal”."),
-        ("Alert floods hide the rest: ", "94,115 alerts from two days of one network’s traffic."),
-    ], dot=RED, size=12.5)  # fmt: skip
+        ("ML repeats the failure: ", "on the NSL-KDD benchmark a standard classifier catches only ~5% of never-seen attack types at 1% false alarms."),
+        ("Alert floods hide the rest: ", "SOCs receive far more alerts than analysts can triage."),
+    ], dot=RED, size=11.5, space=3)  # fmt: skip
     card(s, 6.78, 1.45, 5.95, 2.6, "2", "Who faces it?", BLU)
-    bullets(s, 7.13, 2.4, 4.0, 1.55, [
+    bullets(s, 7.13, 2.4, 5.35, 1.55, [
         ("SOC analysts ", "at companies, universities and hospitals."),
-        ("Every day: ", "zero-days, new malware, and traffic that drifts away from what the model knew."),
+        ("Every day: ", "zero-days, new malware, and network traffic that drifts away from what a model learnt."),
     ], dot=BLU, size=12.5)  # fmt: skip
-    picture(s, art / "binoculars.png", 11.15, 2.6, w=1.4)
     card(s, 0.6, 4.25, 12.13, 2.5, "3", "Why do current options fall short?", PUR)
-    bullets(s, 0.95, 5.2, 7.6, 1.5, [
+    bullets(s, 0.95, 5.2, 11.4, 1.5, [
         ("Signature IDS and supervised ML ", "cannot flag what they have never seen."),
-        ("Anomaly detectors flood the SOC, ", "and auto-blocking takes the business offline."),
-        ("Headline accuracy hides the failure: ", "balanced test sets are not real networks."),
-    ], dot=PUR, size=12.5)  # fmt: skip
-    box(s, 8.95, 4.55, 3.5, 1.95, fill=YEL, radius=0.1, shadow=0.06)
-    text(
-        s,
-        9.1,
-        4.62,
-        3.2,
-        0.95,
-        [[("ONLY 5%", DISPLAY, 46, RED)]],
-        align=PP_ALIGN.CENTER,
-        anchor=MSO_ANCHOR.MIDDLE,
-    )
-    text(s, 9.1, 5.55, 3.2, 0.9, [[("of never-seen attack types caught by a standard ML classifier at 1% false alarms (NSL-KDD, measured)", BODY_BOLD, 10.5, BLK)]],
-         align=PP_ALIGN.CENTER)  # fmt: skip
+        ("Anomaly detectors flood the SOC with false alarms, ", "and auto-blocking takes the business offline."),
+        ("Headline accuracy hides the failure: ", "balanced test sets do not look like real networks."),
+    ], dot=PUR, size=13)  # fmt: skip
 
 
 def solution_slide(prs, team, art, shot):
@@ -388,38 +353,27 @@ def solution_slide(prs, team, art, shot):
     box(s, 0.6, 1.45, 12.13, 1.55, fill=YEL, radius=0.1)
     badge(s, 0.85, 1.7, "1", GRN)
     text(s, 1.55, 1.7, 9.0, 0.55, [[("Our idea in one line", BODY_BLACK, 17, BLK)]], anchor=MSO_ANCHOR.MIDDLE)
-    text(s, 0.95, 2.3, 9.9, 0.62, [[
+    text(s, 0.95, 2.3, 11.5, 0.62, [[
         ("We are building ", BODY, 15, BLK), ("Penumbra", BODY_BLACK, 15, BLK),
         (", an ML network detector that helps SOC analysts catch attacks no signature knows, by flagging "
          "what it has never seen, explaining every alert, and never blocking traffic.", BODY, 15, BLK),
     ]])  # fmt: skip
-    picture(s, art / "eclipse.png", 11.1, 1.15, w=1.75)
 
     card(s, 0.6, 3.2, 5.95, 3.55, "2", "How it solves the problem", GRN)
-    bullets(s, 0.95, 4.1, 3.45, 2.6, [
-        ("Two heads: ", "one names known attacks, one learns only normal traffic and flags the unfamiliar. 5% → 35% of unseen attacks caught."),
-        ("Two lanes: ", "94,115 alerts become 203 incidents."),
-        ("Explained: ", "plain-English reasons + an ATT&CK triage note."),
-    ], dot=GRN, size=11.5, space=4)  # fmt: skip
-    picture(s, art / "pack_known.png", 4.45, 3.95, w=0.98)
-    picture(s, art / "pack_novel.png", 5.35, 4.25, w=0.98)
+    bullets(s, 0.95, 4.1, 5.35, 2.6, [
+        ("Two heads: ", "one model names known attack families; a second learns only normal traffic and flags anything unfamiliar."),
+        ("Two lanes: ", "known threats go to an incident queue; novel behaviour to a hunting queue with a fixed daily budget."),
+        ("Explained alerts: ", "each alert says why it fired, in plain English, with its MITRE ATT&CK technique."),
+    ], dot=GRN, size=12, space=5)  # fmt: skip
 
     card(s, 6.78, 3.2, 5.95, 3.55, "3", "What makes it different", RED)
     bullets(s, 7.13, 4.1, 2.95, 2.6, [
-        ("Honest: ", "experiments pre-registered, misses published."),
-        ("Microsoft Sentinel native: ", "ASIM schema; live workspace, 13 real incidents."),
-        ("Alert, never block: ", "a human always decides."),
+        ("Sees the unseen: ", "novelty detection, not just known signatures."),
+        ("Microsoft stack: ", "built for Azure and Microsoft Sentinel (ASIM alerts)."),
+        ("Human in the loop: ", "alerts only, never blocks traffic."),
     ], dot=RED, size=11.5, space=4)  # fmt: skip
-    framed_shot(s, shot, 10.18, 4.15, 2.35, 1.47)
-    text(
-        s,
-        10.1,
-        5.7,
-        2.5,
-        0.9,
-        [[("Live on Azure →", BODY_BLACK, 9.5, BLK)], [(LIVE, BODY, 7.5, BLK)]],
-        align=PP_ALIGN.CENTER,
-    )
+    framed_shot(s, shot, 10.18, 4.2, 2.35, 1.47)
+    text(s, 10.1, 5.75, 2.5, 0.4, [[("Analyst console (prototype)", BODY_BLACK, 9.5, BLK)]], align=PP_ALIGN.CENTER)
 
 
 def technical_slide(prs, team, art, shot):
@@ -429,22 +383,22 @@ def technical_slide(prs, team, art, shot):
     stack = [
         ("FRONTEND", "Next.js · React", YEL),
         ("BACKEND", "Python · FastAPI", GRN),
-        ("DATABASE", "SQLite (Postgres-ready)", WHT),
+        ("DATABASE", "SQLite / PostgreSQL", WHT),
         ("AI / APIS", "scikit-learn · XGBoost", PUR),
         ("CLOUD", "Azure · Sentinel", BLU),
-        ("OTHER TOOLS", "Docker · GitHub Actions", RED),
+        ("OTHER TOOLS", "Docker · GitHub", RED),
     ]
     for i, (cat, tech, col) in enumerate(stack):
         fg = WHT if col in (BLU, RED, PUR) else BLK
         pill(s, 0.6 + i * 2.04, 1.84, 1.95, 0.62,
              [(cat, BODY_BLACK, 8, fg), (tech, BODY_BOLD, 10, fg)], fill=col)  # fmt: skip
 
-    text(s, 0.6, 2.7, 8.0, 0.4, [[("How the system works", BODY_BLACK, 16, BLK)]])
+    text(s, 0.6, 2.7, 8.0, 0.4, [[("How the system will work", BODY_BLACK, 16, BLK)]])
     flow = [
         ("NETWORK TRAFFIC", "pcap / NetFlow records", WHT, BLK),
-        ("SENSOR + API", "features out, 12.6 ms per flow", YEL, BLK),
-        ("TWO-HEAD ML", "known + novelty + “I don’t know” lane", BLK, YEL),
-        ("SOC + SENTINEL", "incidents, triage, human verdict", GRN, BLK),
+        ("SENSOR + API", "turns traffic into flow features", YEL, BLK),
+        ("TWO-HEAD ML", "known + novelty + \u201cI don\u2019t know\u201d lane", BLK, YEL),
+        ("SOC + SENTINEL", "alerts, triage, human verdict", GRN, BLK),
     ]
     xs = [0.75, 3.93, 7.11, 10.29]
     for x, (t, d, fill, fg) in zip(xs, flow, strict=True):
@@ -457,14 +411,12 @@ def technical_slide(prs, team, art, shot):
         a.line.fill.background()
         a.shadow.inherit = False
 
-    card(s, 0.6, 4.75, 12.13, 2.0, "✓", "What we have started working on", PUR, badge_font="Segoe UI Symbol")
-    bullets(s, 0.95, 5.58, 8.1, 1.15, [
-        ("Working prototype, live on Azure: ", "console, API and a read-only guest mode."),
-        ("Evaluated on 3 public datasets ", "(UNSW-NB15, NSL-KDD, CICIDS2017) + our own lab capture."),
-        ("Live Microsoft Sentinel workspace: ", "8,332 alerts ingested, 13 incidents raised."),
-        ("523 automated tests; ", "CI with security scans on every commit."),
-    ], dot=PUR, size=11, space=1)  # fmt: skip
-    framed_shot(s, shot, 9.3, 4.95, 3.2, 1.6)
+    card(s, 0.6, 4.75, 12.13, 2.0, "\u2713", "What we have started working on", PUR, badge_font="Segoe UI Symbol")
+    bullets(s, 0.95, 5.6, 11.4, 1.1, [
+        ("Datasets collected: ", "UNSW-NB15, NSL-KDD and CICIDS2017 public intrusion-detection datasets."),
+        ("Prototype begun: ", "both detection heads trained and tested on these datasets."),
+        ("Alert format drafted ", "in Microsoft Sentinel\u2019s ASIM schema."),
+    ], dot=PUR, size=12, space=2)  # fmt: skip
 
 
 def impact_slide(prs, team, art):
@@ -472,29 +424,28 @@ def impact_slide(prs, team, art):
     chrome(s, "Impact and Next Steps", 6, team["team_name"])
     card(s, 0.6, 1.45, 5.95, 2.45, "1", "Expected impact", GRN)
     bullets(s, 0.95, 2.35, 5.3, 1.5, [
-        ("SOCs see what signatures miss: ", "5% → 35% of unseen attacks, same alert budget."),
-        ("No alert flood: ", "94,115 alerts → 203 incidents; 99.93% of attack traffic still reaches an analyst."),
-        ("Humans stay in charge: ", "alerts only, never blocks; verdicts retrain it under a two-person rule."),
-    ], dot=GRN, size=12, space=3)  # fmt: skip
+        ("SOC analysts ", "see attacks no signature exists for, without an alert flood."),
+        ("Target: ", "catch far more never-seen attacks than a classifier alone, at the same false-alarm rate."),
+    ], dot=GRN, size=12.5, space=4)  # fmt: skip
     card(s, 6.78, 1.45, 5.95, 2.45, "2", "Feasibility", YEL)
     bullets(s, 7.13, 2.35, 5.3, 1.5, [
-        ("Already built and live on Azure; ", "one command reproduces every number."),
-        ("In hand: ", "3 datasets, Azure for Students credit, a running Sentinel workspace."),
-        ("Tested beyond benchmarks: ", "under real drift, and on a capture from our own laptops."),
-    ], dot=BLK, size=12, space=3)  # fmt: skip
+        ("Data in hand: ", "three public, labelled intrusion-detection datasets."),
+        ("Resources: ", "Azure for Students credit; open-source ML stack."),
+        ("Early prototype: ", "both detection heads already trained and tested."),
+    ], dot=BLK, size=12.5, space=4)  # fmt: skip
     card(s, 0.6, 4.1, 5.95, 2.65, "3", "Plan for the next round", RED)
     bullets(s, 0.95, 5.0, 5.3, 1.7, [
-        ("Step 1: ", "stream the deployed API into Sentinel end to end."),
-        ("Step 2: ", "a second capture on our own network, to test baseline-poisoning defences."),
-        ("Step 3: ", "live demo: scan → novel alert → Sentinel incident → analyst verdict."),
+        ("Step 1: ", "build the two-head detector and the alert API."),
+        ("Step 2: ", "add the analyst console and Microsoft Sentinel integration."),
+        ("Step 3: ", "demo: attack traffic \u2192 novel alert \u2192 Sentinel incident \u2192 analyst verdict."),
     ], dot=RED, size=12.5, space=4)  # fmt: skip
     card(s, 6.78, 4.1, 5.95, 2.65, "4", "References and data sources", BLU)
     bullets(s, 7.13, 5.0, 5.3, 1.7, [
-        ("Datasets: ", "UNSW-NB15 (2015), NSL-KDD (2009), CICIDS2017."),
-        ("Frameworks: ", "MITRE ATT&CK; Microsoft Sentinel ASIM schema."),
-        ("Code: ", REPO),
-        ("Live: ", LIVE),
-    ], dot=BLU, size=11.5, space=4)  # fmt: skip
+        ("UNSW-NB15 ", "(Moustafa & Slay, 2015)"),
+        ("NSL-KDD ", "(Tavallaee et al., 2009)"),
+        ("CICIDS2017 ", "(Sharafaldin et al., 2018)"),
+        ("MITRE ATT&CK; ", "Microsoft Sentinel ASIM schema"),
+    ], dot=BLU, size=12.5, space=3)  # fmt: skip
 
 
 # --- assembly -------------------------------------------------------------------------------------
