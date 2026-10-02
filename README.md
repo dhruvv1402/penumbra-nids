@@ -229,17 +229,23 @@ Every number in the report regenerates from a command. None are typed by hand.
 | `src/penumbra/data/` | loaders, the dataset-trap registry, and the leak audit |
 | `src/penumbra/features/` | preprocessing (benign-only for novelty), causal entity-graph and sequence windows |
 | `src/penumbra/models/` | supervised head, benign-only novelty head, fusion, calibration, conformal, sequence, registry |
+| `src/penumbra/imbalance/` | class-imbalance strategies as leak-proof pipelines, the ablation, and the SMOTE leakage demo |
 | `src/penumbra/eval/` | metrics, prevalence, matched budgets, LOAFO, canary gate, shadow, regression gate, E7 drill |
 | `src/penumbra/drift/` | PSI with frozen bins, KS with BH correction, ADWIN, drift injector |
 | `src/penumbra/alerts/` | the canonical Alert, two-lane routing, correlation, suppression rules, ASIM/OCSF/ECS |
 | `src/penumbra/feedback/` | verdict integrity flags and the uncertainty-sampling labelling queue |
 | `src/penumbra/rules/` | KQL/Sigma rule mining from forest leaves, validated on held-out data |
+| `src/penumbra/explain/` | the hand-curated attack-family → MITRE ATT&CK mapping |
 | `src/penumbra/pcap/` · `adversarial/` | pcap → flow features; problem-space evasion |
 | `src/penumbra/rag/` | ATT&CK corpus and the cited triage copilot, fully offline |
+| `src/penumbra/replay/` | streams a dataset through the detector as live traffic: offline, ingest, or from fixtures |
+| `src/penumbra/integrations/siem/` | SIEM connectors: Microsoft Sentinel, and a mock that is the default |
 | `src/penumbra/api/` · `storage/` | FastAPI, JWT, RBAC, hash-chained audit, PII pseudonymisation; SQLite behind a Protocol |
 | `console/` | Next.js SOC console: queue, feedback, evaluation, drift, governance |
 | `sentinel/` | ASIM parser, analytics rules, DCR, mined rule packs, overview workbook |
 | `ci/` | the ML regression gate's committed baseline |
+| `scripts/` · `deploy/` | Azure and Sentinel deployment, the walkthrough recorder, the deck builder; the deploy-only image layer |
+| `tests/` | unit, integration and property tests, and the demo fixtures |
 | `docs/` | evaluation, pre-registered experiments E1–E7, model card, datasheet, threat model, ADRs |
 
 ## Status
