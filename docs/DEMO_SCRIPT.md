@@ -108,7 +108,7 @@ too.
 
 ## 4 — What we got wrong (90s) — **the credibility slide**
 
-> "Three times this experiment gave us a number we liked, and three times it was wrong."
+> "Six times this project gave us a number we liked, and six times it was wrong. The last one was in the detector we shipped."
 
 1. **We matched on alert count.** On a 57%-attack test set the budget gets spent on true positives
    and caps recall at 9% before any detector speaks. Result: Δ = +0.0003, apparently flat.
@@ -128,6 +128,13 @@ too.
    the epoch-one weights, the run exited cleanly, and it printed a result. The cause was not the
    model — the last 15% of our time-ordered training data has an attack rate of **0.0001**, so
    there was nothing for validation AUC to measure.
+6. **The detector we shipped fired on 18.8% of benign UNSW traffic against a 1% target.** Its
+   threshold was a percentile of scores the forest gave rows it had trained on, and it had memorised
+   them. Fitted on a held-out slice: **2.9%** (EVALUATION §10.7j, pre-registered as E9a). Then
+   **our own amended promotion gate refused the fix**. The rule matched the total false-positive
+   rate but split it equally across the two heads, while the old champion spent 18.6 of its 18.8
+   points on one head. We registered a per-head revision *before* re-running it. It passed, and the
+   fix shipped as v003. Open **/evaluation → calibration** and **/governance → model registry**.
 
 > "Each of those is now a test. The third one isn't a bug we fixed, it's a finding we kept: your
 > operating point doesn't transfer, and that's the argument for drift monitoring. The fifth is the
