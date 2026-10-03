@@ -251,7 +251,7 @@ Every number in the report regenerates from a command. None are typed by hand.
 
 ## Status
 
-347 tests. CI runs lint, types, tests, architectural invariants, SAST, dependency audit, a
+566 tests. CI runs lint, types, tests, architectural invariants, SAST, dependency audit, a
 full-history secret scan, an image build and boot, ZAP DAST, and an ML regression gate on NSL-KDD.
 
 Built: every phase in `docs/ROADMAP.md`. The supervised head also exports to ONNX with exact
