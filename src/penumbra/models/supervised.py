@@ -31,8 +31,10 @@ from penumbra.seeds import SEED
 @dataclass(frozen=True)
 class ModelSpec:
     name: str
-    kind: str  # "linear" | "tree"
+    kind: str  # "linear" | "tree" | "ensemble"
     description: str
+    # The model that names families when this one is the binary head. None means itself.
+    family_model: str | None = None
 
 
 SPECS: dict[str, ModelSpec] = {
@@ -54,6 +56,11 @@ SPECS: dict[str, ModelSpec] = {
         "Gradient boosting. Expected champion on tabular flow features.",
     ),
 }
+
+
+def family_model_for(name: str) -> str:
+    """Which model the family classifier uses when `name` is the binary head."""
+    return SPECS[name].family_model or name
 
 
 def _estimator(name: str, *, n_classes: int, class_weight: str | None, scale_pos_weight: float | None) -> Any:

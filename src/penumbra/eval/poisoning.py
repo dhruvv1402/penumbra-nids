@@ -202,7 +202,10 @@ def run(
     can_idx, fb_idx, ev_idx = canary.live_split(fine_test, seed=seed)
 
     step("champion")
-    champion = PenumbraDetector(target_fpr=target_fpr).fit(ds, model_name=model_name, fit_family_model=True)
+    # E7 was measured with in-sample calibration; pinned so the published numbers reproduce.
+    champion = PenumbraDetector(target_fpr=target_fpr).fit(
+        ds, model_name=model_name, fit_family_model=True, calibration="in_sample"
+    )
 
     X_fb = ds.X_test.iloc[fb_idx].reset_index(drop=True)
     scored_fb = champion.score(X_fb)
@@ -263,7 +266,10 @@ def run(
             }
             continue
         challenger = PenumbraDetector(target_fpr=target_fpr).fit(
-            augmented(ds, X_fb, records, coarse_fb), model_name=model_name, fit_family_model=True
+            augmented(ds, X_fb, records, coarse_fb),
+            model_name=model_name,
+            fit_family_model=True,
+            calibration="in_sample",
         )
         result = canary.gate(champ_canary, canary.evaluate(challenger, X_can, y_can, f_can))
         arm = summarise(challenger, challenger.score(X_ev))

@@ -10,11 +10,12 @@ against is meaningless and the two drifting apart is a whole class of deployment
 
 Fit order matters and is enforced:
 
-  1. supervised pipeline on ALL training rows
-  2. benign-only pipeline on BENIGN rows only, split into fit and calibration halves
-  3. novelty detectors on the fit half
-  4. percentile references from the calibration half
-  5. thresholds from held-out benign scores, never from test labels
+  0. training rows split into a fit part and a stratified calibration slice S
+  1. supervised pipeline on the fit part only
+  2. benign-only pipeline on BENIGN fit-part rows only
+  3. novelty detectors on those rows
+  4. percentile references from S's benign rows
+  5. thresholds and the conformal layer from S, never from rows a model trained on, never from test
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from penumbra import __version__
 from penumbra.data.loaders.base import Dataset
 from penumbra.features.preprocess import assert_benign_only_fit, benign_only_pipeline
 from penumbra.models import supervised
@@ -59,9 +61,42 @@ class DetectorMetadata:
     seed: int = SEED
     # Set by `rebaselined`: where this detector's idea of normal came from.
     baseline: dict[str, Any] | None = None
+    # Defaults describe every detector saved before E9a, so old metadata.json files still load and
+    # still say truthfully how they were calibrated.
+    calibration: str = "in_sample"
+    n_calibration_rows: int | None = None
+    n_supervised_fit_rows: int | None = None
+    family_model_name: str | None = None
+    # Set by the registry on registration, so an alert can be traced to the version that raised it.
+    registry_version: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
+
+
+def calibration_split(
+    families: pd.Series, fraction: float, *, seed: int = SEED, keep_in_fit: np.ndarray | None = None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Positional (fit, calibration) indices, stratified by family by hand.
+
+    By hand for the reason `canary.live_split` is: a library stratifier refuses a family with one
+    row. Here such a family simply stays in the fit part, so no rare family vanishes from training
+    to calibrate a threshold that does not need it.
+    """
+    values = families.astype(str).to_numpy()
+    eligible = np.ones(len(values), dtype=bool)
+    if keep_in_fit is not None:
+        eligible[np.asarray(keep_in_fit, dtype=int)] = False
+    rng = np.random.default_rng(seed)
+    calibration: list[int] = []
+    for label in sorted(set(values)):
+        idx = np.flatnonzero((values == label) & eligible)
+        rng.shuffle(idx)
+        calibration.extend(idx[: int(round(len(idx) * fraction))].tolist())
+    cal = np.sort(np.asarray(calibration, dtype=int))
+    in_fit = np.ones(len(values), dtype=bool)
+    in_fit[cal] = False
+    return np.flatnonzero(in_fit), cal
 
 
 class PenumbraDetector:
@@ -93,35 +128,73 @@ class PenumbraDetector:
         ds: Dataset,
         *,
         model_name: str = "rf",
+        family_model_name: str | None = None,
         fit_family_model: bool = True,
         conformal_alpha: float = 0.10,
+        calibration: str = "held_out",
+        keep_in_fit: np.ndarray | None = None,
+        quarantined: list[str] | None = None,
         on_progress: Any = None,
     ) -> PenumbraDetector:
+        """Fit both heads, the thresholds and the conformal layer.
+
+        `calibration="held_out"` (the default) fits the supervised model on training rows minus a
+        stratified slice S and fits every threshold and the conformal predictor on S. The
+        supervised model has never seen S, so its scores there are the scores it would give
+        unseen traffic.
+
+        `calibration="in_sample"` is the behaviour every number published before E9a was measured
+        with. The novelty head's calibration rows were held out, but the supervised head trained on
+        every row, including the benign rows its threshold is a quantile of. A forest scores its
+        own training rows lower than unseen ones, so that threshold sits too low; for a single
+        unpruned tree the in-sample scores are all 0 and every row fires. Kept so the commands
+        behind E7, E8 and the correlation run still reproduce what they published.
+
+        `keep_in_fit` holds positions that must train the model and never land in S (analyst
+        feedback rows: a verdict is a training label, not a calibration sample).
+        """
+        if calibration not in {"held_out", "in_sample"}:
+            raise ValueError(f"calibration must be 'held_out' or 'in_sample', got {calibration!r}")
         seed_everything()
+        family_model_name = family_model_name or supervised.family_model_for(model_name)
 
         def step(msg: str) -> None:
             if on_progress:
                 on_progress(msg)
 
+        if calibration == "held_out":
+            fit_pos, cal_pos = calibration_split(ds.fam_train, CALIBRATION_FRACTION, keep_in_fit=keep_in_fit)
+            X_fit, y_fit = ds.X_train.iloc[fit_pos], ds.y_train.iloc[fit_pos]
+            X_cal, y_cal = ds.X_train.iloc[cal_pos], ds.y_train.iloc[cal_pos]
+        else:
+            X_fit, y_fit = ds.X_train, ds.y_train
+
         step("supervised head")
         self.supervised_model = supervised.build(model_name, ds, n_classes=2, balanced=True)
-        self.supervised_model.fit(ds.X_train, ds.y_train)
+        self.supervised_model.fit(X_fit, y_fit)
 
         if fit_family_model:
             step("family classifier")
-            self.family_model, self.family_encoder = supervised.fit_multiclass(model_name, ds, balanced=True)
+            self.family_model, self.family_encoder = supervised.fit_multiclass(
+                family_model_name, ds, balanced=True
+            )
 
         step("benign-only pipeline")
-        benign = ds.X_train.loc[ds.y_train == 0]
-        # The contract the novelty head's whole claim rests on.
-        assert_benign_only_fit(ds, benign)
-
-        rng = np.random.default_rng(SEED)
-        order = rng.permutation(len(benign))
-        n_cal = int(len(benign) * CALIBRATION_FRACTION)
-        cal_idx, fit_idx = order[:n_cal], order[n_cal:]
-        benign_fit = benign.iloc[fit_idx]
-        benign_cal = benign.iloc[cal_idx]
+        if calibration == "held_out":
+            benign_fit = X_fit.loc[y_fit == 0]
+            benign_cal = X_cal.loc[y_cal == 0]
+            # The contract the novelty head's whole claim rests on.
+            assert_benign_only_fit(ds, benign_fit)
+            assert_benign_only_fit(ds, benign_cal)
+        else:
+            benign = ds.X_train.loc[ds.y_train == 0]
+            assert_benign_only_fit(ds, benign)
+            rng = np.random.default_rng(SEED)
+            order = rng.permutation(len(benign))
+            n_cal = int(len(benign) * CALIBRATION_FRACTION)
+            cal_idx, fit_idx = order[:n_cal], order[n_cal:]
+            benign_fit = benign.iloc[fit_idx]
+            benign_cal = benign.iloc[cal_idx]
 
         self.novelty_prep = benign_only_pipeline(ds)
         Z_fit = self.novelty_prep.fit_transform(benign_fit)
@@ -137,27 +210,29 @@ class PenumbraDetector:
         self.gate = OrGate.fit(benign_p, benign_n, total_fpr=self.target_fpr, use_novelty=True)
 
         step("conformal calibration")
-        # Calibrated on a held-out slice of TRAINING data, stratified. Calibrating on rows the model
-        # fitted would tune the quantile to memorised predictions and the guarantee would be
-        # vacuous; calibrating on test would be peeking.
-        from sklearn.model_selection import train_test_split
-
+        # Calibrating on rows the model fitted tunes the quantile to memorised predictions and the
+        # guarantee is vacuous; calibrating on test would be peeking. Held out, it is S itself.
         try:
-            _, X_conf, _, y_conf = train_test_split(
-                ds.X_train, ds.y_train, test_size=0.2, stratify=ds.y_train, random_state=SEED
-            )
+            if calibration == "held_out":
+                X_conf, y_conf = X_cal, y_cal
+            else:
+                from sklearn.model_selection import train_test_split
+
+                _, X_conf, _, y_conf = train_test_split(
+                    ds.X_train, ds.y_train, test_size=0.2, stratify=ds.y_train, random_state=SEED
+                )
             self.conformal = MondrianConformal(alpha=conformal_alpha).fit(
                 supervised.attack_scores(self.supervised_model, X_conf), y_conf.to_numpy()
             )
         except ValueError:
-            # Too few rows in some class to stratify. Better to have no conformal predictor than a
-            # miscalibrated one claiming a guarantee it cannot keep.
+            # Too few rows in some class. Better to have no conformal predictor than a miscalibrated
+            # one claiming a guarantee it cannot keep.
             self.conformal = None
 
         self._feature_names = list(ds.feature_names)
         self.metadata = DetectorMetadata(
             model_name=model_name,
-            version="0.1.0",
+            version=__version__,
             dataset=ds.name,
             trained_at=datetime.now(UTC).isoformat(),
             n_train_rows=len(ds.X_train),
@@ -167,6 +242,11 @@ class PenumbraDetector:
             supervised_threshold=self.gate.supervised_threshold,
             novelty_threshold=self.gate.novelty_threshold,
             features=self._feature_names,
+            quarantined_features=sorted(quarantined or []),
+            calibration=calibration,
+            n_calibration_rows=len(X_conf) if self.conformal is not None else 0,
+            n_supervised_fit_rows=len(X_fit),
+            family_model_name=family_model_name if fit_family_model else None,
         )
         return self
 

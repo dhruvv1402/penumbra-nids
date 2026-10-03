@@ -289,25 +289,48 @@ def loafo(dataset: DatasetName = "unsw") -> None:
     console.print(f"[dim]written to {out}[/dim]")
 
 
+def _quarantine_for(dataset: str, drop_artifacts: bool) -> list[str]:
+    """The columns `_load(..., drop_artifacts=True)` removes, recorded in the model's metadata."""
+    if not drop_artifacts:
+        return []
+    key = dataset.lower().replace("-", "").replace("_", "")
+    if key in {"unsw", "unswnb15"}:
+        from penumbra.data import schema
+
+        return list(schema.UNSW_SUSPECTED_ARTIFACTS)
+    return []
+
+
 @app.command()
 def fit(
     dataset: DatasetName = "unsw",
     model: Annotated[str, typer.Option("--model", "-m")] = "rf",
     target_fpr: Annotated[float, typer.Option("--fpr", help="Target false-positive rate.")] = 0.01,
     out: Annotated[Path | None, typer.Option("--out")] = None,
+    drop_artifacts: Annotated[
+        bool, typer.Option("--drop-artifacts", help="Leave out the audit's testbed-artifact columns.")
+    ] = False,
+    calibration: Annotated[
+        str, typer.Option("--calibration", help="held_out (default) | in_sample (pre-E9a behaviour).")
+    ] = "held_out",
 ) -> None:
     """Fit the full two-head detector and save it.
 
-    Thresholds are fitted on held-out benign traffic, never on test labels, so the saved operating
-    point is one that could actually be chosen at deployment time.
+    Thresholds and the conformal layer are fitted on a stratified slice of training data the
+    supervised model never saw, never on test labels, so the saved operating point is one that
+    could actually be chosen at deployment time.
     """
     seed_everything()
     from penumbra.models.detector import PenumbraDetector
 
-    ds = _load(dataset)
-    console.print(f"[dim]fitting on {ds.name} ({len(ds.X_train):,} rows)...[/dim]")
+    ds = _load(dataset, drop_artifacts=drop_artifacts)
+    console.print(f"[dim]fitting on {ds.name} ({len(ds.X_train):,} rows, calibration {calibration})...[/dim]")
     det = PenumbraDetector(target_fpr=target_fpr).fit(
-        ds, model_name=model, on_progress=lambda m: console.print(f"[dim]  {m}[/dim]")
+        ds,
+        model_name=model,
+        calibration=calibration,
+        quarantined=_quarantine_for(dataset, drop_artifacts),
+        on_progress=lambda m: console.print(f"[dim]  {m}[/dim]"),
     )
     path = det.save(out or settings().model_dir / dataset.lower())
     console.print(f"\n[green]saved[/green] {path}")
@@ -316,6 +339,8 @@ def fit(
             f"  supervised threshold {det.metadata.supervised_threshold:.4f}  "
             f"novelty threshold {det.metadata.novelty_threshold:.4f}"
         )
+        if det.metadata.quarantined_features:
+            console.print(f"  quarantined {', '.join(det.metadata.quarantined_features)}")
 
 
 @app.command()
@@ -1223,8 +1248,9 @@ def correlate_cmd(
         fam_train=ds.fam_train.iloc[tr].reset_index(drop=True),
     )
     console.print(f"[dim]fitting on {len(fit_ds.X_train):,} Mon-Wed flows (strided)...[/dim]")
+    # In-sample calibration, as the published 94,115 -> 203 run was measured.
     det = PenumbraDetector(target_fpr=0.01).fit(
-        fit_ds, on_progress=lambda m: console.print(f"[dim]  {m}[/dim]")
+        fit_ds, calibration="in_sample", on_progress=lambda m: console.print(f"[dim]  {m}[/dim]")
     )
 
     # Time order first, then stride, so the replayed stream spans both days.
@@ -2062,6 +2088,7 @@ def retrain(
         ds.y_test.iloc[can_idx],
         fine.iloc[can_idx],
         model_name=model,
+        feedback_rows=summary.rows_usable,
     )
     info = reg.register(challenger, created_by=by, parent=champion_version, training=summary.to_dict())
     reg.attach_gate(info.version, result.to_dict())

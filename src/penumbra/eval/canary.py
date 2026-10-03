@@ -16,6 +16,16 @@ The canary set is frozen and never trained on. In production it is a curated, ac
 labelled set; here it is a fixed, seeded slice of the dataset's test split (`live_split`), and the
 numbers reported alongside a gate decision come from a DIFFERENT slice, so no reported number was
 measured on rows that chose the model.
+
+## ADR-0005: G1 and G2 at a matched false-positive rate
+
+Comparing recall at each model's own threshold is only fair when both realise about the same FPR.
+A champion that fires on 18.5% of benign traffic buys recall with those false positives, and an
+honestly calibrated challenger then fails G1 while being better at every matched FPR. So
+`gate_detectors` reads the challenger's recall at the CHAMPION's realised canary FPR (its two
+thresholds refitted on the canary's benign rows at that budget), keeps G3 at the challenger's own
+threshold, and reports G4 - the challenger's realised FPR against its target - as advisory. The
+verdict at own thresholds is recorded beside it. `gate` itself is unchanged: E7 measured it.
 """
 
 from __future__ import annotations
@@ -25,7 +35,9 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
+from penumbra.models.fusion import OrGate
 from penumbra.seeds import SEED
 
 MIN_FAMILY_SUPPORT = 20
@@ -61,9 +73,15 @@ class GateResult:
     challenger: OperatingReport
     policy: GatePolicy
     family_deltas: dict[str, float] = field(default_factory=dict)
+    # ADR-0005. Left at their defaults by `gate`, which compares at own thresholds only.
+    kind: str = "own_threshold"
+    challenger_matched: OperatingReport | None = None
+    at_own_threshold: dict[str, Any] | None = None
+    advisory: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
+            "kind": self.kind,
             "passed": self.passed,
             "reasons": self.reasons,
             "policy": asdict(self.policy),
@@ -71,6 +89,13 @@ class GateResult:
             "challenger": self.challenger.to_dict(),
             "family_deltas": self.family_deltas,
         }
+        if self.challenger_matched is not None:
+            out["challenger_at_matched_fpr"] = self.challenger_matched.to_dict()
+        if self.at_own_threshold is not None:
+            out["at_own_threshold"] = self.at_own_threshold
+        if self.advisory is not None:
+            out["advisory"] = self.advisory
+        return out
 
 
 def operating_report(fired: np.ndarray, y: np.ndarray, families: np.ndarray) -> OperatingReport:
@@ -105,9 +130,24 @@ def evaluate(detector: Any, X: pd.DataFrame, y: pd.Series, families: pd.Series) 
 def gate(
     champion: OperatingReport, challenger: OperatingReport, policy: GatePolicy | None = None
 ) -> GateResult:
+    """G1-G3, each at the model's own threshold. The gate E7 measured; see `gate_detectors`."""
     policy = policy or GatePolicy()
-    reasons: list[str] = []
+    reasons, deltas = _recall_checks(champion, challenger, policy)
+    reasons += _fpr_check(champion, challenger, policy)
+    return GateResult(
+        passed=not reasons,
+        reasons=reasons,
+        champion=champion,
+        challenger=challenger,
+        policy=policy,
+        family_deltas=deltas,
+    )
 
+
+def _recall_checks(
+    champion: OperatingReport, challenger: OperatingReport, policy: GatePolicy
+) -> tuple[list[str], dict[str, float]]:
+    reasons: list[str] = []
     if challenger.recall < champion.recall - policy.max_overall_drop:
         reasons.append(
             f"G1 overall recall {champion.recall:.4f} -> {challenger.recall:.4f} "
@@ -127,18 +167,86 @@ def gate(
                 f"(allowed drop {policy.max_family_drop})"
             )
 
-    if challenger.fpr > champion.fpr + policy.max_fpr_rise:
-        reasons.append(
-            f"G3 benign FPR {champion.fpr:.4f} -> {challenger.fpr:.4f} (allowed rise {policy.max_fpr_rise})"
-        )
+    return reasons, deltas
 
+
+def _fpr_check(champion: OperatingReport, challenger: OperatingReport, policy: GatePolicy) -> list[str]:
+    if challenger.fpr > champion.fpr + policy.max_fpr_rise:
+        return [
+            f"G3 benign FPR {champion.fpr:.4f} -> {challenger.fpr:.4f} (allowed rise {policy.max_fpr_rise})"
+        ]
+    return []
+
+
+def binomial_interval(k: int, n: int, confidence: float = 0.99) -> tuple[float, float]:
+    """Clopper-Pearson interval for a rate of k in n."""
+    if n == 0:
+        return float("nan"), float("nan")
+    a = 1.0 - confidence
+    lo = 0.0 if k == 0 else float(stats.beta.ppf(a / 2, k, n - k + 1))
+    hi = 1.0 if k == n else float(stats.beta.ppf(1 - a / 2, k + 1, n - k))
+    return lo, hi
+
+
+def fired_at_fpr(scored: pd.DataFrame, y: np.ndarray, total_fpr: float) -> np.ndarray:
+    """Rows a detector fires on with both thresholds refitted on these benign rows at `total_fpr`.
+
+    The same per-head split the detector itself uses (`OrGate.fit`), so the comparison moves only
+    the operating point, never how the two heads are combined.
+    """
+    p = scored["p_attack"].to_numpy(dtype=float)
+    n = scored["novelty_percentile"].to_numpy(dtype=float)
+    benign = np.asarray(y).astype(int) == 0
+    refit = OrGate.fit(p[benign], n[benign], total_fpr=float(total_fpr), use_novelty=True)
+    return np.asarray(refit.flags(p, n))
+
+
+def gate_detectors(
+    champion: Any,
+    challenger: Any,
+    X: pd.DataFrame,
+    y: pd.Series,
+    families: pd.Series,
+    policy: GatePolicy | None = None,
+) -> GateResult:
+    """The promotion gate (ADR-0005): G1/G2 at the champion's realised FPR, G3 at own thresholds."""
+    policy = policy or GatePolicy()
+    y_arr, f_arr = y.to_numpy(), families.to_numpy()
+    champ_scored, chall_scored = champion.score(X), challenger.score(X)
+    champ = operating_report(champ_scored["fired"].to_numpy() > 0, y_arr, f_arr)
+    chall = operating_report(chall_scored["fired"].to_numpy() > 0, y_arr, f_arr)
+    own = gate(champ, chall, policy)
+
+    if np.isfinite(champ.fpr) and 0.0 < champ.fpr < 1.0:
+        matched = operating_report(fired_at_fpr(chall_scored, y_arr, champ.fpr), y_arr, f_arr)
+    else:
+        # Nothing to match against (a champion that never fires, or always does): own thresholds.
+        matched = chall
+    reasons, deltas = _recall_checks(champ, matched, policy)
+    reasons += _fpr_check(champ, chall, policy)
+
+    k = int(round(chall.fpr * chall.n_benign)) if chall.n_benign else 0
+    lo, hi = binomial_interval(k, chall.n_benign)
+    target = float(getattr(challenger, "target_fpr", float("nan")))
+    advisory = {
+        "G4_target_fpr": target,
+        "G4_realised_fpr": chall.fpr,
+        "G4_interval_99": [lo, hi],
+        "G4_consistent_with_target": bool(lo <= target <= hi) if np.isfinite(target) else None,
+        "champion_realised_fpr": champ.fpr,
+        "matched_fpr": matched.fpr,
+    }
     return GateResult(
         passed=not reasons,
         reasons=reasons,
-        champion=champion,
-        challenger=challenger,
+        champion=champ,
+        challenger=chall,
         policy=policy,
         family_deltas=deltas,
+        kind="matched_fpr",
+        challenger_matched=matched,
+        at_own_threshold={"passed": own.passed, "reasons": own.reasons},
+        advisory=advisory,
     )
 
 

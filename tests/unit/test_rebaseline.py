@@ -133,10 +133,12 @@ class TestRethresholded:
 
     def test_a_network_outside_the_reference_is_refused_not_rethresholded(self, detector) -> None:
         # Every flow scores above the whole benign reference, so novelty percentiles saturate at
-        # 1.0 and no threshold separates anything. R2 must catch it; the fix is --mode full.
+        # 1.0 and no threshold separates anything. Before thresholds were tie-safe the head fired
+        # on everything and R2 caught it; now it would fire on nothing, and R3 must catch that.
         out, report = rb.run(detector, new_network(1500), target_fpr=0.05, source="new", mode="thresholds")
         assert report["passed"] is False
-        assert report["gates"]["R2_holdout_fpr"]["passed"] is False
+        assert report["gates"]["R3_heads_can_fire"]["passed"] is False
+        assert report["gates"]["R3_heads_can_fire"]["calibration_fires"]["novelty"] == 0
 
 
 class TestGate:

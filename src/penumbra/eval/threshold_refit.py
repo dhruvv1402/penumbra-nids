@@ -100,7 +100,8 @@ def run(
     X_ev, y_ev, unseen_ev = X_test.iloc[eval_idx], y_test[eval_idx], np.asarray(unseen_test)[eval_idx]
 
     step(f"champion ({model_name}, target {TARGET_FPR:.0%})")
-    champion = PenumbraDetector(target_fpr=TARGET_FPR).fit(ds, model_name=model_name)
+    # E8 was measured with in-sample calibration; pinned so the published numbers reproduce.
+    champion = PenumbraDetector(target_fpr=TARGET_FPR).fit(ds, model_name=model_name, calibration="in_sample")
 
     def score(det: Any) -> dict[str, Any]:
         out = evaluate(det.score(X_ev), y_ev, unseen_ev)

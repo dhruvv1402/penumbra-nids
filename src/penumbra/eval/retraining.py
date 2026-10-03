@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from penumbra.data.loaders.base import Dataset
@@ -107,12 +108,19 @@ def challenge(
     *,
     model_name: str = "rf",
     policy: canary.GatePolicy | None = None,
+    feedback_rows: int = 0,
+    **fit_kwargs: Any,
 ) -> tuple[PenumbraDetector, canary.GateResult]:
-    """Fit a challenger on the augmented data and gate it against the champion on the canary."""
-    challenger = PenumbraDetector(target_fpr=champion.target_fpr).fit(augmented, model_name=model_name)
-    result = canary.gate(
-        canary.evaluate(champion, canary_X, canary_y, canary_families),
-        canary.evaluate(challenger, canary_X, canary_y, canary_families),
-        policy,
+    """Fit a challenger on the augmented data and gate it against the champion on the canary.
+
+    The last `feedback_rows` rows of `augmented` (where `augment` appends them) are kept in the
+    fit part: an analyst's verdict is a training label, and spending it on calibration would both
+    waste it and let one account's labels set the operating point.
+    """
+    n = len(augmented.X_train)
+    keep = np.arange(n - feedback_rows, n) if feedback_rows else None
+    challenger = PenumbraDetector(target_fpr=champion.target_fpr).fit(
+        augmented, model_name=model_name, keep_in_fit=keep, **fit_kwargs
     )
+    result = canary.gate_detectors(champion, challenger, canary_X, canary_y, canary_families, policy)
     return challenger, result

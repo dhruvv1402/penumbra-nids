@@ -19,6 +19,12 @@ The gate - blocking checks first, then evidence:
   R2  the held-out benign alert rate is within what the target allows. Holdouts are small, so the
       bound is the binomial 99% upper quantile at the target, not the target itself; a rate above
       it is evidence the threshold does not hold.
+  R3  each head can fire. Thresholds are tie-safe (`fusion.benign_threshold`): when a head's scores
+      on the calibration flows are tied above its whole reference - novelty percentiles saturated
+      at 1.0 on a network outside everything the head was referenced on - no threshold separates
+      them, and the tie-safe one fires on nothing. A head that fires on none of the calibration
+      flows, where R1 guarantees its budget allows at least five, is blind, and the result is
+      refused rather than shipped with a dead head.
 
   evidence (not blocking)
       - how much of the window the CURRENT detector's supervised head fires on. On a network the
@@ -174,6 +180,19 @@ def run(
             f"R2: {new_rates['fired']} of {len(X_hold):,} held-out benign flows fired; at a "
             f"{target_fpr:.1%} target at most {limit} would (binomial {HOLDOUT_CONFIDENCE:.0%} bound)."
         )
+    cal_fired = rebased.score(X_cal)["fired"].to_numpy()
+    head_fires = {
+        "supervised": int(np.isin(cal_fired, (1, 3)).sum()),
+        "novelty": int(np.isin(cal_fired, (2, 3)).sum()),
+    }
+    r3 = all(v > 0 for v in head_fires.values())
+    report["gates"]["R3_heads_can_fire"] = {"passed": r3, "calibration_fires": head_fires}
+    if not r3:
+        dead = ", ".join(k for k, v in head_fires.items() if v == 0)
+        report["reasons"].append(
+            f"R3: the {dead} head fires on none of {len(X_cal):,} calibration flows - its scores are "
+            f"tied above its whole reference, so no threshold separates them. Use --mode full."
+        )
     report["evidence"]["holdout"] = {"current": _rates(stock_hold), "rebaselined": new_rates}
     report["thresholds"] = {
         "supervised": {
@@ -217,5 +236,5 @@ def run(
             "rebaselined": recall_fpr(rebased.score(Xk)),
         }
 
-    report["passed"] = r1 and r2
+    report["passed"] = r1 and r2 and r3
     return rebased, report

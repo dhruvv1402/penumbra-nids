@@ -167,14 +167,14 @@ class OrGate:
         """Choose per-head thresholds from held-out benign traffic."""
         if not use_novelty:
             return cls(
-                supervised_threshold=float(np.quantile(benign_p_attack, 1.0 - total_fpr)),
+                supervised_threshold=benign_threshold(benign_p_attack, total_fpr),
                 novelty_threshold=float("inf"),
                 use_novelty=False,
             )
         per_head = per_head_budget(total_fpr, 2)
         return cls(
-            supervised_threshold=float(np.quantile(benign_p_attack, 1.0 - per_head)),
-            novelty_threshold=float(np.quantile(benign_novelty, 1.0 - per_head)),
+            supervised_threshold=benign_threshold(benign_p_attack, per_head),
+            novelty_threshold=benign_threshold(benign_novelty, per_head),
             use_novelty=True,
         )
 
@@ -198,6 +198,23 @@ class OrGate:
             else np.zeros_like(s)
         )
         return s + 2 * n
+
+
+def benign_threshold(reference: np.ndarray, budget: float) -> float:
+    """The score at which `budget` of the benign reference fires, never more when scores tie.
+
+    A plain quantile with `>=` is wrong when scores bunch: if 99.6% of benign rows score exactly 0
+    (a single decision tree, a vote count), the 99.5th percentile IS 0 and every row clears it -
+    a 1% budget that realises 100%. A tie block cannot be split by a threshold, so when the
+    quantile would admit more than the budget (plus one row of slack), the threshold moves just
+    above the tied value and the head realises less than its budget rather than far more. Where
+    scores do not tie at the quantile, the threshold is the plain quantile.
+    """
+    ref = np.asarray(reference, dtype=float)
+    t = float(np.quantile(ref, 1.0 - budget))
+    if len(ref) and float(np.mean(ref >= t)) > budget + 1.0 / len(ref):
+        t = float(np.nextafter(t, np.inf))
+    return t
 
 
 def expected_or_fpr(fpr_a: float, fpr_b: float, *, correlation: float = 0.0) -> float:
