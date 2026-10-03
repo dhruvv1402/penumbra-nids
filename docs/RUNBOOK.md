@@ -24,12 +24,19 @@ sample-size dependent. Treat them as a prompt to look, not as a verdict.
 
 ### Promotion — champion / challenger
 
-1. Train the challenger on the extended dataset. Fixed seed, recorded.
-2. **Canary gate** (`eval/canary.py`). On a frozen canary set, at each model's own deployed
-   threshold: overall recall may not drop more than 0.02, no attack type with ≥ 20 canary rows may
-   lose more than 0.10 recall, and benign FPR may not rise more than 0.01. The per-type check is the
-   one that matters. A model poisoned to ignore one attack loses almost nothing on average, and in
-   E7 its overall recall went *up*.
+1. Train the challenger: `penumbra retrain` with promoted feedback, or `penumbra registry challenge`
+   for a refit (a different model, calibration or feature set). Fixed seed, recorded.
+2. **Canary gate** (`eval/canary.py`, ADR-0005). On a frozen canary set:
+   - G1: overall recall may not drop more than 0.02.
+   - G2: no attack type with ≥ 20 canary rows may lose more than 0.10 recall.
+   - G1 and G2 are read with **each challenger head placed at the champion's realised canary rate
+     for that head**, so that an over-alerting champion cannot win on false positives.
+   - G3: benign FPR at the challenger's own threshold may not rise more than 0.01.
+   - G4 (advisory): realised FPR against the target, with a 99% interval.
+
+   The per-type check is the one that matters. A model poisoned to ignore one attack loses almost
+   nothing on average, and in E7 its overall recall went *up*. The manifest also records the
+   verdicts at own thresholds and at the original total-FPR match.
 3. **Shadow scoring** (`penumbra registry shadow`). Run the challenger alongside the champion on live
    traffic for ≥ 7 days, scoring without alerting. Compare alert volume, agreement rate, and per-family recall on anything the
    analysts confirm.
@@ -37,6 +44,44 @@ sample-size dependent. Treat them as a prompt to look, not as a verdict.
    SHA-256 digests.
 5. **Rollback** is re-pointing the registry at the previous version — a config change, not a redeploy.
    Keep the previous two versions always.
+
+### Training on a bigger machine
+
+Nothing in the submission depends on a second machine. On one, E9 runs larger, and the GPU arm adds
+an exact kernel SVM.
+
+```bash
+git clone https://github.com/dhruvv1402/penumbra-nids && cd penumbra-nids
+git checkout <tag>                      # the tag the report will be quoted from
+uv sync --extra eval                    # uv.lock pins numpy/sklearn, so pickles load on both machines
+export PENUMBRA_DATA_ROOT=/path/with/8GB/free
+uv run penumbra data fetch               # every dataset, SHA-256 checked against data/manifest.json
+uv run penumbra ensemble -d unsw   --profile workstation     # or --profile gpu
+uv run penumbra ensemble -d nslkdd --profile workstation
+uv run penumbra ensemble -d cicids --profile workstation     # full grid on CICIDS on this profile
+```
+
+| profile | Nystroem landmarks (UNSW/NSL, CICIDS) | CICIDS grid | bootstrap | exact SVC check |
+|---|---|---|---|---|
+| `laptop` (default; 8 cores, 16 GB) | 1,000 / 256 | the arms UNSW selected | 500 / 200 | 30k rows, CPU |
+| `workstation` | 2,000 / 1,000 | full | 1,000 / 500 | 30k rows, CPU |
+| `gpu` | 2,000 / 1,000 | full | 1,000 / 500 | **full data, cuML** |
+
+- **Profiles change compute settings only.** Every report records its profile, the machine (cores,
+  RAM, GPU, OS), the git SHA and library versions. Compare timings only within one machine.
+- **Resume.** Every Stage A fit and Stage B model checkpoints under
+  `artifacts/checkpoints/ensemble_<dataset>_<profile>/`. A crashed run picks up where it stopped,
+  and `--fresh` ignores the checkpoints.
+- **Copy back** `artifacts/reports/ensemble_*.json`. Registry versions travel as whole folders
+  (`artifacts/registry/<dataset>/versions/<v>`). Set the same `PENUMBRA_MODEL_SIGNING_KEY` on both
+  machines, or signed manifests will not verify.
+- **GPU arm.** This needs Linux or WSL2 with CUDA. Install cuML by hand
+  (`uv pip install --extra-index-url https://pypi.nvidia.com cuml-cu12`). It is deliberately not in
+  `uv.lock`, so CI and `pip-audit` never see it. Without it, `--profile gpu` falls back to the 30k
+  subsample and says so in the report.
+  - A cuML model needs cuML to load. Treat the exact SVC as a measurement, not a product member,
+    unless it reloads on a CPU-only machine.
+  - Even then, it must pass the latency check: per-flow cost grows with its support vectors.
 
 ### What is never done automatically
 
