@@ -193,7 +193,11 @@ export function AttackChip({ attack }: { attack: AttackTechnique | null }) {
 }
 
 /**
- * SHAP contributions rendered as plain English first, numbers second.
+ * Feature contributions rendered as plain English first, numbers second.
+ *
+ * These are NOT per-row SHAP values. They are the model's global feature importances, weighted by
+ * this row (alerts/builder.py says so too), and the footer under the list says it to the analyst.
+ * The wire field is still called `shap_value` because the alert schema froze it.
  *
  * "sload = 1.4e6" means nothing on a triage queue. "outbound throughput 1.4 MB/s, typical for this
  * host is 12 KB/s" is actionable by a tier-1 analyst who is not an ML engineer, which is the whole
@@ -230,6 +234,9 @@ export function ContributionList({ contributions }: { contributions: Contributio
           </li>
         );
       })}
+      <li className="px-3 py-1.5 text-[10px] text-[var(--color-ink-faint)]">
+        Approximate: global feature importances weighted by this flow, not per-flow SHAP values.
+      </li>
     </ul>
   );
 }

@@ -54,8 +54,9 @@ Then the full 9-family matrix: binary recall, family attribution, `SUSPECTED_NOV
 ## Phase 3 — Alerts, correlation, console — *parallel from Phase 1*
 
 Alert and Incident models, correlation on CICIDS2017 (source IP + family + time window), SQLite behind
-a `Repository` Protocol, replay engine, WebSocket stream, incident queue and detail pages with SHAP
-waterfall, ATT&CK chip and verdict buttons.
+a `Repository` Protocol, replay engine, WebSocket stream, incident queue and detail pages with
+feature contributions (global importances weighted per row - a per-row SHAP waterfall was planned and
+not built), ATT&CK chip and verdict buttons.
 
 ## Phase 4 — Imbalance, calibration, conformal — *parallel*
 
