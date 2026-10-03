@@ -4,7 +4,7 @@
 > come from the CLI commands named beside them, not from hand-editing. Hypotheses are pre-registered
 > in [`EXPERIMENTS.md`](EXPERIMENTS.md), committed before their runs.
 >
-> **Read §10.8 first if you read one section.** Until E9a, the shipped detector fitted its
+> **Read §10.7j first if you read one section.** Until E9a, the shipped detector fitted its
 > supervised threshold on rows its forest had trained on. On UNSW that put the realised FPR at
 > **18.8%** against a 1% target; held-out calibration brings it to **2.9%**. Numbers in earlier
 > sections that come from a full detector were measured with the old calibration, and each says so
@@ -1351,6 +1351,63 @@ was referenced on: those flows' percentiles saturate at 1.0, no threshold separa
 held-out check refuses the result. That case is in the test suite.
 
 *Reproduce: `penumbra refit-drill` (`artifacts/reports/threshold_refit_nslkdd.json`).*
+
+### 10.7j The operating point we shipped was fitted on memorised rows (E9a)
+
+Planning E9 surfaced a defect in our own detector, not in the data. `PenumbraDetector.fit` held
+benign rows out of the *novelty* head, but the supervised forest trained on every training row. That
+included the benign rows whose 99.5th-percentile score became its threshold, and the slice the
+conformal layer was calibrated on. A forest scores its own training rows lower than unseen ones, so
+the threshold sat too low. For a single unpruned decision tree the in-sample scores are all 0 and
+every row would fire.
+
+The fix: the supervised model trains on train minus a stratified 20% slice S, and S sets every
+threshold and the conformal quantile. Measured on the full test splits, at a 1% target:
+
+| | realised FPR [95% CI] | recall | benign reaching an analyst |
+|---|---|---:|---:|
+| UNSW, as shipped (in-sample) | **18.79%** [18.40, 19.20] | 0.973 | 38.6% |
+| UNSW, held-out | **2.91%** [2.74, 3.08] | 0.885 | 28.5% |
+| UNSW, held-out, TTL quarantined | 2.82% [2.65, 2.99] | 0.879 | 28.0% |
+| NSL-KDD, as shipped (in-sample) | 9.62% [9.05, 10.22] | 0.828 | 16.3% |
+| NSL-KDD, held-out | 9.21% [8.65, 9.80] | 0.804 | 16.0% |
+
+- **The UNSW detector we shipped fired on nearly one benign flow in five.** Its 0.973 recall was
+  bought with that over-alerting. At an honest operating point recall is 0.885. This is the same
+  lesson as E8, and this time the cause was our code.
+- **NSL-KDD barely moves.** Its excess is the train/test shift E8 measured and repaired with
+  thresholds fitted on shifted benign traffic.
+- **Quarantining the TTL artifacts costs nothing on UNSW test** (0.09 points of FPR). On the lab
+  capture it also **fixes nothing**: ordinary flows fired 38.4% with TTL kept and 38.7% without, so
+  H9h is refuted. Calibration did move the lab. The shipped detector fired on 70.3% of ordinary
+  lab flows out of the box, and held-out calibration brings that to 38.4%. Re-baselining (§10.7h)
+  is still the step that makes the lab usable.
+- **What remains of UNSW's 2.9% is shift, not calibration.** The 99% interval on the canary,
+  [2.47%, 3.30%], excludes 1%. The tool for the rest is `rebaseline --mode thresholds` (E8).
+
+**The gate, and a rule we had to revise.** ADR-0005 amended the promotion gate to compare a
+challenger at the champion's realised FPR, because the old gate compared at each model's own
+threshold and so rewarded an over-alerting champion.
+
+| UNSW canary, 24,676 rows | champion v001 | challenger |
+|---|---:|---:|
+| own thresholds: recall, FPR | 0.971, 18.78% | 0.881, 2.86% |
+| matched total FPR, equal split across heads (rule as registered) | | 0.946, 18.0%: **refused** |
+| each head at the champion's rate (revision 1, registered before its run) | | **0.970, 18.73%: passed** |
+
+- **The rule as first written refused the challenger** (H9g refuted). The champion spends 18.6 of its
+  18.8 points on the supervised head, and an equal split starved the challenger's.
+- **The per-head revision and its prediction were committed before the re-run**, and the prediction
+  held. At the champion's operating point the challenger is the same detector: 0.970 against 0.971,
+  with no family moving more than 0.006.
+- **The challenger was promoted as UNSW champion v003.**
+- **On NSL-KDD the same revised gate refused the held-out challenger.** The unseen attack type
+  `processtable` fell from 0.79 to 0.63 recall at the matched operating point, so NSL-KDD's
+  champion is unchanged. Gating an honest model is the gate's job either way.
+
+*Reproduce: `penumbra calibration-drill --attacker <ip> --target <ip>`
+(`artifacts/reports/calibration_drill.json`), then
+`penumbra registry challenge -d unsw -m rf --drop-artifacts` and `-d nslkdd -m rf`.*
 
 ### 10.8 Reproduction
 

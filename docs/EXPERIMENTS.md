@@ -934,6 +934,16 @@ Run with `penumbra registry challenge -d unsw -m rf --drop-artifacts`, which reg
 - Promoted by a different account (`admin`) from the one that registered it (`senior`), and
   recorded in the audit log.
 
+**Not predicted, recorded for completeness: NSL-KDD.** `registry init -d nslkdd` registered the
+shipped in-sample detector as the first champion. It was ungated, and the manifest says so.
+`registry challenge -d nslkdd -m rf` then gated a held-out challenger with the same revised rule:
+
+- **Refused.** `processtable`, one of the 17 attack types training never contains, fell from 0.79
+  to 0.63 recall on 206 canary rows at the matched per-head operating point.
+- At its own threshold the challenger runs at 8.72% against the champion's 9.17%. NSL-KDD's excess
+  is shift, so calibration buys little there and a family regression is a real cost.
+- The NSL-KDD champion is unchanged.
+
 ---
 
 ## E9 — Does a 3-tree + 3-SVM ensemble beat a 300-tree forest?
