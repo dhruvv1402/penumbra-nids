@@ -156,7 +156,7 @@ function Nav({ go }: { go: (id: PanelId) => void }) {
           CONSOLE
         </Link>
         <span className="lx-circle" title="Release">
-          v1.1
+          v1.2
         </span>
         <a className="lx-circle" href={REPO} target="_blank" rel="noreferrer" aria-label="Source on GitHub">
           <GitHubMark className="lx-gh" />
@@ -327,7 +327,7 @@ const STATS: { value: string; label: string; tone: string; note: string }[] = [
   { value: "94,115→203", label: "alerts became incidents", tone: "lx-yellow", note: "CICIDS2017, real source IPs" },
   { value: "12.6ms", label: "to score one flow", tone: "lx-red", note: "was 139 ms; 0 decisions changed" },
   { value: "92.9%", label: "of scans caught on our own network", tone: "lx-blue", note: "after re-learning normal, no labels" },
-  { value: "10.2→1.06%", label: "false alarms, after drift", tone: "lx-purple", note: "E8, pre-registered" },
+  { value: "18.8→2.9%", label: "false alarms, after fixing our own bug", tone: "lx-purple", note: "E9a: threshold fitted on memorised rows" },
   { value: "13", label: "real Microsoft Sentinel incidents", tone: "lx-green", note: "live workspace, every record DvcAction=Allow" },
   { value: "0", label: "endpoints that can block traffic", tone: "lx-black", note: "enforced in CI" },
 ];
@@ -387,7 +387,7 @@ function How() {
 const MISSES = [
   "Re-learning normal did NOT beat moving thresholds (E8, refuted)",
   "A deep sequence model lost to nine cheap features",
-  "Calibration breaks under drift - we show it",
+  "Our shipped detector fired on 18.8% of benign traffic - our bug, measured and fixed (E9a)",
   "Weakest families? ~90% of Analysis and Backdoor rows duplicate another family exactly",
   "13 bugs found by review, all fixed with tests",
   "Our own Sentinel claim was wrong - measured, corrected",
