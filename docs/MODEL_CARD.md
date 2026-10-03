@@ -12,10 +12,10 @@ Structured per Mitchell et al., *Model Cards for Model Reporting* (FAT\* 2019).
 | | |
 |---|---|
 | Name | Penumbra |
-| Version | 0.1.0. Deployed versions are tracked in the model registry (`penumbra registry list`): each has SHA-256 manifests, its training provenance (feedback rows, approvers), its canary gate report and its shadow comparison |
+| Version | Code 0.1.0. Models are versioned in the registry (`penumbra registry list`), with SHA-256 manifests, training provenance, the canary gate report and the shadow comparison. Each detector's metadata records its registry version. **UNSW champion: v003** (held-out calibration, TTL artifacts quarantined, gated per ADR-0005, promoted 2026-10-04). **NSL-KDD champion: v001** (the original fit; a held-out challenger was refused by the gate) |
 | Type | Two-stage: supervised multiclass classifier + benign-only novelty detector |
-| Architecture | Known-threat head: LogisticRegression (floor), RandomForest, XGBoost. Novelty head: 42-32-16-8-16-32-42 MLP autoencoder, IsolationForest, Mahalanobis with Ledoit-Wolf shrinkage. Fusion: rank-normalised, single threshold |
-| Calibration | Isotonic on a held-out split; Platt compared |
+| Architecture | Known-threat head: RandomForest (deployed), with LogisticRegression (floor) and XGBoost compared. A 3-decision-tree + 3-SVM ensemble (`-m ens`, Nystroem-approximated kernels) is measured in E9 and ships only if the gate passes it. Novelty head: 42-32-16-8-16-32-42 MLP autoencoder, IsolationForest, Mahalanobis with Ledoit-Wolf shrinkage. Fusion: two heads, each thresholded on its own scale and OR-ed at a matched total budget |
+| Calibration | **Operating point:** every threshold and the conformal quantile are fitted on a stratified 20% slice of training data the supervised model never saw. Before E9a they were fitted on rows the forest had trained on, and the UNSW detector realised 18.8% FPR against a 1% target (now 2.9%; EVALUATION §10.7j). **Probabilities:** isotonic on a held-out split, Platt compared (it hurts under shift, §7) |
 | Uncertainty | Mondrian (class-conditional) split-conformal prediction |
 | Portable form | Supervised head exports to ONNX (`penumbra export-onnx`); parity verified on all 22,544 NSL-KDD test rows, 0 decisions flipped. The novelty head and conformal layer are not exported |
 | New networks | Re-baseline before use (`penumbra rebaseline`): novelty head, both thresholds and the benign conformal quantile re-fitted on the network's own benign traffic, gated on a held-out slice, registered as a candidate. On our lab capture: ordinary flows alerting 100% → 4.9%, scan flows detected 92.9% (EVALUATION §10.7h) |
@@ -104,7 +104,8 @@ measured**, because they are.
 |---|---|
 | Binary ROC-AUC (with suspected artifact features) | UNSW rf 0.9844 |
 | **Binary ROC-AUC (artifact features removed)** | **UNSW rf 0.9833 [0.9828, 0.9839]** — **this is the number we stand behind**; NSL-KDD rf 0.9668 |
-| Recall @ 1% FPR | UNSW rf 0.8302 · NSL-KDD rf 0.4644 · NSL-KDD unseen-17 **0.0525** (supervised), 0.346 with the novelty head |
+| Recall @ 1% FPR | UNSW rf 0.8302 · NSL-KDD rf 0.4644 · NSL-KDD unseen-17 **0.0525** (supervised), 0.346 with the novelty head. These are matched-budget comparisons with thresholds placed on test |
+| **Realised FPR of the deployed detectors** (threshold fitted on training data, applied blind) | **UNSW v003: 2.9%** on test (v001 was 18.8%) · NSL-KDD v001: 9.6% (train/test shift; `rebaseline --mode thresholds` restores 1.06%, E8). Targets are 1%. These are the numbers an operator would see |
 | Macro-F1 across 10 classes | UNSW 0.5086 · NSL-KDD (5 classes) 0.5474 |
 | Brier score, pre/post isotonic | UNSW held-out 0.0299 → 0.0289 (ECE 0.0150 → 0.0036). **On the shifted test split isotonic makes it worse**: 0.0703 → 0.0813. NSL-KDD test 0.1625 → 0.1725. EVALUATION §7 |
 | Per-family recall matrix | EVALUATION §10.2: UNSW DoS 0.125, Backdoor 0.093, Analysis 0.090; NSL-KDD r2l 0.059 |
@@ -229,6 +230,10 @@ and its registry entry carries the evidence it was promoted on.
   resembles benign traffic.
 - **Do not deploy on a network whose traffic mix differs materially from the training data** without
   re-evaluating. Given §1, that means essentially every real network.
+- **A target FPR is not a realised FPR.** Even calibrated on held-out training rows, UNSW realises
+  2.9% and NSL-KDD 9.6% against 1%: test traffic is not training traffic. Measure the realised rate
+  on your own benign traffic and re-threshold (`penumbra rebaseline --mode thresholds`) before
+  relying on the target.
 
 ---
 
