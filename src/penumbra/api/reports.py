@@ -42,6 +42,35 @@ class ReportSpec:
 # understands and a stray file in artifacts/ is never served.
 CATALOGUE: tuple[ReportSpec, ...] = (
     ReportSpec(
+        "calibration-drill",
+        "calibration_drill.json",
+        "Calibration drill (E9a)",
+        "penumbra calibration-drill",
+        "In-sample against held-out calibration, TTL kept against quarantined, on both datasets, "
+        "the lab capture out of the box, and the gate.",
+    ),
+    ReportSpec(
+        "ensemble-unsw",
+        "ensemble_unsw.json",
+        "3 trees + 3 SVMs on UNSW-NB15 (E9)",
+        "penumbra ensemble -d unsw",
+        "The ensemble against RF-300, XGBoost and LogReg, every preprocessing arm, paired intervals.",
+    ),
+    ReportSpec(
+        "ensemble-nslkdd",
+        "ensemble_nslkdd.json",
+        "3 trees + 3 SVMs on NSL-KDD (E9)",
+        "penumbra ensemble -d nslkdd",
+        "The same, with recall on the 17 attack types training never contains.",
+    ),
+    ReportSpec(
+        "ensemble-cicids",
+        "ensemble_cicids.json",
+        "3 trees + 3 SVMs on CICIDS2017 (E9)",
+        "penumbra ensemble -d cicids",
+        "The same on 1.2M Monday-Wednesday flows, tested on Thursday-Friday.",
+    ),
+    ReportSpec(
         "eval-unsw",
         "eval_unsw.json",
         "UNSW-NB15 evaluation",

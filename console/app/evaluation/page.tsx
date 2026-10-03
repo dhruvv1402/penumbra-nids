@@ -46,6 +46,9 @@ export default function Evaluation() {
   const [refit, setRefit] = useState<RefitReport | null>(null);
   const [speed, setSpeed] = useState<LoadReport | null>(null);
   const [rebaseline, setRebaseline] = useState<RebaselineReport | null>(null);
+  const [unseen, setUnseen] = useState<UnseenReport | null>(null);
+  const [drill, setDrill] = useState<DrillReport | null>(null);
+  const [ensembles, setEnsembles] = useState<Record<string, EnsembleReport | null>>({});
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => setSession(loadSession()), []);
@@ -74,6 +77,11 @@ export default function Evaluation() {
         pull<RefitReport>("threshold-refit", setRefit),
         pull<LoadReport>("loadtest", setSpeed),
         pull<RebaselineReport>("rebaseline", setRebaseline),
+        pull<UnseenReport>("unseen17", setUnseen),
+        pull<DrillReport>("calibration-drill", setDrill),
+        ...["unsw", "nslkdd", "cicids"].map((ds) =>
+          pull<EnsembleReport>(`ensemble-${ds}`, (v) => setEnsembles((e) => ({ ...e, [ds]: v }))),
+        ),
       ]);
       setError(null);
     } catch (err) {
@@ -131,6 +139,11 @@ export default function Evaluation() {
       )}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-2 p-2">
+        <UnseenPanel report={unseen} command={commandFor("unseen17")} />
+        <DrillPanel report={drill} command={commandFor("calibration-drill")} />
+        {(["unsw", "nslkdd", "cicids"] as const).map((ds) => (
+          <EnsemblePanel key={ds} dataset={ds} report={ensembles[ds] ?? null} command={commandFor(`ensemble-${ds}`)} />
+        ))}
         <MinedRulesPanel report={rules} command={commandFor("rules-unsw")} />
         <SequencePanel report={sequence} command={commandFor("sequence")} />
         <EvasionPanel report={evasion} command={commandFor("adversarial")} />
@@ -757,6 +770,235 @@ function SpeedPanel({ report, command }: { report: LoadReport | null; command: s
       <Caption>
         The compiled scorer runs the forests as flat arrays below a batch size it measures at startup, and checks that no
         decision changes before it is used. Still a batch scorer, and still far outside an inline-blocking budget.
+      </Caption>
+    </Panel>
+  );
+}
+
+interface UnseenPoint {
+  target_fpr: number;
+  realised_fpr: number;
+  recall_supervised: number;
+  recall_fused: number;
+  delta: number;
+}
+
+interface UnseenReport {
+  n_unseen: number;
+  points: UnseenPoint[];
+}
+
+/** The headline: attack types the model never saw, across false-positive budgets. A curve. */
+function UnseenPanel({ report, command }: { report: UnseenReport | null; command: string }) {
+  return (
+    <Panel title="unseen attacks — the headline, as a curve" right={<CommandTag command={command} />}>
+      {!report ? (
+        <NotGenerated command={command} />
+      ) : (
+        <>
+          <table className="w-full text-[11px]">
+            <thead className="text-[var(--color-ink-dim)]">
+              <tr className="border-b border-[var(--color-border)]">
+                <th className="text-left font-normal px-3 py-1.5">realised FPR</th>
+                <th className="text-right font-normal px-3 py-1.5">supervised only</th>
+                <th className="text-right font-normal px-3 py-1.5">+ novelty head</th>
+                <th className="text-right font-normal px-3 py-1.5">Δ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.points.map((pt) => (
+                <tr key={pt.target_fpr} className="border-b border-[var(--color-border)] last:border-0">
+                  <td className="px-3 py-1.5 tabular-nums">{pct(pt.realised_fpr, 2)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{num(pt.recall_supervised)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{num(pt.recall_fused)}</td>
+                  <td
+                    className={`px-3 py-1.5 text-right tabular-nums ${pt.delta < 0 ? "text-[var(--color-sev-high)]" : ""}`}
+                  >
+                    {pt.delta >= 0 ? "+" : ""}
+                    {num(pt.delta)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <Caption>
+            Recall on the {report.n_unseen.toLocaleString()} NSL-KDD test rows whose attack type never appears in training.
+            The novelty head helps in a band and costs recall at 10% FPR; both are shown because both are true. Thresholds
+            here are placed so the realised FPR hits each budget exactly, which isolates the comparison - it is not a
+            deployable operating point.
+          </Caption>
+        </>
+      )}
+    </Panel>
+  );
+}
+
+interface DrillRates {
+  realised_fpr: number;
+  realised_fpr_ci95: [number, number];
+  recall: number;
+  benign_reaching_an_analyst: number;
+}
+
+interface DrillArm {
+  supervised_threshold: number;
+  test: DrillRates;
+}
+
+interface DrillReport {
+  unsw: Record<string, DrillArm>;
+  nslkdd: Record<string, DrillArm>;
+  lab?: Record<string, { ordinary_flows: { flows: number; fired: number; reached_an_analyst: number } }>;
+  summary: Record<string, { held: boolean }>;
+}
+
+/** E9a: the operating point we shipped was fitted on rows the forest had memorised. */
+function DrillPanel({ report, command }: { report: DrillReport | null; command: string }) {
+  if (!report) {
+    return (
+      <Panel title="calibration — the bug that set the operating point (E9a)">
+        <NotGenerated command={command} />
+      </Panel>
+    );
+  }
+  const rows: [string, DrillArm | undefined][] = [
+    ["UNSW as shipped (in-sample)", report.unsw["kept/in_sample"]],
+    ["UNSW held-out", report.unsw["kept/held_out"]],
+    ["UNSW held-out, TTL quarantined", report.unsw["quarantined/held_out"]],
+    ["NSL-KDD in-sample", report.nslkdd["in_sample"]],
+    ["NSL-KDD held-out", report.nslkdd["held_out"]],
+  ];
+  const lab = report.lab;
+  const held = Object.values(report.summary).filter((v) => v.held).length;
+  return (
+    <Panel title="calibration — the bug that set the operating point (E9a)" right={<CommandTag command={command} />}>
+      <table className="w-full text-[11px]">
+        <thead className="text-[var(--color-ink-dim)]">
+          <tr className="border-b border-[var(--color-border)]">
+            <th className="text-left font-normal px-3 py-1.5">1% target, full test split</th>
+            <th className="text-right font-normal px-3 py-1.5">realised FPR</th>
+            <th className="text-right font-normal px-3 py-1.5">recall</th>
+            <th className="text-right font-normal px-3 py-1.5">benign to an analyst</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([name, arm]) =>
+            arm ? (
+              <tr key={name} className="border-b border-[var(--color-border)] last:border-0">
+                <td className="px-3 py-1.5">{name}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{pct(arm.test.realised_fpr, 2)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{num(arm.test.recall)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{pct(arm.test.benign_reaching_an_analyst)}</td>
+              </tr>
+            ) : null,
+          )}
+        </tbody>
+      </table>
+      <Caption>
+        The shipped threshold was the 99.5th percentile of scores the forest gave its own training rows - rows it had
+        memorised - so it sat far too low. Held out, UNSW&apos;s realised FPR falls from{" "}
+        {pct(report.unsw["kept/in_sample"]?.test.realised_fpr)} to {pct(report.unsw["kept/held_out"]?.test.realised_fpr)}.
+        {lab?.shipped && lab["kept/held_out"] ? (
+          <>
+            {" "}
+            On our own lab capture, ordinary flows firing fall from {pct(lab.shipped.ordinary_flows.fired)} to{" "}
+            {pct(lab["kept/held_out"].ordinary_flows.fired)}; quarantining the TTL columns changes nothing there.
+          </>
+        ) : null}{" "}
+        {held} of {Object.keys(report.summary).length} pre-registered predictions held. The new champion passed the gate
+        at the old champion&apos;s per-head operating point - see governance.
+      </Caption>
+    </Panel>
+  );
+}
+
+interface EnsembleModel {
+  recall_at_1pct: number;
+  realised_fpr: number;
+  roc_auc: { point: number; ci95: [number, number] };
+  unseen_recall_at_1pct?: number;
+  vs_rf?: { recall_delta: number; ci95: [number, number] };
+}
+
+interface EnsembleReport {
+  dataset: string;
+  grid: string;
+  settings: { nystroem_k: number; svm_solver: string };
+  selection: { selected: { tree_arm: string; svm_arm: string; combiner: string; recall: number } };
+  stage_a: { arms: Record<string, { transform?: { pca_components?: number | null } }> };
+  stage_b: Record<string, { fit_seconds: number; ms_per_flow_batch_2048: number; size_mb: number }>;
+  test: { models: Record<string, EnsembleModel>; prevalence: number };
+  summary: Record<string, { held: boolean }>;
+  fingerprint: { profile: { name: string }; cores?: number; ram_gb?: number | null };
+}
+
+const ENSEMBLE_LABELS: Record<string, string> = {
+  ensemble: "3 trees + 3 SVMs (selected)",
+  ensemble_P3a: "3 + 3, PCA then normalise",
+  rf: "random forest, 300 trees",
+  xgb: "XGBoost",
+  logreg: "logistic regression",
+};
+
+/** E9: does a small mixed ensemble beat the forest? Paired intervals, not overlapping ones. */
+function EnsemblePanel({
+  dataset,
+  report,
+  command,
+}: {
+  dataset: string;
+  report: EnsembleReport | null;
+  command: string;
+}) {
+  const title = `3 trees + 3 SVMs vs the forest — ${dataset} (E9)`;
+  if (!report) {
+    return (
+      <Panel title={title}>
+        <NotGenerated command={command} />
+      </Panel>
+    );
+  }
+  const sel = report.selection.selected;
+  const pcaK = report.stage_a.arms["P2"]?.transform?.pca_components;
+  const p3a = report.stage_a.arms["P3a"]?.transform?.pca_components;
+  const unseen = Object.values(report.test.models).some((m) => m.unseen_recall_at_1pct != null);
+  return (
+    <Panel title={title} right={<CommandTag command={command} />}>
+      <table className="w-full text-[11px]">
+        <thead className="text-[var(--color-ink-dim)]">
+          <tr className="border-b border-[var(--color-border)]">
+            <th className="text-left font-normal px-3 py-1.5">test, exact 1% budget</th>
+            <th className="text-right font-normal px-3 py-1.5">recall</th>
+            {unseen && <th className="text-right font-normal px-3 py-1.5">unseen-17</th>}
+            <th className="text-right font-normal px-3 py-1.5">vs forest [95% CI]</th>
+            <th className="text-right font-normal px-3 py-1.5">ms / flow</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(report.test.models).map(([name, m]) => (
+            <tr key={name} className="border-b border-[var(--color-border)] last:border-0">
+              <td className="px-3 py-1.5">{ENSEMBLE_LABELS[name] ?? name}</td>
+              <td className="px-3 py-1.5 text-right tabular-nums">{num(m.recall_at_1pct, 4)}</td>
+              {unseen && <td className="px-3 py-1.5 text-right tabular-nums">{num(m.unseen_recall_at_1pct)}</td>}
+              <td className="px-3 py-1.5 text-right tabular-nums text-[var(--color-ink-dim)]">
+                {m.vs_rf
+                  ? `${m.vs_rf.recall_delta >= 0 ? "+" : ""}${num(m.vs_rf.recall_delta, 4)} [${num(m.vs_rf.ci95[0], 4)}, ${num(m.vs_rf.ci95[1], 4)}]`
+                  : "—"}
+              </td>
+              <td className="px-3 py-1.5 text-right tabular-nums text-[var(--color-ink-dim)]">
+                {num(report.stage_b[name]?.ms_per_flow_batch_2048, 3)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Caption>
+        Selected on a holdout, never on test: trees on {sel.tree_arm}, SVMs on {sel.svm_arm}, {sel.combiner} combiner. SVMs
+        are linear SVMs on a {report.settings.nystroem_k}-landmark Nystroem kernel map ({report.settings.svm_solver}); an
+        exact kernel SVM does not fit on this data. Normalise-then-PCA kept {pcaK ?? "—"} components; PCA on unscaled
+        features kept {p3a ?? "—"}. Intervals are paired bootstraps of the difference. Profile{" "}
+        {report.fingerprint.profile.name}. {Object.values(report.summary).filter((v) => v.held).length} of{" "}
+        {Object.keys(report.summary).length} pre-registered predictions held.
       </Caption>
     </Panel>
   );
