@@ -279,11 +279,39 @@ def test_model_registry_is_readable_and_scoped(client: TestClient, tmp_path, mon
         artifact_root = tmp_path
 
     monkeypatch.setattr(app_mod, "settings", lambda: S())
+    monkeypatch.setattr(app_mod.reports, "load", lambda name: None)
     analyst = _token(client, "analyst")
     empty = client.get("/models/nslkdd", headers=analyst).json()
-    assert empty == {"dataset": "nslkdd", "champion": None, "history": [], "versions": []}
+    assert empty == {"dataset": "nslkdd", "champion": None, "history": [], "versions": [], "source": "live"}
     assert client.get("/models/..%2F..%2Fetc", headers=analyst).status_code == 404
     assert client.get("/models/nslkdd").status_code == 401
+
+
+def test_without_a_registry_the_shipped_snapshot_is_served_and_labelled(
+    client, tmp_path, monkeypatch
+) -> None:
+    # A deployment image carries reports but no model artifacts. The governance page must still show
+    # the registry - and must say it is a snapshot, because its hash checks ran somewhere else.
+    from penumbra.api import app as app_mod
+
+    class S:
+        artifact_root = tmp_path
+
+    snapshot = {
+        "generated_at": "2026-10-04T00:00:00+00:00",
+        "datasets": {
+            "unsw": {"dataset": "unsw", "champion": "v003", "history": [], "versions": [{"version": "v003"}]}
+        },
+    }
+    monkeypatch.setattr(app_mod, "settings", lambda: S())
+    monkeypatch.setattr(
+        app_mod.reports, "load", lambda name: {"data": snapshot} if name == "registry-snapshot" else None
+    )
+    analyst = _token(client, "analyst")
+    body = client.get("/models/unsw", headers=analyst).json()
+    assert body["source"] == "snapshot" and body["champion"] == "v003"
+    assert body["snapshot_at"] == "2026-10-04T00:00:00+00:00"
+    assert client.get("/models/nslkdd", headers=analyst).json()["source"] == "live"
 
 
 def test_siem_status_says_the_mock_is_a_mock(client: TestClient) -> None:

@@ -323,3 +323,54 @@ class ModelRegistry:
             state["signature"] = _sign(key, state)
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / CHAMPION).write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def summary(reg: ModelRegistry) -> dict[str, Any]:
+    """Every version, its gate verdict and shadow comparison, and a fresh hash check. Read-only.
+
+    Shared by `GET /models/{dataset}` and `penumbra registry snapshot`, so the snapshot a deployment
+    ships is exactly what the live endpoint would have said on the machine that wrote it.
+    """
+    try:
+        champion = reg.champion_state()
+    except RegistryError as exc:
+        # A tampered champion pointer is shown as exactly that, not as an empty registry.
+        champion = {"version": None, "history": [], "error": str(exc)}
+    versions = []
+    for v in reg.versions():
+        shadow = v.training.get("shadow") or {}
+        gate = None
+        if v.gate is not None:
+            gate = {
+                "kind": v.gate.get("kind"),
+                "passed": v.gate.get("passed"),
+                "reasons": v.gate.get("reasons", []),
+                "at_own_threshold": v.gate.get("at_own_threshold"),
+                "advisory": v.gate.get("advisory"),
+            }
+        versions.append(
+            {
+                "version": v.version,
+                "created_at": v.created_at,
+                "created_by": v.created_by,
+                "parent": v.parent,
+                "training_kind": v.training.get("kind"),
+                "feedback_rows": v.training.get("feedback_rows"),
+                "approvers": v.training.get("approvers", []),
+                "gate": gate,
+                "shadow": None
+                if not shadow
+                else {k: shadow.get(k) for k in ("alert_volume_ratio", "cohen_kappa", "agreement", "n_rows")},
+                "intact": not reg.verify(v.version),
+                "champion": v.version == champion.get("version"),
+            }
+        )
+    out: dict[str, Any] = {
+        "dataset": reg.dataset,
+        "champion": champion.get("version"),
+        "history": champion.get("history", []),
+        "versions": versions,
+    }
+    if "error" in champion:
+        out["error"] = champion["error"]
+    return out

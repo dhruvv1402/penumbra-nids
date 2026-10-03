@@ -288,7 +288,13 @@ export interface ModelVersion {
   parent: string | null;
   feedback_rows: number | null;
   approvers: string[];
-  gate: { passed: boolean; reasons: string[] } | null;
+  gate: {
+    kind?: string | null;
+    passed: boolean;
+    reasons: string[];
+    at_own_threshold?: { passed: boolean; reasons: string[] } | null;
+  } | null;
+  training_kind?: string | null;
   shadow: { alert_volume_ratio: number | null; cohen_kappa: number | null; agreement: number | null; n_rows: number } | null;
   intact: boolean;
   champion: boolean;
@@ -296,6 +302,8 @@ export interface ModelVersion {
 
 export interface ModelRegistry {
   dataset: string;
+  source?: "live" | "snapshot";
+  snapshot_at?: string;
   champion: string | null;
   history: { action: string; version: string; previous: string | null; by: string; at: string }[];
   versions: ModelVersion[];

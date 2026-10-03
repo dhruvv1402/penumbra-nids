@@ -42,6 +42,14 @@ class ReportSpec:
 # understands and a stray file in artifacts/ is never served.
 CATALOGUE: tuple[ReportSpec, ...] = (
     ReportSpec(
+        "registry-snapshot",
+        "registry_snapshot.json",
+        "Model registry snapshot",
+        "penumbra registry snapshot",
+        "Every registered version, its gate verdicts and hash check, as of the machine and time that "
+        "wrote it. What a deployment without model artifacts shows on the governance page.",
+    ),
+    ReportSpec(
         "calibration-drill",
         "calibration_drill.json",
         "Calibration drill (E9a)",

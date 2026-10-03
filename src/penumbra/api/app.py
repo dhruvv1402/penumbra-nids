@@ -839,44 +839,22 @@ async def model_registry(dataset: str, principal: CurrentUser) -> dict[str, Any]
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, f"unknown dataset; expected one of {sorted(KNOWN_DATASETS)}"
         )
-    from penumbra.models.registry import ModelRegistry, RegistryError
+    from penumbra.models.registry import ModelRegistry
+    from penumbra.models.registry import summary as registry_summary
 
-    reg = ModelRegistry(settings().artifact_root / "registry", dataset)
-    try:
-        champion = reg.champion_state()
-    except RegistryError as exc:
-        # A tampered champion pointer is shown as exactly that, not as a 500 or an empty registry.
-        champion = {"version": None, "history": [], "error": str(exc)}
-    versions = []
-    for v in reg.versions():
-        shadow = v.training.get("shadow") or {}
-        versions.append(
-            {
-                "version": v.version,
-                "created_at": v.created_at,
-                "created_by": v.created_by,
-                "parent": v.parent,
-                "feedback_rows": v.training.get("feedback_rows"),
-                "approvers": v.training.get("approvers", []),
-                "gate": None
-                if v.gate is None
-                else {"passed": v.gate.get("passed"), "reasons": v.gate.get("reasons", [])},
-                "shadow": None
-                if not shadow
-                else {k: shadow.get(k) for k in ("alert_volume_ratio", "cohen_kappa", "agreement", "n_rows")},
-                "intact": not reg.verify(v.version),
-                "champion": v.version == champion.get("version"),
-            }
+    live = registry_summary(ModelRegistry(settings().artifact_root / "registry", dataset))
+    if live["versions"]:
+        return reports.finite({**live, "source": "live"})
+    # A deployment image ships reports, not model artifacts. If the registry is not on this machine,
+    # serve the snapshot `penumbra registry snapshot` wrote where it was, and say that it is one:
+    # its hash checks were run there, at that time, not here.
+    loaded = reports.load("registry-snapshot")
+    snap = loaded["data"] if loaded else None
+    if snap is not None and dataset in snap.get("datasets", {}):
+        return reports.finite(
+            {**snap["datasets"][dataset], "source": "snapshot", "snapshot_at": snap.get("generated_at")}
         )
-    return reports.finite(
-        {
-            "dataset": dataset,
-            "champion": champion.get("version"),
-            "history": champion.get("history", []),
-            "versions": versions,
-            **({"error": champion["error"]} if "error" in champion else {}),
-        }
-    )
+    return reports.finite({**live, "source": "live"})
 
 
 @app.get("/governance/pii-keys", tags=["governance"])

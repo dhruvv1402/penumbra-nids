@@ -2055,6 +2055,34 @@ def registry_challenge(
             console.print(f"  {r}")
 
 
+@registry_app.command("snapshot")
+def registry_snapshot() -> None:
+    """Write every dataset's registry summary to reports/, for deployments that ship no models.
+
+    The governance page reads the live registry when it exists and this snapshot when it does not,
+    labelled as a snapshot: its hash checks ran here, now, not on the machine serving it.
+    """
+    from datetime import UTC, datetime
+
+    from penumbra.models.registry import ModelRegistry
+    from penumbra.models.registry import summary as registry_summary
+
+    datasets = {}
+    for ds in ("unsw", "nslkdd", "cicids"):
+        s = registry_summary(ModelRegistry(settings().artifact_root / "registry", ds))
+        if s["versions"]:
+            datasets[ds] = s
+            console.print(f"  {ds:<7} {len(s['versions'])} versions, champion {s['champion']}")
+    out = settings().report_dir / "registry_snapshot.json"
+    out.write_text(
+        json.dumps(
+            {"generated_at": datetime.now(UTC).isoformat(), "datasets": datasets}, indent=2, default=float
+        ),
+        encoding="utf-8",
+    )
+    console.print(f"[dim]written to {out}[/dim]")
+
+
 @registry_app.command("list")
 def registry_list(dataset: DatasetName = "nslkdd") -> None:
     """Every version, which one is champion, and whether its gate passed."""

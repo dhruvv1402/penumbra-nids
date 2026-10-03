@@ -42,7 +42,7 @@ export default function Governance() {
   const [audit, setAudit] = useState<AuditState | null>(null);
   const [rbac, setRbac] = useState<{ matrix: string; roles: Record<string, string[]> } | null>(null);
   const [denied, setDenied] = useState(false);
-  const [models, setModels] = useState<ModelRegistry | null>(null);
+  const [models, setModels] = useState<Record<string, ModelRegistry | null>>({});
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => setSession(loadSession()), []);
@@ -58,11 +58,15 @@ export default function Governance() {
       }
       setError(err instanceof Error ? err.message : String(err));
     }
-    try {
-      setModels(await getModels(token, "nslkdd"));
-    } catch {
-      setModels(null);
+    const registries: Record<string, ModelRegistry | null> = {};
+    for (const ds of ["unsw", "nslkdd", "cicids"]) {
+      try {
+        registries[ds] = await getModels(token, ds);
+      } catch {
+        registries[ds] = null;
+      }
     }
+    setModels(registries);
     try {
       setAudit((await getAudit(token, 100)) as AuditState);
       setDenied(false);
@@ -133,7 +137,9 @@ export default function Governance() {
         <NoBlockPanel />
         <RbacPanel roles={rbac?.roles ?? null} role={session.role} />
         <AuditPanel audit={audit} denied={denied} role={session.role} />
-        <ModelsPanel registry={models} />
+        {(["unsw", "nslkdd", "cicids"] as const).map((ds) => (
+          <ModelsPanel key={ds} dataset={ds} registry={models[ds] ?? null} />
+        ))}
       </div>
     </main>
   );
@@ -353,19 +359,25 @@ function AuditPanel({
  * which version is champion, the gate verdict and shadow comparison behind every version, and a
  * fresh hash check of the bytes on disk.
  */
-function ModelsPanel({ registry }: { registry: ModelRegistry | null }) {
+function ModelsPanel({ dataset, registry }: { dataset: string; registry: ModelRegistry | null }) {
   if (!registry || registry.versions.length === 0) {
     return (
-      <Panel title="model registry — nslkdd">
+      <Panel title={`model registry — ${dataset}`}>
         <Empty>
-          No registered versions. <code>penumbra registry init -d nslkdd</code>, then{" "}
-          <code>penumbra retrain -d nslkdd</code> after verdicts are promoted.
+          No registered versions. <code>penumbra registry init -d {dataset}</code>, then{" "}
+          <code>penumbra registry challenge -d {dataset}</code>.
         </Empty>
       </Panel>
     );
   }
   return (
-    <Panel title="model registry — nslkdd" right={<Stat label="champion" value={registry.champion ?? "—"} />}>
+    <Panel title={`model registry — ${dataset}`} right={<Stat label="champion" value={registry.champion ?? "—"} />}>
+      {registry.source === "snapshot" && (
+        <div className="px-3 py-1.5 border-b border-[var(--color-border)] text-[10px] text-[var(--color-ink-dim)]">
+          Snapshot written {registry.snapshot_at?.slice(0, 16).replace("T", " ")} UTC by{" "}
+          <code>penumbra registry snapshot</code>: this deployment ships no model artifacts, so hash checks are as of then.
+        </div>
+      )}
       <table className="w-full text-[11px]">
         <thead className="text-[var(--color-ink-dim)]">
           <tr className="border-b border-[var(--color-border)]">
@@ -390,6 +402,9 @@ function ModelsPanel({ registry }: { registry: ModelRegistry | null }) {
                 }`}
               >
                 {v.gate == null ? "initial" : v.gate.passed ? "pass" : "FAIL"}
+                {v.gate?.kind === "matched_fpr_per_head" && v.gate.at_own_threshold && !v.gate.at_own_threshold.passed && (
+                  <span className="block text-[9px] text-[var(--color-ink-faint)]">own-threshold gate: refuse</span>
+                )}
               </td>
               <td className="px-3 py-1.5 text-right tabular-nums">
                 {v.shadow?.cohen_kappa != null
