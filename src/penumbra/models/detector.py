@@ -172,6 +172,12 @@ class PenumbraDetector:
         step("supervised head")
         self.supervised_model = supervised.build(model_name, ds, n_classes=2, balanced=True)
         self.supervised_model.fit(X_fit, y_fit)
+        clf = self.supervised_model.named_steps["clf"]
+        if hasattr(clf, "fit_importances") and calibration == "held_out":
+            # A model without feature_importances_ (the E9 ensemble) gets permutation importances,
+            # measured on rows it never trained on.
+            step("permutation importances")
+            clf.fit_importances(self.supervised_model.named_steps["prep"].transform(X_cal), y_cal.to_numpy())
 
         if fit_family_model:
             step("family classifier")

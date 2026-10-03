@@ -48,7 +48,32 @@ def _load(dataset: str, *, drop_artifacts: bool = False):
         from penumbra.data.loaders import nsl_kdd
 
         return nsl_kdd.load(drop_artifacts=drop_artifacts)
-    raise typer.BadParameter(f"unknown dataset {dataset!r}; expected unsw or nslkdd")
+    if key in {"cicids", "cicids2017"}:
+        return _load_cicids()[0]
+    raise typer.BadParameter(f"unknown dataset {dataset!r}; expected unsw, nslkdd or cicids")
+
+
+def _load_cicids():
+    """CICIDS2017 as a training set: (dataset, day of week of each training row).
+
+    The entity frame rides in `X.attrs`, and pandas deep-copies attrs on every slice - a 1.2M-row
+    copy per `iloc` once stalled a run for 30 minutes - so it is detached here, after the training
+    days are read off it. Features go to float32: trees split on float32 anyway, and it halves
+    the largest array in the process.
+    """
+    from penumbra.data.loaders import cicids
+
+    ds = cicids.load()
+    meta = ds.X_train.attrs.get("meta")
+    days = None
+    if meta is not None and "Timestamp" in getattr(meta, "columns", []):
+        stamps = pd.to_datetime(meta["Timestamp"], errors="coerce", format="mixed")
+        days = stamps.dt.dayofweek.fillna(-1).astype(int).to_numpy()
+    for X in (ds.X_train, ds.X_test):
+        X.attrs.clear()
+    ds.X_train = ds.X_train.astype(np.float32)
+    ds.X_test = ds.X_test.astype(np.float32)
+    return ds, days
 
 
 @app.command()
@@ -2191,6 +2216,192 @@ def refit_drill(
         console.print(f"  {key:<28} {mark}  {detail}")
     if save:
         out = settings().report_dir / "threshold_refit_nslkdd.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2, default=float), encoding="utf-8")
+        console.print(f"[dim]written to {out}[/dim]")
+
+
+@app.command("ensemble")
+def ensemble_cmd(
+    dataset: DatasetName = "unsw",
+    profile: Annotated[str, typer.Option("--profile", help="laptop | workstation | gpu")] = "laptop",
+    resume: Annotated[bool, typer.Option("--resume/--fresh", help="Reuse checkpointed fits.")] = True,
+    inherit_from: Annotated[
+        str, typer.Option("--inherit-from", help="Dataset whose selection CICIDS reuses.")
+    ] = "unsw",
+    save: Annotated[bool, typer.Option("--save/--no-save")] = True,
+) -> None:
+    """E9: three decision trees + three SVMs, normalisation and PCA arms, against RF-300."""
+    seed_everything()
+    from penumbra.eval import ensemble as ens
+
+    if profile not in ens.PROFILES:
+        raise typer.BadParameter(f"profile must be one of {sorted(ens.PROFILES)}")
+    key = dataset.lower().replace("-", "").replace("_", "")
+    groups = unseen = inherit = None
+    if key in {"cicids", "cicids2017"}:
+        key = "cicids"
+        ds, groups = _load_cicids()
+        prior = settings().report_dir / f"ensemble_{inherit_from}.json"
+        if prior.exists():
+            inherit = json.loads(prior.read_text(encoding="utf-8"))
+            inherit = {"dataset": inherit_from, "selected": inherit["selection"]["selected"]}
+    elif key in {"nslkdd", "nsl", "kdd"}:
+        from penumbra.data.loaders import nsl_kdd
+
+        key = "nslkdd"
+        ds, _, fine_test = nsl_kdd.load_with_fine_labels()
+        unseen = nsl_kdd.unseen_mask(fine_test).to_numpy()
+    else:
+        key = "unsw"
+        ds = _load("unsw")
+
+    report = ens.run(
+        ds,
+        profile=ens.PROFILES[profile],
+        checkpoint_dir=settings().artifact_root / "checkpoints" / f"ensemble_{key}_{profile}",
+        resume=resume,
+        groups=groups,
+        unseen=unseen,
+        inherit=inherit,
+        on_progress=lambda m: console.print(f"[dim]  {m}[/dim]"),
+    )
+
+    table = Table(title=f"E9 on {ds.name}: test, exact 1% benign budget")
+    for col in (
+        "model",
+        "recall@1%",
+        "realised FPR",
+        "ROC-AUC [95% CI]",
+        "vs RF [95% CI]",
+        "fit s",
+        "ms/flow",
+    ):
+        table.add_column(col)
+    for name, row in report["test"]["models"].items():
+        lo, hi = row["roc_auc"]["ci95"]
+        vs = row.get("vs_rf")
+        b = report["stage_b"].get(name, {})
+        table.add_row(
+            name,
+            f"{row['recall_at_1pct']:.4f}",
+            f"{row['realised_fpr']:.2%}",
+            f"{row['roc_auc']['point']:.4f} [{lo:.4f}, {hi:.4f}]",
+            f"{vs['recall_delta']:+.4f} [{vs['ci95'][0]:+.4f}, {vs['ci95'][1]:+.4f}]" if vs else "-",
+            f"{b.get('fit_seconds', float('nan')):.0f}",
+            f"{b.get('ms_per_flow_batch_2048', float('nan')):.3f}",
+        )
+    console.print(table)
+    sel = report["selection"]["selected"]
+    console.print(f"selected on holdout: trees {sel['tree_arm']}, SVMs {sel['svm_arm']}, {sel['combiner']}")
+    for k_, result_ in report["summary"].items():
+        mark = "[green]held[/green]" if result_["held"] else "[red]refuted[/red]"
+        console.print(f"  {k_:<60} {mark}")
+    if save:
+        out = settings().report_dir / f"ensemble_{key}.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2, default=float), encoding="utf-8")
+        console.print(f"[dim]written to {out}[/dim]")
+
+
+@app.command("calibration-drill")
+def calibration_drill(
+    attacker: Annotated[
+        str | None, typer.Option("--attacker", help="Lab capture: IP that ran the attacks.")
+    ] = None,
+    target: Annotated[str | None, typer.Option("--target", help="Lab capture: IP that was attacked.")] = None,
+    capture: Annotated[Path | None, typer.Option("--capture", help="Defaults to raw/lab/lab.pcap.")] = None,
+    skip_gate: Annotated[bool, typer.Option("--skip-gate")] = False,
+    save: Annotated[bool, typer.Option("--save/--no-save")] = True,
+) -> None:
+    """E9a: in-sample vs held-out calibration, TTL kept vs quarantined, lab out of the box, gate."""
+    seed_everything()
+    from penumbra.data import schema
+    from penumbra.eval import calibration_drill as drill
+    from penumbra.eval import canary
+    from penumbra.models.detector import PenumbraDetector
+
+    def progress(m: str) -> None:
+        console.print(f"[dim]    {m}[/dim]")
+
+    report: dict[str, Any] = {"experiment": "E9a", "target_fpr": drill.TARGET_FPR, "unsw": {}, "nslkdd": {}}
+    kept, quarantined = _load("unsw"), _load("unsw", drop_artifacts=True)
+    fitted: dict[str, Any] = {}
+    for ttl, ds, q in (
+        ("kept", kept, []),
+        ("quarantined", quarantined, list(schema.UNSW_SUSPECTED_ARTIFACTS)),
+    ):
+        for cal in ("in_sample", "held_out"):
+            console.print(f"[dim]  UNSW {ttl}/{cal}[/dim]")
+            det = drill.fit_arm(ds, calibration=cal, quarantined=q, on_progress=progress)
+            report["unsw"][f"{ttl}/{cal}"] = drill.arm(det, ds)
+            if cal == "held_out":
+                fitted[ttl] = det
+    nsl = _load("nslkdd")
+    for cal in ("in_sample", "held_out"):
+        console.print(f"[dim]  NSL-KDD {cal}[/dim]")
+        report["nslkdd"][cal] = drill.arm(
+            drill.fit_arm(nsl, calibration=cal, quarantined=[], on_progress=progress), nsl
+        )
+
+    champion = None
+    reg = _registry("unsw")
+    if reg.champion() is not None:
+        champion = reg.load()
+        report["champion"] = {"version": reg.champion(), **drill.describe(champion)}
+
+    pcap_path = capture or settings().raw_dir / "lab" / "lab.pcap"
+    if attacker and target and pcap_path.exists():
+        from penumbra.eval import lab
+        from penumbra.pcap import assemble
+
+        console.print("[dim]  lab capture, out of the box[/dim]")
+        frame = assemble.assemble(pcap_path)
+        attack = lab.attack_mask(frame.attrs["meta"].reset_index(drop=True), attacker, target)
+        X_lab = frame.copy()
+        X_lab.attrs = {}
+        X_lab = X_lab.reset_index(drop=True)
+        report["lab"] = {f"{k}/held_out": drill.lab_rates(d, X_lab, attack) for k, d in fitted.items()}
+        shipped = champion if champion is not None else PenumbraDetector.load(settings().model_dir / "unsw")
+        report["lab"]["shipped"] = drill.lab_rates(shipped, X_lab, attack)
+    else:
+        console.print("[yellow]lab arm skipped[/yellow] (needs --attacker, --target and the capture)")
+
+    if champion is not None and not skip_gate:
+        console.print("[dim]  gate: quarantined/held_out vs champion, old and ADR-0005[/dim]")
+        fine = _canary_labels("unsw", kept)
+        can_idx, _, _ = canary.live_split(fine)
+        result = canary.gate_detectors(
+            champion,
+            fitted["quarantined"],
+            kept.X_test.iloc[can_idx],
+            kept.y_test.iloc[can_idx],
+            fine.iloc[can_idx],
+        )
+        report["gate"] = result.to_dict()
+
+    report["summary"] = drill.summarise(report)
+
+    table = Table(title="E9a: realised FPR on the full test split (1% target)")
+    for col in ("arm", "realised FPR [95% CI]", "recall", "benign reaching analyst", "sup. threshold"):
+        table.add_column(col)
+    for dsname in ("unsw", "nslkdd"):
+        for name, a in report[dsname].items():
+            t = a["test"]
+            lo, hi = t["realised_fpr_ci95"]
+            table.add_row(
+                f"{dsname} {name}",
+                f"{t['realised_fpr']:.2%} [{lo:.2%}, {hi:.2%}]",
+                f"{t['recall']:.3f}",
+                f"{t['benign_reaching_an_analyst']:.2%}",
+                f"{a['supervised_threshold']:.4f}",
+            )
+    console.print(table)
+    for key, result_ in report["summary"].items():
+        mark = "[green]held[/green]" if result_["held"] else "[red]refuted[/red]"
+        console.print(f"  {key:<70} {mark}")
+    if save:
+        out = settings().report_dir / "calibration_drill.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2, default=float), encoding="utf-8")
         console.print(f"[dim]written to {out}[/dim]")

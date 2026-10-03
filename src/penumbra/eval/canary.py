@@ -201,6 +201,11 @@ def fired_at_fpr(scored: pd.DataFrame, y: np.ndarray, total_fpr: float) -> np.nd
     return np.asarray(refit.flags(p, n))
 
 
+def _own_columns(detector: Any, X: pd.DataFrame) -> pd.DataFrame:
+    names = getattr(detector, "_feature_names", None)
+    return X[list(names)] if names else X
+
+
 def gate_detectors(
     champion: Any,
     challenger: Any,
@@ -212,7 +217,12 @@ def gate_detectors(
     """The promotion gate (ADR-0005): G1/G2 at the champion's realised FPR, G3 at own thresholds."""
     policy = policy or GatePolicy()
     y_arr, f_arr = y.to_numpy(), families.to_numpy()
-    champ_scored, chall_scored = champion.score(X), challenger.score(X)
+    # Each detector reads its own columns: a challenger trained with quarantined features is
+    # scored on the same canary rows as a champion that kept them.
+    champ_scored, chall_scored = (
+        champion.score(_own_columns(champion, X)),
+        challenger.score(_own_columns(challenger, X)),
+    )
     champ = operating_report(champ_scored["fired"].to_numpy() > 0, y_arr, f_arr)
     chall = operating_report(chall_scored["fired"].to_numpy() > 0, y_arr, f_arr)
     own = gate(champ, chall, policy)

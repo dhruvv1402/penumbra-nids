@@ -55,7 +55,18 @@ SPECS: dict[str, ModelSpec] = {
         "tree",
         "Gradient boosting. Expected champion on tabular flow features.",
     ),
+    "ens": ModelSpec(
+        "ens",
+        "ensemble",
+        "Three decision trees and three (kernel-approximated) SVMs, stacked. E9 measures it against "
+        "the forest; the gate decides whether it ships.",
+        family_model="rf",
+    ),
 }
+
+# Above this many training rows liblinear's float64 copy of an n x k kernel map does not fit in
+# 16 GB, so the SVMs switch to SGD on the same hinge objective with a smaller map.
+LARGE_DATASET_ROWS = 500_000
 
 
 def family_model_for(name: str) -> str:
@@ -63,7 +74,21 @@ def family_model_for(name: str) -> str:
     return SPECS[name].family_model or name
 
 
-def _estimator(name: str, *, n_classes: int, class_weight: str | None, scale_pos_weight: float | None) -> Any:
+def _estimator(
+    name: str, *, n_classes: int, class_weight: str | None, scale_pos_weight: float | None, n_rows: int = 0
+) -> Any:
+    if name == "ens":
+        from penumbra.models.ensemble import PRODUCT_CONFIG, PenumbraEnsemble
+
+        if n_classes > 2:
+            raise ValueError("the ensemble is a binary head; families are named by its family_model")
+        large = n_rows > LARGE_DATASET_ROWS
+        return PenumbraEnsemble(
+            **PRODUCT_CONFIG,
+            svm_solver="sgd" if large else "liblinear",
+            n_components=256 if large else 1000,
+            cv=3 if large else 5,
+        )
     if name == "logreg":
         # n_jobs is a no-op since sklearn 1.8 and removed in 1.10; the lbfgs solver is
         # single-threaded regardless.
@@ -137,6 +162,7 @@ def build(
                     n_classes=n_classes,
                     class_weight="balanced" if balanced else None,
                     scale_pos_weight=scale_pos_weight,
+                    n_rows=len(ds.X_train),
                 ),
             ),
         ]
