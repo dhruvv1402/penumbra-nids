@@ -905,6 +905,35 @@ with at least 20 canary rows loses more than 0.10, Fuzzers included.
 **Falsification:** if it refuses, the champion stays, the refusal is published, and the gate is not
 revised again for this challenger.
 
+#### RESULT — the prediction held. The challenger passed and was promoted.
+
+The revision and prediction were committed first (`b0d929f`), and the code after that (`feb7717`).
+Run with `penumbra registry challenge -d unsw -m rf --drop-artifacts`, which registered
+**v003-20261003T231527**.
+
+| UNSW canary (24,676 rows) | recall | realised FPR |
+|---|---:|---:|
+| champion v001 at its own thresholds | 0.971 | 18.78% (supervised 18.59%, novelty 0.23%) |
+| challenger at its own thresholds | 0.881 | **2.86%** (99% interval [2.47%, 3.30%]) |
+| challenger, each head at the champion's rate | **0.970** | 18.73% |
+
+- **At the champion's per-head operating point the challenger is the same detector.** Recall is
+  0.970 against 0.971. The largest family change is Backdoor at −0.006. Fuzzers, the family that
+  failed both earlier rules, moves from 0.805 to 0.803.
+- **What the challenger changes is where it operates.** It runs at a 2.9% FPR instead of 18.8%,
+  with the TTL artifacts quarantined.
+- On the separate evaluation slice the numbers are 0.974 at 18.9% for the champion, against 0.879
+  at 2.8% for the challenger.
+- **The verdicts recorded beside it:**
+  - at own thresholds: refuse (G1; G2 for Fuzzers and Shellcode);
+  - at the matched total FPR: refuse (G1; G2 for Fuzzers);
+  - per head: pass.
+- **G4 is advisory and says what is still true.** 2.86% is not 1%. The remaining excess is
+  UNSW's train/test benign shift, which `rebaseline --mode thresholds` (E8) is the tool for. It
+  is not more calibration.
+- Promoted by a different account (`admin`) from the one that registered it (`senior`), and
+  recorded in the audit log.
+
 ---
 
 ## E9 — Does a 3-tree + 3-SVM ensemble beat a 300-tree forest?

@@ -179,7 +179,7 @@ def audit(
 
 
 # =================================================================================================
-# placeholders - implemented in later phases, declared here so `--help` shows the intended shape
+# Training and evaluation
 # =================================================================================================
 
 

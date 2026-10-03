@@ -98,11 +98,14 @@ def _estimator(
             random_state=SEED,
         )
     if name == "rf":
+        # On CICIDS-sized data 300 depth-24 trees with 2-row leaves pickle to several GB; fewer,
+        # coarser trees keep the artifact deployable. UNSW and NSL-KDD are unchanged.
+        large = n_rows > LARGE_DATASET_ROWS
         return RandomForestClassifier(
-            n_estimators=300,
+            n_estimators=100 if large else 300,
             # Unbounded depth on 175k rows memorises; 24 keeps it honest without underfitting.
             max_depth=24,
-            min_samples_leaf=2,
+            min_samples_leaf=5 if large else 2,
             n_jobs=-1,
             # balanced_subsample recomputes weights per bootstrap rather than once globally, which
             # matters when a class has 130 rows.

@@ -40,6 +40,10 @@ from penumbra.models.novelty.ensemble import NoveltyEnsemble
 from penumbra.seeds import SEED, seed_everything
 
 CALIBRATION_FRACTION = 0.2
+# The novelty head's MLP autoencoder costs O(rows) per epoch; on CICIDS's ~800k benign training
+# flows it would dominate the whole fit. A seeded sample of this size is plenty to learn "normal",
+# and `n_benign_fit` records what was actually used.
+NOVELTY_MAX_FIT_ROWS = 200_000
 
 
 @dataclass
@@ -202,6 +206,8 @@ class PenumbraDetector:
             benign_fit = benign.iloc[fit_idx]
             benign_cal = benign.iloc[cal_idx]
 
+        if len(benign_fit) > NOVELTY_MAX_FIT_ROWS:
+            benign_fit = benign_fit.sample(NOVELTY_MAX_FIT_ROWS, random_state=SEED)
         self.novelty_prep = benign_only_pipeline(ds)
         Z_fit = self.novelty_prep.fit_transform(benign_fit)
         Z_cal = self.novelty_prep.transform(benign_cal)

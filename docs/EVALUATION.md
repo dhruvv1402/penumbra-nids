@@ -1,8 +1,14 @@
 # Evaluation methodology
 
-> **Status: results for Phase 1 and the NSL-KDD unseen-17 experiment are in.** The methodology was
-> fixed before any model was trained. Numbers come from `penumbra eval`, not from hand-editing.
-> Hypotheses are pre-registered in [`EXPERIMENTS.md`](EXPERIMENTS.md), committed before these runs.
+> **Status: measured, E1 to E9.** The methodology was fixed before any model was trained. Numbers
+> come from the CLI commands named beside them, not from hand-editing. Hypotheses are pre-registered
+> in [`EXPERIMENTS.md`](EXPERIMENTS.md), committed before their runs.
+>
+> **Read §10.8 first if you read one section.** Until E9a, the shipped detector fitted its
+> supervised threshold on rows its forest had trained on. On UNSW that put the realised FPR at
+> **18.8%** against a 1% target; held-out calibration brings it to **2.9%**. Numbers in earlier
+> sections that come from a full detector were measured with the old calibration, and each says so
+> where it matters.
 
 ---
 

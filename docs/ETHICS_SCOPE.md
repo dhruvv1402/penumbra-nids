@@ -33,11 +33,20 @@ README, and the model card.
 
 ### Traffic we generate ourselves
 
-The live-capture demonstration runs on **virtual machines the team owns, on an isolated host-only
-network with no route to the internet or to any campus network.**
+The live capture (EVALUATION §10.7h) was taken on **two laptops the team owns, joined to a phone
+hotspot the team controls**, not to any campus or shared network.
 
-Both endpoints are ours. The scanner and the scanned host are ours. Nothing leaves the lab. The scope
-is written down before the lab is built, and it is a closed set of IP addresses.
+- The scanner and the scanned host are both ours. Every scan targeted only our own laptop, and the
+  scope was a closed pair of addresses.
+- The capturing laptop browsed normally during the 25-minute window, so the capture also contains
+  that laptop's own ordinary internet traffic. That is the benign half of the ground truth.
+- No third-party host was scanned or probed. Only flow metadata (sizes, timings, flags, counts) was
+  used; payload-dependent features are left at zero. The saved report holds counts and scores,
+  never addresses.
+- The raw capture stays on the capturing machine and is not committed.
+
+An earlier version of this section described a host-only virtual-machine lab. That was the plan,
+not what was done, and it is corrected here.
 
 ### What the code can and cannot do
 
@@ -92,9 +101,10 @@ structurally-zero features in all, the figure the demo script quotes.)
 
 **Captures must come from a network you own.** The hackathon brief's rule is explicit and it is
 this project's rule too: only ever test systems you own or a safe practice app, never a real
-website or system you do not have permission to test. The demonstration capture is taken on a
-private host-only lab network between virtual machines the team owns, scanning a box the team owns.
-Nothing leaves that network, and no third-party host is contacted, scanned or probed at any point.
+website or system you do not have permission to test. The demonstration capture was taken
+between two laptops the team owns, on the team's own phone hotspot, scanning only the team's own
+laptop. The capturing laptop's ordinary browsing is in the capture as benign traffic. No
+third-party host was scanned or probed at any point.
 
 If you are reproducing this work: generate your own capture on your own lab, or use the public
 CICIDS2017 release, which was captured by its authors on their own testbed for exactly this

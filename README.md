@@ -246,7 +246,7 @@ Every number in the report regenerates from a command. None are typed by hand.
 | `ci/` | the ML regression gate's committed baseline |
 | `scripts/` · `deploy/` | Azure and Sentinel deployment, the walkthrough recorder, the deck builder; the deploy-only image layer |
 | `tests/` | unit, integration and property tests, and the demo fixtures |
-| `docs/` | evaluation, pre-registered experiments E1–E7, model card, datasheet, threat model, ADRs |
+| `docs/` | evaluation, pre-registered experiments E1–E9, model card, datasheet, threat model, ADRs |
 
 ## Status
 

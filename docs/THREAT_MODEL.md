@@ -216,8 +216,9 @@ credentials first.
 
 ## Part 4 — Testing scope and ethics
 
-All evaluation uses public research datasets and traffic captured on hardware the team owns, on an
-isolated host-only network. **No scanning, probing, or capture against any system we do not own.**
+All evaluation uses public research datasets and traffic captured on hardware the team owns: two
+of our laptops on our own phone hotspot, the scans aimed only at our own laptop.
+**No scanning, probing, or capture against any system we do not own.**
 `penumbra.pcap` parses capture files read-only and never transmits a packet.
 
 Full statement: `docs/ETHICS_SCOPE.md`.
