@@ -749,6 +749,202 @@ a falling FPR after a re-baseline is a reason to look harder, not to relax.
 
 ---
 
+## E9a — How much of the realised FPR is our own in-sample optimism?
+
+**Registered before the run.** The code that runs it does not exist at the time of this commit.
+
+Three defects were found while planning E9, all in the shipped detector rather than in the data:
+
+1. **The supervised threshold and the conformal predictor are fitted on rows the supervised model
+   trained on.** `PenumbraDetector.fit` holds benign rows out of the *novelty* head only; the
+   supervised head saw every training row, including the "held-out" benign rows its threshold is the
+   99.5th percentile of and the 20% slice conformal is calibrated on. A forest scores its own
+   training rows lower than unseen ones, so the threshold sits too low and test benign traffic
+   clears it more often than the target says. For a single unpruned decision tree the in-sample
+   scores collapse to 0 and every row would fire. E9 cannot be run on top of this.
+2. **The shipped UNSW detector keeps the quarantined testbed TTL columns** (`sttl`, `dttl`,
+   `ct_state_ttl`, `is_sm_ips_ports`). `penumbra fit` has no `--drop-artifacts`; the evaluation
+   runner has always quarantined, the product never did. On real traffic TTLs are 64 or 128, values
+   UNSW's benign rows never take.
+3. **On a 20,000-row slice of UNSW test, the shipped detector fires on 18.5% of benign rows**
+   against a 1% target (registry v002 manifest, `known_dataset.current.benign_fpr`).
+
+### Hypotheses
+
+> **H9f — part of the realised FPR is in-sample optimism.** Fitting the supervised model on train
+> minus a stratified 20% calibration slice S, and fitting thresholds and conformal on S, lowers the
+> realised FPR on test benign traffic. Not to the target: the train/test shift that E8 measured
+> remains.
+
+> **H9g — the gate rewards over-alerting.** The canary gate compares recall at each model's own
+> threshold. A champion that fires on 18.5% of benign traffic buys recall with those false positives,
+> so an honestly calibrated challenger fails G1 even if it is better at every matched FPR. ADR-0005
+> amends the gate to compare at the champion's realised FPR.
+
+> **H9h — the TTL artifact is part of why real traffic alerts.** Out of the box, the shipped UNSW
+> detector fired on 69.8% of the lab capture's held-out ordinary flows, and every one of them
+> reached an analyst (§10.7h). Quarantining the TTL
+> columns removes a feature on which every real flow looks unlike UNSW benign traffic.
+
+### Design
+
+- **UNSW, 2×2:** {TTL kept, TTL quarantined (the loader's set, `schema.py:282`)} × {in-sample
+  calibration (as shipped), held-out calibration}. RF-300, seed 42, 1% target, the full two-head
+  detector. S is 20% of train, stratified by family.
+- **NSL-KDD, 1×2:** in-sample vs held-out calibration. Nothing is quarantined (§2: every NSL-KDD
+  candidate was judged signal).
+- **Metrics on the full test split:** realised FPR with a Wilson 95% interval, attack recall, the
+  share of benign rows reaching an analyst (fired or abstained), the supervised threshold and the
+  benign conformal quantile.
+- **Lab:** the TTL-kept and TTL-quarantined held-out detectors score `lab.pcap` out of the box, with
+  no re-baseline. Metrics: fired rate on ordinary flows, fired rate on the attacker's flows, and
+  the reached-an-analyst rate.
+- **Gate:** the TTL-quarantined held-out detector is registered as a challenger to UNSW champion
+  v001 and scored by both the old gate and the ADR-0005 gate, on the same canary slice.
+
+### Predicted outcome, recorded in advance
+
+1. The shipped arm (TTL kept, in-sample) realises **between 15% and 22%** FPR on UNSW test.
+2. **H9f:** held-out calibration lowers UNSW realised FPR by **at least 2 points** (TTL kept), and
+   the held-out arm still realises **above 2%**.
+3. **H9f, NSL-KDD:** held-out calibration lowers the 10.2% realised FPR, but the held-out arm still
+   realises **between 5% and 9.5%**. Most of NSL-KDD's excess is shift, which E8 repaired with
+   thresholds fitted on shifted benign traffic.
+4. On both datasets, held-out calibration lowers the share of benign rows reaching an analyst.
+   Conformal's benign quantile is fitted on scores the model has not memorised.
+5. On UNSW test, quarantining TTL moves realised FPR and recall by **less than 1 point each**.
+   Trees route around the columns, as the audit found (−0.0011 AUC).
+6. **H9h:** on the lab capture, quarantining TTL lowers the out-of-the-box fired rate on ordinary
+   flows by **at least 10 points**, and it stays **above 5%**. The re-baseline remains necessary.
+7. **H9g:** the old gate refuses the honest challenger (G1). The ADR-0005 gate passes it.
+
+### Falsification
+
+H9f is refuted if held-out calibration lowers UNSW realised FPR by less than 2 points. Then the
+18.5% is shift or something else, not optimism. H9h is refuted if quarantining TTL moves the lab
+fired rate by less than 10 points. Then the out-of-the-box failure is not about TTL, and the
+quarantine is justified by the audit alone. H9g is refuted if the old gate passes the challenger, or
+if the amended gate refuses it. **Every refutation gets published.** Published E7 and E8 numbers
+are reproduced with the old calibration, which their commands pin, and are not edited. E8 gets an
+addendum if prediction 3 holds.
+
+---
+
+## E9 — Does a 3-tree + 3-SVM ensemble beat a 300-tree forest?
+
+**Registered before the run.** The code that runs it (`models/ensemble.py`, `eval/ensemble.py`,
+`penumbra ensemble`) does not exist at the time of this commit. Run on top of E9a's held-out
+calibration.
+
+The question a judge asks of every tree-based detector: would a different family of model do
+better? An SVM draws smooth margins where a tree draws boxes, so the two make different mistakes,
+and different mistakes are what an ensemble needs. This experiment builds the smallest honest version
+(three decision trees, three SVMs) and measures it against the shipped RF-300 on the full training
+data of all three datasets. It also measures the preprocessing an SVM needs, and a tree does not:
+normalisation and PCA, in both orders.
+
+### Members
+
+| | member | |
+|---|---|---|
+| T1 | decision tree | gini, unlimited depth, `min_samples_leaf=5`, balanced class weights |
+| T2 | decision tree | entropy, `max_depth=20`, `max_features="sqrt"` |
+| T3 | decision tree | gini, `max_depth=12`, `min_samples_leaf=20` |
+| S1 | linear SVM | `LinearSVC` |
+| S2 | RBF SVM | `Nystroem(rbf, gamma="scale" rule)` → `LinearSVC` |
+| S3 | polynomial SVM | `Nystroem(poly, degree 2, coef0 1)` → `LinearSVC` |
+
+**The SVMs are kernel approximations, and that is a stated limitation.** An exact kernel SVC costs
+O(n²) memory and O(n²–n³) time. On 140,000 to 1.2 million rows and 16 GB, that is not a slow run.
+It is no run. Nystroem with k landmarks makes a linear SVM in the approximate kernel space:
+k = 1,000 on UNSW and NSL-KDD, and 256 on CICIDS. On CICIDS the SVMs are trained with
+`SGDClassifier(hinge, average=True)` in float32, because liblinear's copy of a 1.2M × 256 matrix
+does not fit. An exact `SVC(rbf)` is fitted on a 30,000-row stratified subsample beside its
+Nystroem twin to measure the approximation's cost. On a GPU machine, if one is available, a full-data
+exact SVC is fitted as well (cuML). `C` ∈ {0.1, 1} is chosen per member on the holdout. Trees differ
+by criterion, depth and `max_features`. Nothing is bootstrapped, so every member sees the full data.
+
+### Preprocessing arms (each SVM member's own pipeline; trees run on the same arms as a control)
+
+- **P0 raw:** one-hot and imputation only. `max_iter=200`, with convergence failures recorded.
+- **P1 normalise:** signed log `sign(x)·log1p(|x|)`, then z-score.
+- **P2 normalise → PCA:** P1, then PCA keeping 95% of the variance.
+- **P3 PCA → normalise:** PCA on the unscaled features, then z-score the components. P3a keeps 95%
+  of variance. P3b keeps P2's number of components.
+- **hetero:** trees on P0, SVMs on the better of P1 and P2 (chosen on the holdout).
+
+Every transform is fitted inside the training fold, never on the holdout or test.
+
+### Combiners, built from one out-of-fold score matrix
+
+Stacking (logistic regression on out-of-fold member scores), soft voting (each member Platt-scaled
+on its out-of-fold scores), and hard voting (6 votes give 7 score levels).
+
+### Selection protocol (test is never used to choose)
+
+- **Stage A:** members are fitted on train minus S (E9a) minus a stratified 20% holdout H, and
+  scored on H. The configuration (arm × combiner) with the highest recall at an exact 1% benign
+  budget on H is selected (`flags_at_benign_budget`). Ties are broken by lower fit time.
+- **Stage B:** the selected configuration, and the user-requested P3 configuration, are refitted
+  with 5-fold out-of-fold stacking. On CICIDS this is 3 folds **grouped by day**, because shuffled
+  folds on time-ordered flows reward memorisation.
+- **CICIDS** runs the configuration UNSW selected, plus RF and XGBoost baselines, unless a larger
+  machine runs its full grid. Either way, the report says which.
+- **Test is scored once**, at the end.
+
+### Metrics
+
+Recall at an exact 1% benign budget, with the realised FPR printed beside it. The **paired
+bootstrap of the difference** against RF-300 on the same rows: 500 stratified resamples, and 200
+moving-block resamples on CICIDS. ROC-AUC with an interval, per-family recall, NSL-KDD unseen-17
+recall at the matched budget, and CICIDS Thursday–Friday recall. McNemar's test with discordant
+counts. Member diversity: pairwise disagreement and Yule's Q on test errors. Fit time, latency at
+batch 1 and batch 2,048, and artifact size. Every report carries the machine it ran on, the git
+commit and the compute profile. Timings are only compared within a machine.
+
+### Hypotheses and predicted outcome, recorded in advance
+
+1. **H9a — the ensemble does not beat the forest.** On UNSW and CICIDS, the paired 95% interval of
+   (ensemble − RF-300) recall at 1% FPR has an upper bound **at or below +0.005**. RF-300 is already
+   an ensemble of 300 decorrelated trees, and three trees plus three linear-margin models add
+   little it lacks.
+2. **H9b — SVMs need normalisation.** Each of S1–S3 under P0 is **at least 0.10** below the same
+   member under P1, in holdout recall at 1% FPR.
+3. **H9c — PCA is for the SVMs, not the trees.** On UNSW the trees lose **at least 0.02** recall under
+   P2 against P0 (rotation destroys the axis-aligned splits trees exploit). The SVMs under P2 land
+   **within ±0.01** of P1. **P3a keeps three components or fewer, loaded on byte, rate and load
+   columns**: PCA on unscaled flow data finds the units, not the structure.
+4. **Sanity, not hypothesis:** trees under P1 agree with trees under P0 on **at least 99%** of
+   holdout rows. Scaling is monotone and trees are invariant to it. Agreement is not exactly 100%
+   because trees cast to float32.
+5. **H9d — a smooth margin extrapolates differently.** On NSL-KDD at a matched 1% test-benign
+   budget, S2's (RBF) recall on the 17 unseen attack types **exceeds RF's 0.053** (the CI
+   baseline). This is the prediction we are least sure of.
+6. **H9e — diversity comes from mixing families.** On all three datasets, the mean Yule's Q between
+   tree–SVM pairs is **lower** than between tree–tree pairs.
+7. **Approximation check:** on the 30,000-row subsample, exact `SVC(rbf)` and its Nystroem twin
+   differ by **at most 0.01** in recall at 1% FPR. If a GPU run happens, the same holds on full UNSW
+   (H9i).
+8. **SGD precondition:** on UNSW, the SGD-trained S1–S3 match the LinearSVC-trained ones within
+   **0.005 ROC-AUC**. If not, every CICIDS SVM number is labelled SGD-only.
+9. **Hard voting cannot hit the budget:** on the UNSW holdout, no vote level realises an FPR inside
+   [0.75%, 1.25%]. With seven levels the operating point is chosen by the vote count, not by the
+   analyst.
+
+### Falsification
+
+H9a is refuted if the paired interval's upper bound exceeds +0.005 on either dataset: then the
+ensemble is better, and it is offered to the gate on that basis. H9b is refuted if any SVM member
+loses less than 0.10 without normalisation. H9c is refuted if the trees lose under 0.02 to PCA, if
+the SVMs move more than 0.01, or if P3a keeps more than three components. H9d is refuted if S2's
+unseen-17 recall is at or below 0.053. H9e is refuted if tree–SVM Q is not lower on any dataset.
+
+**What ships is decided by the gate, not by this experiment.** The selected ensemble is registered
+as a challenger on each dataset and promoted only if it passes ADR-0005's gate. If H9a holds,
+RF-300 stays the champion, and the reason is a measured one. **Every refutation gets published.**
+
+---
+
 ## Standing rules for all experiments
 
 - **Prevalence is stated with every precision-family number.** UNSW-NB15's test set is ~55% attack;
