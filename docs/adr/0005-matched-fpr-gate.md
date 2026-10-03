@@ -65,3 +65,29 @@ fatigue is the failure the whole product is designed against.
   governance page. That number was previously only in a manifest's evidence block.
 - Pre-registered in EXPERIMENTS.md E9a (H9g) before any challenger was scored: the old gate is
   predicted to refuse the honest UNSW challenger, and this one to pass it.
+
+## Revision 1 — match per head (2026-10-04, after the first run refused)
+
+**What went wrong.** E9a's run refused the honest UNSW challenger under this rule as well. The
+cause was found afterwards, and it is a flaw in decision 1.
+
+- The rule refitted both heads at the champion's *total* FPR, using the detector's equal per-head
+  split.
+- The champion does not split its budget equally. On the canary's benign rows its supervised head
+  fires on 18.6% and its novelty head on 0.23%.
+- So the "matched" challenger ran its supervised head at about half the champion's rate. The
+  comparison moved the head mix as well as the operating point.
+
+**Decision.** G1 and G2 place each challenger head at the champion's realised canary FPR **for that
+head**: the supervised threshold where the champion's supervised head fired on the canary's benign
+rows, and likewise for novelty. A champion head that never fired stays off in the challenger. G3
+and G4 are unchanged.
+
+**Why this is not tuning the gate until it passes.**
+
+- The revision and its prediction were committed before the re-run (EXPERIMENTS.md E9a-r).
+- The refusal under the original rule stays in the record.
+- If the revised gate also refuses, the champion stays and the gate is not revised again for this
+  challenger.
+- Per-head matching is also the stricter reading of "compare at the same operating point". Two
+  detectors at the same total FPR with different head mixes are not at the same operating point.

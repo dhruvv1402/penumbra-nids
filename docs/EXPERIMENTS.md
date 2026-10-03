@@ -830,6 +830,83 @@ addendum if prediction 3 holds.
 
 ---
 
+### RESULT — H9f survives, and it is the biggest fix in the project. H9g and H9h are refuted.
+
+Recorded after the run. The predictions above were committed first (`751b5aa`) and are not edited.
+`penumbra calibration-drill` reproduces every number (`artifacts/reports/calibration_drill.json`).
+Full test splits, 1% target, RF-300, seed 42.
+
+| arm | realised FPR [95% CI] | recall | benign reaching an analyst | supervised threshold |
+|---|---:|---:|---:|---:|
+| UNSW, TTL kept, in-sample (as shipped) | **18.79%** [18.40, 19.20] | 0.973 | 38.6% | 0.536 |
+| UNSW, TTL kept, held-out | **2.91%** [2.74, 3.08] | 0.885 | 28.5% | 0.860 |
+| UNSW, TTL quarantined, in-sample | 18.76% [18.37, 19.16] | 0.971 | 38.9% | 0.540 |
+| UNSW, TTL quarantined, held-out | 2.82% [2.65, 2.99] | 0.879 | 28.0% | 0.865 |
+| NSL-KDD, in-sample | 9.62% [9.05, 10.22] | 0.828 | 16.3% | 0.123 |
+| NSL-KDD, held-out | 9.21% [8.65, 9.80] | 0.804 | 16.0% | 0.154 |
+
+1. **P1 held.** The shipped arm realises 18.79%.
+2. **H9f survives, far beyond its prediction.** Held-out calibration cuts UNSW's realised FPR from
+   18.8% to 2.9%. That is 15.9 points, against a predicted 2 or more. The shipped detector's
+   threshold was the 99.5th percentile of scores the forest gave its own training rows. Those
+   scores are low because the forest memorised them, so the threshold sat at 0.54 when unseen
+   benign traffic needed 0.86. **Most of the shipped UNSW operating point's recall was bought with
+   that over-alerting.** At an honest threshold recall is 0.885, not 0.973. It is E8's lesson
+   again, and this time the cause was our own code, not drift.
+3. **P3 held.** NSL-KDD moves only from 9.62% to 9.21%. Its excess is the train/test shift E8
+   measured, not optimism.
+   - *Not explained here:* this run's in-sample arm realises 9.62% on the full test split, while §10.4
+     reported 10.17%. We checked that the new tie-safe threshold does not cause it: plain and tie-safe
+     thresholds give identical numbers on this fit. The source of the 0.55-point gap is not
+     identified.
+4. **P4 held, barely on NSL-KDD.** Benign rows reaching an analyst fall from 38.6% to 28.5% on UNSW,
+   and from 16.3% to 16.0% on NSL-KDD.
+5. **P5 held.** Quarantining TTL moves UNSW realised FPR by 0.09 points and recall by 0.006. Trees
+   route around the columns.
+6. **H9h is refuted.** On the lab capture out of the box, quarantining TTL moves the ordinary-flow
+   fired rate from 38.4% to 38.7%: nothing. **What moved it was calibration.** The shipped detector
+   fired on 70.3% of the 912 ordinary flows; held out, it fires on 38.4%. Reached-an-analyst goes
+   from 100% to 91.4%. The TTL columns are an audit finding, not the reason real traffic alerts.
+   The quarantine stays, because the audit says those values are testbed artifacts; it is not sold
+   as a lab fix. The attacker's scan flows still fire at 0.3%. Re-baselining remains the only thing
+   that detects them (§10.7h).
+7. **H9g is refuted, in an instructive way.** On the UNSW canary (30% of test), the champion fires on
+   18.8% of benign rows at recall 0.971. The challenger (TTL quarantined, held-out) fires on 2.9% at
+   recall 0.881.
+   - **As predicted, the old gate refuses** on G1, and on G2 for Fuzzers (0.81 → 0.35) and
+     Shellcode.
+   - **The ADR-0005 gate also refuses:** recall 0.971 → 0.946 at the matched 18.0% FPR, and
+     Fuzzers 0.81 → 0.66.
+
+#### Diagnosis (post-hoc, after the refusal)
+
+The ADR-0005 rule refits the challenger's two thresholds at the champion's realised **total** FPR,
+using the detector's equal per-head split. The champion does not spend its budget equally. On the
+canary's benign rows its supervised head fires on 18.6% and its novelty head on 0.23%. The
+"matched" challenger therefore ran its supervised head at about 9.4%, half the champion's, and
+spent the other half on a novelty head that buys little on UNSW. The comparison changed the
+operating point **and** the head mix. Only the first was intended.
+
+This is a flaw in a rule we registered, found by the run that tested it. The revision below is
+registered before it is run, and this refusal stays in the record.
+
+### E9a-r — the gate revised to match per head (registered before the re-run)
+
+**Revision (ADR-0005, revision 1):** G1 and G2 compare the challenger with **each head thresholded
+at the champion's realised canary FPR for that head**. The supervised threshold is placed where the
+champion's supervised head fired on the canary's benign rows, and likewise for novelty. G3 and G4
+are unchanged.
+
+**Prediction:** the same honest UNSW challenger, refitted by `penumbra registry challenge -d unsw
+--drop-artifacts` (same seed and data, so the same model), **passes** the revised gate. Overall
+recall at the matched per-head operating point is within 0.02 of the champion's 0.971. No family
+with at least 20 canary rows loses more than 0.10, Fuzzers included.
+
+**Falsification:** if it refuses, the champion stays, the refusal is published, and the gate is not
+revised again for this challenger.
+
+---
+
 ## E9 — Does a 3-tree + 3-SVM ensemble beat a 300-tree forest?
 
 **Registered before the run.** The code that runs it (`models/ensemble.py`, `eval/ensemble.py`,
