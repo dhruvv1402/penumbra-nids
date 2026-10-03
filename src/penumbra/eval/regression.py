@@ -96,13 +96,13 @@ def compare(current: dict[str, float], baseline: dict[str, Any]) -> GateOutcome:
     )
 
 
-def write_baseline(path: Path, current: dict[str, float], *, note: str) -> None:
+def write_baseline(path: Path, current: dict[str, float], *, note: str, model: str = "rf") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
             {
                 "dataset": "nslkdd",
-                "model": "rf",
+                "model": model,
                 "note": note,
                 "metrics": {m: round(current[m], 6) for m in METRICS},
                 "context": {k: current[k] for k in ("realised_fpr", "n_test", "n_unseen")},

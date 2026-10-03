@@ -157,10 +157,26 @@ class TestMatchedFprGate:
         d = canary.gate_detectors(
             FakeDetector(p, nov, threshold=0.30), FakeDetector(p, nov, threshold=0.55), X, y, fam
         ).to_dict()
-        assert d["kind"] == "matched_fpr"
+        assert d["kind"] == "matched_fpr_per_head"
         assert {"at_own_threshold", "challenger_at_matched_fpr", "advisory"} <= set(d)
         lo, hi = d["advisory"]["G4_interval_99"]
         assert lo <= d["advisory"]["G4_realised_fpr"] <= hi
+
+    def test_matching_keeps_the_champions_head_mix(self) -> None:
+        # Revision 1. A champion spending its whole budget on the supervised head, against the same
+        # model honestly thresholded: per-head matching reproduces the champion exactly, where an
+        # equal split of the total would hand half the budget to the (useless) novelty head.
+        X, y, fam, _, _ = canary_set()
+        rng = np.random.default_rng(3)
+        attack = y.to_numpy() == 1
+        p = np.where(attack, rng.beta(4, 3, len(y)), rng.beta(2, 5, len(y)))  # overlapping classes
+        nov = rng.random(len(p))  # a novelty head with no signal at all
+        champion = FakeDetector(p, nov, threshold=0.45)
+        result = canary.gate_detectors(champion, FakeDetector(p, nov, threshold=0.55), X, y, fam)
+        assert result.challenger_matched.recall == pytest.approx(result.champion.recall)
+        assert result.advisory["champion_head_fprs"]["novelty"] == 0.0
+        total = result.advisory["at_matched_total_fpr"]
+        assert total["recall"] < result.challenger_matched.recall
 
     def test_binomial_interval(self) -> None:
         lo, hi = canary.binomial_interval(10, 1000)

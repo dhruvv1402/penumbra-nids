@@ -22,10 +22,12 @@ measured on rows that chose the model.
 Comparing recall at each model's own threshold is only fair when both realise about the same FPR.
 A champion that fires on 18.5% of benign traffic buys recall with those false positives, and an
 honestly calibrated challenger then fails G1 while being better at every matched FPR. So
-`gate_detectors` reads the challenger's recall at the CHAMPION's realised canary FPR (its two
-thresholds refitted on the canary's benign rows at that budget), keeps G3 at the challenger's own
-threshold, and reports G4 - the challenger's realised FPR against its target - as advisory. The
-verdict at own thresholds is recorded beside it. `gate` itself is unchanged: E7 measured it.
+`gate_detectors` reads the challenger's recall with EACH HEAD placed at the champion's realised
+canary FPR for that head (revision 1: matching only the total moved the head mix too - the UNSW
+champion spends 18.6 of its 18.8 points on the supervised head, and an equal split starved the
+challenger's), keeps G3 at the challenger's own threshold, and reports G4 - the challenger's
+realised FPR against its target - as advisory. The verdicts at own thresholds and at the original
+total-FPR match are recorded beside it. `gate` itself is unchanged: E7 measured it.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from penumbra.models.fusion import OrGate
+from penumbra.models.fusion import OrGate, benign_threshold
 from penumbra.seeds import SEED
 
 MIN_FAMILY_SUPPORT = 20
@@ -201,6 +203,30 @@ def fired_at_fpr(scored: pd.DataFrame, y: np.ndarray, total_fpr: float) -> np.nd
     return np.asarray(refit.flags(p, n))
 
 
+def head_fprs(scored: pd.DataFrame, y: np.ndarray) -> tuple[float, float]:
+    """(supervised, novelty) realised FPR on the benign rows: how a detector spends its budget."""
+    fired = scored["fired"].to_numpy()
+    benign = np.asarray(y).astype(int) == 0
+    if not benign.any():
+        return float("nan"), float("nan")
+    return float(np.isin(fired[benign], (1, 3)).mean()), float(np.isin(fired[benign], (2, 3)).mean())
+
+
+def fired_at_head_fprs(
+    scored: pd.DataFrame, y: np.ndarray, supervised_fpr: float, novelty_fpr: float
+) -> np.ndarray:
+    """Rows a detector fires on with each head placed at its own benign rate on these rows.
+
+    A head the reference never fired stays off: matching a 0% head means not using it.
+    """
+    p = scored["p_attack"].to_numpy(dtype=float)
+    n = scored["novelty_percentile"].to_numpy(dtype=float)
+    benign = np.asarray(y).astype(int) == 0
+    t_sup = benign_threshold(p[benign], supervised_fpr) if supervised_fpr > 0 else float("inf")
+    t_nov = benign_threshold(n[benign], novelty_fpr) if novelty_fpr > 0 else float("inf")
+    return np.asarray((p >= t_sup) | (n >= t_nov))
+
+
 def _own_columns(detector: Any, X: pd.DataFrame) -> pd.DataFrame:
     names = getattr(detector, "_feature_names", None)
     return X[list(names)] if names else X
@@ -227,8 +253,20 @@ def gate_detectors(
     chall = operating_report(chall_scored["fired"].to_numpy() > 0, y_arr, f_arr)
     own = gate(champ, chall, policy)
 
+    sup_fpr, nov_fpr = head_fprs(champ_scored, y_arr)
+    total_match: dict[str, Any] | None = None
     if np.isfinite(champ.fpr) and 0.0 < champ.fpr < 1.0:
-        matched = operating_report(fired_at_fpr(chall_scored, y_arr, champ.fpr), y_arr, f_arr)
+        matched = operating_report(fired_at_head_fprs(chall_scored, y_arr, sup_fpr, nov_fpr), y_arr, f_arr)
+        # The original ADR-0005 rule, kept on the record: both heads at an equal split of the total.
+        total = operating_report(fired_at_fpr(chall_scored, y_arr, champ.fpr), y_arr, f_arr)
+        t_reasons, _ = _recall_checks(champ, total, policy)
+        t_reasons += _fpr_check(champ, chall, policy)
+        total_match = {
+            "passed": not t_reasons,
+            "reasons": t_reasons,
+            "recall": total.recall,
+            "fpr": total.fpr,
+        }
     else:
         # Nothing to match against (a champion that never fires, or always does): own thresholds.
         matched = chall
@@ -244,7 +282,9 @@ def gate_detectors(
         "G4_interval_99": [lo, hi],
         "G4_consistent_with_target": bool(lo <= target <= hi) if np.isfinite(target) else None,
         "champion_realised_fpr": champ.fpr,
+        "champion_head_fprs": {"supervised": sup_fpr, "novelty": nov_fpr},
         "matched_fpr": matched.fpr,
+        "at_matched_total_fpr": total_match,
     }
     return GateResult(
         passed=not reasons,
@@ -253,7 +293,7 @@ def gate_detectors(
         challenger=chall,
         policy=policy,
         family_deltas=deltas,
-        kind="matched_fpr",
+        kind="matched_fpr_per_head",
         challenger_matched=matched,
         at_own_threshold={"passed": own.passed, "reasons": own.reasons},
         advisory=advisory,

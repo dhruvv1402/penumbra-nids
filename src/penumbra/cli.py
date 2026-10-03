@@ -1199,6 +1199,7 @@ def gate_cmd(
         bool, typer.Option("--write", help="Record the current numbers as the baseline.")
     ] = False,
     note: Annotated[str, typer.Option("--note")] = "",
+    model_name: Annotated[str, typer.Option("--model", "-m", help="Supervised head to gate.")] = "rf",
 ) -> None:
     """ML regression gate: fit the supervised head on NSL-KDD and compare to the committed baseline.
 
@@ -1211,13 +1212,15 @@ def gate_cmd(
     from penumbra.models import supervised
 
     ds, _, fine_test = nsl_kdd.load_with_fine_labels()
-    model = supervised.build("rf", ds, n_classes=2, balanced=True)
+    model = supervised.build(model_name, ds, n_classes=2, balanced=True)
     model.fit(ds.X_train, ds.y_train)
     scores = supervised.attack_scores(model, ds.X_test)
     current = regression.measure(scores, ds.y_test.to_numpy(), nsl_kdd.unseen_mask(fine_test).to_numpy())
 
     if write:
-        regression.write_baseline(baseline, current, note=note or "recorded with `penumbra gate --write`")
+        regression.write_baseline(
+            baseline, current, note=note or "recorded with `penumbra gate --write`", model=model_name
+        )
         console.print(f"[green]baseline written[/green] {baseline}")
         for m in regression.METRICS:
             console.print(f"  {m:<24} {current[m]:.4f}")
@@ -1226,7 +1229,13 @@ def gate_cmd(
     if not baseline.exists():
         console.print(f"[red]No baseline at {baseline}.[/red] Record one with --write.")
         raise typer.Exit(1)
-    outcome = regression.compare(current, json.loads(baseline.read_text(encoding="utf-8")))
+    recorded = json.loads(baseline.read_text(encoding="utf-8"))
+    if recorded.get("model", "rf") != model_name:
+        console.print(
+            f"[red]{baseline} was recorded for {recorded.get('model')!r}, not {model_name!r}.[/red]"
+        )
+        raise typer.Exit(1)
+    outcome = regression.compare(current, recorded)
     console.print(outcome.summary())
     if not outcome.passed:
         raise typer.Exit(1)
@@ -1939,6 +1948,111 @@ def registry_init(
         by, "model.promote", info.version, {"dataset": dataset, "gated": False, "reason": "initial champion"}
     )
     console.print(f"[green]{info.version}[/green] is the {dataset} champion (initial, ungated).")
+
+
+@registry_app.command("challenge")
+def registry_challenge(
+    dataset: DatasetName = "unsw",
+    model: Annotated[str, typer.Option("--model", "-m")] = "rf",
+    drop_artifacts: Annotated[bool, typer.Option("--drop-artifacts")] = False,
+    by: Annotated[str, typer.Option("--by")] = "admin",
+) -> None:
+    """Fit a challenger on the training data and gate it against the champion (ADR-0005).
+
+    `retrain` without the feedback: a refit with a different model, calibration or feature set.
+    Registered, never promoted here. The gate compares at the champion's per-head realised canary
+    FPR; the verdicts at own thresholds and at the original total-FPR match are kept beside it.
+    """
+    seed_everything()
+    from penumbra.eval import canary
+    from penumbra.models.detector import PenumbraDetector
+
+    reg = _registry(dataset)
+    champion_version = reg.champion()
+    if champion_version is None:
+        console.print(f"[red]No champion.[/red] Run `penumbra registry init -d {dataset}` first.")
+        raise typer.Exit(1)
+    full = _load(dataset)  # the canary carries every column the champion was trained on
+    ds = _load(dataset, drop_artifacts=True) if drop_artifacts else full
+    champion = reg.load()
+    fine = _canary_labels(dataset, full)
+    can_idx, _, ev_idx = canary.live_split(fine)
+    quarantined = _quarantine_for(dataset, drop_artifacts)
+    console.print(
+        f"[dim]fitting {model} challenger on {len(ds.X_train):,} rows (held-out calibration)...[/dim]"
+    )
+    challenger = PenumbraDetector(target_fpr=champion.target_fpr).fit(
+        ds,
+        model_name=model,
+        quarantined=quarantined,
+        on_progress=lambda m: console.print(f"[dim]  {m}[/dim]"),
+    )
+    result = canary.gate_detectors(
+        champion, challenger, full.X_test.iloc[can_idx], full.y_test.iloc[can_idx], fine.iloc[can_idx]
+    )
+
+    def on_evaluation(det):
+        X = full.X_test.iloc[ev_idx]
+        return canary.evaluate(
+            det, X[det._feature_names], full.y_test.iloc[ev_idx], fine.iloc[ev_idx]
+        ).to_dict()
+
+    report = result.to_dict()
+    report["evaluation_slice"] = {
+        "champion": on_evaluation(champion),
+        "challenger": on_evaluation(challenger),
+    }
+    info = reg.register(
+        challenger,
+        created_by=by,
+        parent=champion_version,
+        training={
+            "kind": "refit",
+            "model": model,
+            "quarantined": quarantined,
+            "calibration": "held_out",
+            "feedback_rows": 0,
+        },
+    )
+    reg.attach_gate(info.version, report)
+    _audit(by, "model.register", info.version, {"dataset": dataset, "gate_passed": result.passed})
+
+    console.print(f"\nregistered [bold]{info.version}[/bold] (parent {champion_version})")
+    adv = result.advisory or {}
+    heads = adv.get("champion_head_fprs", {})
+    console.print(
+        f"  champion   recall {result.champion.recall:.4f}  FPR {result.champion.fpr:.2%}  "
+        f"(supervised {heads.get('supervised', float('nan')):.2%}, novelty {heads.get('novelty', float('nan')):.2%})"
+    )
+    console.print(
+        f"  challenger recall {result.challenger.recall:.4f}  FPR {result.challenger.fpr:.2%}  (own thresholds)"
+    )
+    if result.challenger_matched is not None:
+        console.print(
+            f"  challenger recall {result.challenger_matched.recall:.4f}  FPR {result.challenger_matched.fpr:.2%}  "
+            "(each head at the champion's rate)"
+        )
+    lo, hi = adv.get("G4_interval_99", [float("nan"), float("nan")])
+    console.print(
+        f"  G4 advisory: realised {result.challenger.fpr:.2%} [99% {lo:.2%}, {hi:.2%}] vs target {champion.target_fpr:.0%}"
+    )
+    own = result.at_own_threshold or {}
+    total = adv.get("at_matched_total_fpr") or {}
+    console.print(
+        f"  at own thresholds:       {'pass' if own.get('passed') else 'refuse'}  {own.get('reasons', [])}"
+    )
+    console.print(
+        f"  at matched total FPR:    {'pass' if total.get('passed') else 'refuse'}  {total.get('reasons', [])}"
+    )
+    if result.passed:
+        console.print(
+            f"[green]gate passed[/green] (per-head match). Promote with `penumbra registry promote "
+            f"{info.version} -d {dataset}`."
+        )
+    else:
+        console.print("[red]gate refused[/red] (per-head match):")
+        for r in result.reasons:
+            console.print(f"  {r}")
 
 
 @registry_app.command("list")

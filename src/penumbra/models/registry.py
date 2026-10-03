@@ -196,6 +196,9 @@ class ModelRegistry:
         stamp = datetime.now(UTC)
         version = f"v{n:03d}-{stamp:%Y%m%dT%H%M%S}"
         directory = self._version_dir(version)
+        if detector.metadata is not None:
+            # So every alert this version raises can be traced to it, and from it to its gate.
+            detector.metadata.registry_version = version
         detector.save(directory)
 
         files = {p.name: sha256(p) for p in sorted(directory.iterdir()) if p.name != MANIFEST}

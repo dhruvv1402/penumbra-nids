@@ -82,6 +82,9 @@ DOCUMENTED = [
     ["refit-drill", "--help"],
     ["family-ceiling", "--help"],
     ["loadtest", "--help"],
+    ["ensemble", "--help"],
+    ["calibration-drill", "--help"],
+    ["registry", "challenge", "--help"],
 ]
 
 
