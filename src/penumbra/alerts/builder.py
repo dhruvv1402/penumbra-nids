@@ -97,7 +97,9 @@ def _build_positioned(
     scored = scored if scored is not None else detector.score(X)
     policy = policy or getattr(detector, "policy", None) or ScoringPolicy()
     ranked = _ranked_importances(detector)
-    version = getattr(getattr(detector, "metadata", None), "version", "0.1.0")
+    # The registry version when there is one, so an alert traces to the artifact and its gate report.
+    meta = getattr(detector, "metadata", None)
+    version = str(getattr(meta, "registry_version", None) or getattr(meta, "version", "0.1.0"))
 
     n = len(scored)
     fired = scored["fired"].to_numpy(dtype=int)
