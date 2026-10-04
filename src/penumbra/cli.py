@@ -126,6 +126,13 @@ def data_fetch(
     if failed:
         console.print(f"\n[red]{len(failed)} file(s) failed.[/red]")
         raise typer.Exit(1)
+    # CICIDS2017 ships as one zip of five day files; the loader reads the extracted CSVs. Without
+    # this a fresh machine downloaded the archive and then could not load it.
+    for r in results:
+        if r.spec.dataset == "cicids" and r.path.suffix == ".zip":
+            dest = settings().raw_dir / "cicids" / "improved"
+            written = download.extract_zip(r.path, dest)
+            console.print(f"[dim]extracted {len(written)} file(s) to {dest}[/dim]")
     console.print(f"\n[green]{len(results)} file(s) verified.[/green]")
 
 
@@ -2371,6 +2378,12 @@ def ensemble_cmd(
     inherit_from: Annotated[
         str, typer.Option("--inherit-from", help="Dataset whose selection CICIDS reuses.")
     ] = "unsw",
+    smoke: Annotated[
+        bool,
+        typer.Option(
+            "--smoke", help="Whole protocol on ~20k rows in minutes, to check a machine. Not a result."
+        ),
+    ] = False,
     save: Annotated[bool, typer.Option("--save/--no-save")] = True,
 ) -> None:
     """E9: three decision trees + three SVMs, normalisation and PCA arms, against RF-300."""
@@ -2398,12 +2411,23 @@ def ensemble_cmd(
         key = "unsw"
         ds = _load("unsw")
 
+    chosen = ens.PROFILES[profile]
+    if smoke:
+        ds, groups, unseen = ens.subsample(ds, train=20_000, test=10_000, groups=groups, unseen=unseen)
+        chosen, profile = ens.SMOKE, "smoke"
+        console.print(
+            f"[yellow]smoke run[/yellow] on {len(ds.X_train):,} / {len(ds.X_test):,} rows - "
+            "checks the pipeline, measures nothing"
+        )
     report = ens.run(
         ds,
-        profile=ens.PROFILES[profile],
+        profile=chosen,
         checkpoint_dir=settings().artifact_root / "checkpoints" / f"ensemble_{key}_{profile}",
         resume=resume,
-        groups=groups,
+        # Stacking folds are stratified on every dataset. Grouping CICIDS's folds by day, as first
+        # registered, inverts the combiner: each training day holds different attack families, so
+        # every out-of-fold attack is one the members never saw (EXPERIMENTS.md E9, amendment).
+        groups=None,
         unseen=unseen,
         inherit=inherit,
         on_progress=lambda m: console.print(f"[dim]  {m}[/dim]"),
@@ -2440,7 +2464,7 @@ def ensemble_cmd(
         mark = "[green]held[/green]" if result_["held"] else "[red]refuted[/red]"
         console.print(f"  {k_:<60} {mark}")
     if save:
-        out = settings().report_dir / f"ensemble_{key}.json"
+        out = settings().report_dir / f"ensemble_{key}{'_smoke' if smoke else ''}.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2, default=float), encoding="utf-8")
         console.print(f"[dim]written to {out}[/dim]")

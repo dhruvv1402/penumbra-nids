@@ -1047,6 +1047,28 @@ commit and the compute profile. Timings are only compared within a machine.
    [0.75%, 1.25%]. With seven levels the operating point is chosen by the vote count, not by the
    analyst.
 
+### Amendment before any CICIDS run (2026-10-04): stacking folds are stratified
+
+This amendment was made after a 20,000-row smoke run (`penumbra ensemble -d cicids --smoke`) and
+before any real CICIDS E9 run. The registered design grouped CICIDS's stacking folds by day.
+
+**Grouping by day cannot work on Monday to Wednesday.** Each day holds different attack families:
+
+- Monday has none.
+- Tuesday has FTP and SSH brute force.
+- Wednesday has the DoS family.
+
+With day-grouped folds every out-of-fold attack is a family the members never saw. On identical
+rows, the members' out-of-fold ROC-AUC fell to 0.50, 0.50, 0.49, 0.25, 0.12 and 0.03. The stacking
+combiner learned negative weights from that, and the ensemble scored **test ROC-AUC 0.12, an inverted
+ranking**. With stratified folds, the same rows give 0.78.
+
+CICIDS's stacking folds are therefore stratified, as on UNSW-NB15 and NSL-KDD. The cost is the one
+the original design guarded against: adjacent, near-identical flows can sit on both sides of a fold,
+so the combiner may over-trust memorising members. **Test is still Thursday and Friday, never seen
+in training**, so every reported number stays temporally honest. Only the combiner's training signal
+changed. Smoke reports are written to `ensemble_<dataset>_smoke.json` and are never results.
+
 ### Falsification
 
 H9a is refuted if the paired interval's upper bound exceeds +0.005 on either dataset: then the

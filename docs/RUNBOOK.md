@@ -56,6 +56,7 @@ git checkout <tag>                      # the tag the report will be quoted from
 uv sync --extra eval                    # uv.lock pins numpy/sklearn, so pickles load on both machines
 export PENUMBRA_DATA_ROOT=/path/with/8GB/free
 uv run penumbra data fetch               # every dataset, SHA-256 checked against data/manifest.json
+uv run penumbra ensemble -d nslkdd --smoke                  # ~3 min: proves the setup end to end, measures nothing
 uv run penumbra ensemble -d unsw   --profile workstation     # or --profile gpu
 uv run penumbra ensemble -d nslkdd --profile workstation
 uv run penumbra ensemble -d cicids --profile workstation     # full grid on CICIDS on this profile

@@ -81,6 +81,28 @@ def test_a_resumed_run_reproduces_the_fresh_one(run) -> None:
     assert first["selection"]["selected"] == again["selection"]["selected"]
 
 
+@pytest.mark.parametrize("mode", ["fresh", "no-directory"])
+def test_a_run_reads_back_what_it_wrote(tmp_path, mode) -> None:
+    # The smoke run on NSL-KDD found it: with --fresh the store ignored its own writes, so P3b was
+    # skipped ("P2 did not run") and the PCA counts H9c is judged on were empty.
+    ds = tiny_dataset(n=1200)
+    ck = None if mode == "no-directory" else tmp_path
+    r = ens.run(ds, profile=TINY, checkpoint_dir=ck, resume=False)
+    arms = r["stage_a"]["arms"]
+    assert "P3b" in arms
+    assert arms["P2"]["transform"]["pca_components"] >= 1
+    assert arms["P3a"]["transform"]["pca_components"] >= 1
+
+
+def test_smoke_subsample_keeps_groups_and_unseen_aligned() -> None:
+    ds = tiny_dataset(n=1500)
+    groups = np.arange(len(ds.X_train)) % 3
+    unseen = np.arange(len(ds.X_test)) % 2 == 0
+    small, g, u = ens.subsample(ds, train=400, test=200, groups=groups, unseen=unseen)
+    assert len(small.X_train) == len(g) and len(small.X_test) == len(u)
+    assert abs(len(small.X_train) - 400) <= 5
+
+
 def test_yules_q() -> None:
     a = np.array([1, 1, 0, 0, 1, 0], dtype=bool)
     assert ens.yules_q(a, a) == 1.0

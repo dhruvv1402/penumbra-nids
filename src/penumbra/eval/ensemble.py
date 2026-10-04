@@ -10,7 +10,7 @@ Protocol, as registered:
              combiners scored on H by cross-validating the (cheap) combiner over H's score matrix.
              The configuration with the best recall at an exact 1% benign budget on H is selected.
   Stage B    the selected configuration and the requested P3 configuration refitted on F + H with
-             out-of-fold stacking (by day on CICIDS), next to RF-300, XGBoost and LogReg fitted on
+             out-of-fold stacking (stratified folds; see `run`), next to RF-300, XGBoost and LogReg fitted on
              the same rows. Test is scored once, here.
 
 Every expensive intermediate is checkpointed (`Checkpoint`), so a run that dies resumes, and a run
@@ -64,6 +64,10 @@ class Profile:
     large_full_grid: bool
 
 
+# Not a measurement: the whole protocol on a few thousand rows, to prove a machine is set up before
+# it is handed a multi-hour run. Its reports are written beside the real ones, never over them.
+SMOKE = Profile("smoke", 100, 100, 2, 2, 20, 20, 2_000, False)
+
 PROFILES: dict[str, Profile] = {
     "laptop": Profile("laptop", 1000, 256, 5, 3, 500, 200, 30_000, False),
     "workstation": Profile("workstation", 2000, 1000, 5, 3, 1000, 500, 30_000, True),
@@ -108,15 +112,23 @@ def fingerprint(profile: Profile) -> dict[str, Any]:
 
 
 class Checkpoint:
-    """Arrays and small JSON blobs keyed by name, one file each. `None` from `get` means recompute."""
+    """Arrays and small JSON blobs keyed by name, one file each. `None` from `get` means recompute.
+
+    `resume=False` ignores what an EARLIER run left on disk, never what this run wrote: a fresh run
+    that could not read back its own transform metadata silently skipped P3b and lost the PCA
+    component counts the H9c predictions are judged on.
+    """
 
     def __init__(self, root: Path | None, resume: bool = True) -> None:
         self.root = root
         self.resume = resume
+        self._this_run: dict[str, dict[str, Any]] = {}
         if root is not None:
             root.mkdir(parents=True, exist_ok=True)
 
     def get(self, key: str) -> dict[str, Any] | None:
+        if key in self._this_run:
+            return dict(self._this_run[key])
         if self.root is None or not self.resume:
             return None
         arr, meta = self.root / f"{key}.npz", self.root / f"{key}.json"
@@ -128,6 +140,7 @@ class Checkpoint:
         return out
 
     def put(self, key: str, arrays: dict[str, Any], meta: dict[str, Any]) -> None:
+        self._this_run[key] = {**arrays, **json.loads(json.dumps(meta, default=float))}
         if self.root is None:
             return
         np.savez_compressed(self.root / f"{key}.npz", **arrays)
@@ -187,6 +200,42 @@ def diversity(member_scores: np.ndarray, y: np.ndarray) -> dict[str, Any]:
 
 
 # --- splits ------------------------------------------------------------------------------------
+
+
+def subsample(
+    ds: Dataset,
+    *,
+    train: int,
+    test: int,
+    groups: np.ndarray | None = None,
+    unseen: np.ndarray | None = None,
+    seed: int = SEED,
+) -> tuple[Dataset, np.ndarray | None, np.ndarray | None]:
+    """A family-stratified slice of each split, with `groups` and `unseen` cut to match. Smoke only."""
+    from dataclasses import replace
+
+    def take(fam: pd.Series, n: int) -> np.ndarray:
+        if n >= len(fam):
+            return np.arange(len(fam))
+        _, keep = calibration_split(fam, n / len(fam), seed=seed)
+        return keep
+
+    tr, te = take(ds.fam_train, train), take(ds.fam_test, test)
+    small = replace(
+        ds,
+        name=f"{ds.name}-smoke",
+        X_train=ds.X_train.iloc[tr].reset_index(drop=True),
+        y_train=ds.y_train.iloc[tr].reset_index(drop=True),
+        fam_train=ds.fam_train.iloc[tr].reset_index(drop=True),
+        X_test=ds.X_test.iloc[te].reset_index(drop=True),
+        y_test=ds.y_test.iloc[te].reset_index(drop=True),
+        fam_test=ds.fam_test.iloc[te].reset_index(drop=True),
+    )
+    return (
+        small,
+        None if groups is None else np.asarray(groups)[tr],
+        None if unseen is None else np.asarray(unseen)[te],
+    )
 
 
 def splits(ds: Dataset) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -561,7 +610,13 @@ def run(
         "experiment": "E9",
         "dataset": ds.name,
         "fingerprint": fingerprint(profile),
-        "settings": {"nystroem_k": k, "svm_solver": solver, "c_grid": list(C_GRID), "fpr": FPR},
+        "settings": {
+            "nystroem_k": k,
+            "svm_solver": solver,
+            "c_grid": list(C_GRID),
+            "fpr": FPR,
+            "stacking_folds": "grouped" if groups is not None else "stratified",
+        },
     }
 
     F, H, S = splits(ds)
