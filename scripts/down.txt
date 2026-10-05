@@ -1,0 +1,55 @@
+Microsoft Windows [Version 10.0.26300.9457]
+(c) Microsoft Corporation. All rights reserved.
+
+E:\microsoft_hackthon\penumbra-nids>conda activate soup_env_314
+
+(soup_env_314) E:\microsoft_hackthon\penumbra-nids>penumbra ensemble -d nslkdd --smoke
+'penumbra' is not recognized as an internal or external command,
+operable program or batch file.
+
+(soup_env_314) E:\microsoft_hackthon\penumbra-nids>python scripts/download_datasets.py
+Target data raw root: G:\penumbra-data\raw
+============================================================
+
+Processing: NSL-KDD Train
+  [DOWNLOADING] KDDTrain+.txt from https://raw.githubusercontent.com/defcom17/NSL_KDD/master/KDDTrain%2B.txt...
+    -> 18.2/18.2 MB (100.0%)
+  [DONE] Saved to G:\penumbra-data\raw\nslkdd\KDDTrain+.txt
+
+Processing: NSL-KDD Test
+  [DOWNLOADING] KDDTest+.txt from https://raw.githubusercontent.com/defcom17/NSL_KDD/master/KDDTest%2B.txt...
+    -> 3.3/3.3 MB (100.0%)
+  [DONE] Saved to G:\penumbra-data\raw\nslkdd\KDDTest+.txt
+
+Processing: NSL-KDD Train 20%
+  [DOWNLOADING] KDDTrain+_20Percent.txt from https://raw.githubusercontent.com/defcom17/NSL_KDD/master/KDDTrain%2B_20Percent.txt...
+    -> 3.6/3.6 MB (100.0%)
+  [DONE] Saved to G:\penumbra-data\raw\nslkdd\KDDTrain+_20Percent.txt
+
+Processing: NSL-KDD Test-21
+  [DOWNLOADING] KDDTest-21.txt from https://raw.githubusercontent.com/defcom17/NSL_KDD/master/KDDTest-21.txt...
+    -> 1.7/1.7 MB (100.0%)
+  [DONE] Saved to G:\penumbra-data\raw\nslkdd\KDDTest-21.txt
+
+Processing: UNSW-NB15 Train
+  [DOWNLOADING] UNSW_NB15_training-set.csv from https://huggingface.co/datasets/dileepa0011/unsw-nb15/resolve/main/UNSW_NB15_training-set.csv...
+    -> 30.8/30.8 MB (100.0%)
+  [DONE] Saved to G:\penumbra-data\raw\unsw\UNSW_NB15_training-set.csv
+
+Processing: UNSW-NB15 Test
+  [DOWNLOADING] UNSW_NB15_testing-set.csv from https://huggingface.co/datasets/dileepa0011/unsw-nb15/resolve/main/UNSW_NB15_testing-set.csv...
+    -> 14.7/14.7 MB (100.0%)
+  [DONE] Saved to G:\penumbra-data\raw\unsw\UNSW_NB15_testing-set.csv
+
+Processing: CICIDS2017 Improved Zip
+  [DOWNLOADING] CICIDS2017_improved.zip from https://intrusion-detection.distrinet-research.be/CNS2022/Datasets/CICIDS2017_improved.zip...
+    -> 327.6/327.6 MB (100.0%)
+  [DONE] Saved to G:\penumbra-data\raw\cicids\CICIDS2017_improved.zip
+  [EXTRACTING] CICIDS2017_improved.zip -> G:\penumbra-data\raw\cicids\improved...
+  [DONE] Extracted files to G:\penumbra-data\raw\cicids\improved
+
+============================================================
+All datasets are ready in:
+  G:\penumbra-data\raw
+
+(soup_env_314) E:\microsoft_hackthon\penumbra-nids>
