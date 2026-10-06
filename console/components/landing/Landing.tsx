@@ -220,7 +220,6 @@ function Hero({ next }: { next: () => void }) {
           ones it has <b>never seen</b>, and <b>alerts</b> your security team.
         </p>
         <p className="lx-what-never">It never blocks: a human decides.</p>
-        <Packet className="lx-what-mascot" />
       </div>
 
       <div className="lx-cell lx-yellow lx-headline-bottom">
@@ -269,7 +268,6 @@ function Wire() {
   const step = WIRE_SECONDS / PACKETS.length;
   return (
     <div className="lx-cell lx-wire">
-
       <div className="lx-lane" aria-label="Animation: network traffic passing through Penumbra, which alerts an analyst">
         <span className="lx-lane-src">
           <span className="lx-live">LIVE</span>
@@ -277,9 +275,16 @@ function Wire() {
         </span>
         <span className="lx-cable" aria-hidden />
         <div className="lx-scanner" aria-hidden>
-          <span className="lx-scan-beam" />
-          <span className="lx-scan-tag">PENUMBRA</span>
-          <span className="lx-scan-sub">known head · novelty head</span>
+          <span className="lx-scan-head">
+            <LogoMark className="lx-scan-logo" />
+            <span className="lx-scan-tag">PENUMBRA</span>
+          </span>
+          <span className="lx-scan-sub">inspects every flow</span>
+          <span className="lx-scan-heads">
+            <span className="lx-scan-chip lx-scan-chip-known">KNOWN</span>
+            <span className="lx-scan-chip lx-scan-chip-novel">NOVEL</span>
+          </span>
+          <span className="lx-scan-line" />
         </div>
         {PACKETS.map((p, i) => (
           <span
@@ -290,7 +295,7 @@ function Wire() {
               {
                 animationDelay: `${-i * step}s, ${-i * step}s`,
                 // The still frame (reduced motion): four packets waiting before the scanner, six after it.
-                "--x": i < 4 ? `${3 + i * 8}%` : `${51 + (i - 4) * 6}%`,
+                "--x": i < 4 ? `${4 + i * 9}%` : `${54 + (i - 4) * 5.5}%`,
               } as React.CSSProperties
             }
           >
@@ -312,20 +317,11 @@ function Wire() {
           </svg>
           <span className="lx-soc-plus">+1 alert</span>
           <span className="lx-soc-title">SOC analyst</span>
-          <span className="lx-soc-sub">alerts arrive here</span>
+          <span className="lx-soc-sub">a human decides</span>
         </div>
-        <div className="lx-legend" aria-hidden>
-          <span>
-            <i className="lx-dot lx-dot-benign" /> benign · passes
-          </span>
-          <span>
-            <i className="lx-dot lx-dot-known" /> known attack · alert
-          </span>
-          <span>
-            <i className="lx-dot lx-dot-novel" /> never seen before · alert
-          </span>
-          <span className="lx-legend-never">every packet still gets through</span>
-        </div>
+        <span className="lx-lane-note" aria-hidden>
+          every packet still gets through
+        </span>
       </div>
     </div>
   );
