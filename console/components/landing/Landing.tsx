@@ -233,7 +233,100 @@ function Hero({ next }: { next: () => void }) {
         </svg>
         <span className="lx-scroll-hint">scroll</span>
       </button>
+
+      <Wire />
     </section>
+  );
+}
+
+/**
+ * What Penumbra is, in one look: traffic flowing through it. Every packet is inspected; benign
+ * ones pass, known attacks and never-seen behaviour raise an alert that travels on to an analyst -
+ * and every packet still reaches its destination, because Penumbra alerts and never blocks.
+ * One shared duration and evenly spaced negative delays keep the stream full from the first frame;
+ * the colour change and the flag are timed to the moment a packet crosses the scanner.
+ */
+const PACKETS: { kind: "benign" | "known" | "novel"; flag: string }[] = [
+  { kind: "benign", flag: "✓ pass" },
+  { kind: "known", flag: "ALERT · DoS" },
+  { kind: "benign", flag: "✓ pass" },
+  { kind: "novel", flag: "NOVEL · never seen" },
+  { kind: "benign", flag: "✓ pass" },
+  { kind: "benign", flag: "✓ pass" },
+  { kind: "known", flag: "ALERT · Recon" },
+  { kind: "benign", flag: "✓ pass" },
+  { kind: "novel", flag: "NOVEL · unlike normal" },
+  { kind: "benign", flag: "✓ pass" },
+];
+const WIRE_SECONDS = 12;
+
+function Wire() {
+  const step = WIRE_SECONDS / PACKETS.length;
+  return (
+    <div className="lx-cell lx-wire">
+      <div className="lx-wire-say lx-black">
+        <p className="lx-wire-kicker">What it is</p>
+        <p className="lx-wire-line">
+          An <b>AI network intrusion detector</b>. It watches traffic flow by flow, names the attacks it knows, flags the
+          ones it has <b>never seen</b>, and <b>alerts</b> your security team.
+        </p>
+        <p className="lx-wire-never">It never blocks: a human decides.</p>
+      </div>
+
+      <div className="lx-lane" aria-label="Animation: network traffic passing through Penumbra, which alerts an analyst">
+        <span className="lx-lane-src">network traffic →</span>
+        <span className="lx-cable" aria-hidden />
+        <div className="lx-scanner" aria-hidden>
+          <span className="lx-scan-beam" />
+          <span className="lx-scan-tag">PENUMBRA</span>
+          <span className="lx-scan-sub">known head · novelty head</span>
+        </div>
+        {PACKETS.map((p, i) => (
+          <span
+            key={i}
+            aria-hidden
+            className={`lx-pkt lx-pkt-${p.kind}${i < 4 ? " lx-pkt-pre" : ""}`}
+            style={
+              {
+                animationDelay: `${-i * step}s, ${-i * step}s`,
+                // The still frame (reduced motion): four packets waiting before the scanner, six after it.
+                "--x": i < 4 ? `${3 + i * 8}%` : `${51 + (i - 4) * 6}%`,
+              } as React.CSSProperties
+            }
+          >
+            <span className="lx-pkt-flag" style={{ animationDelay: `${-i * step}s` }}>
+              {p.flag}
+            </span>
+          </span>
+        ))}
+        <div className="lx-soc" aria-hidden>
+          <svg className="lx-soc-bell" viewBox="0 0 40 40" aria-hidden>
+            <path
+              d="M20 5c-6 0-10 4.5-10 10.5V23l-4 5h28l-4-5v-7.5C30 9.5 26 5 20 5z"
+              fill="#FFE11E"
+              stroke="#0b0b0b"
+              strokeWidth="3"
+              strokeLinejoin="round"
+            />
+            <path d="M15.5 31.5a4.5 4.5 0 0 0 9 0" fill="none" stroke="#0b0b0b" strokeWidth="3" strokeLinecap="round" />
+          </svg>
+          <span className="lx-soc-title">SOC analyst</span>
+          <span className="lx-soc-sub">alerts arrive here</span>
+        </div>
+        <div className="lx-legend" aria-hidden>
+          <span>
+            <i className="lx-dot lx-dot-benign" /> benign · passes
+          </span>
+          <span>
+            <i className="lx-dot lx-dot-known" /> known attack · alert
+          </span>
+          <span>
+            <i className="lx-dot lx-dot-novel" /> never seen before · alert
+          </span>
+          <span className="lx-legend-never">every packet still gets through</span>
+        </div>
+      </div>
+    </div>
   );
 }
 
