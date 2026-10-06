@@ -12,6 +12,16 @@ FROM ${BASE}
 # what `deploy_azure.py --base-image` relies on to skip re-downloading every dependency).
 COPY --chown=penumbra:penumbra src/ /app/src/
 
+# Dependencies as locked. A no-op on a freshly built base; on a reused one (`--base-image`) it brings
+# whatever the lockfile has moved since that base was built, so a security bump (pyjwt 2.15.1,
+# urllib3 2.8.0) does not wait for a full rebuild. --inexact: add or change, never remove.
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv
+COPY --chown=penumbra:penumbra pyproject.toml uv.lock README.md /tmp/lock/
+RUN cd /tmp/lock \
+    && UV_PROJECT_ENVIRONMENT=/app/.venv UV_CACHE_DIR=/tmp/uv-cache UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never \
+       uv sync --frozen --inexact --no-install-project --extra eval --extra api --extra rag --extra drift \
+    && rm -rf /tmp/uv-cache /tmp/lock
+
 # Not /app/artifacts: the base image declares that a VOLUME, and content added under a volume path
 # after the declaration is not guaranteed to survive. A separate root, pointed at by the env var.
 COPY --chown=penumbra:penumbra artifacts/reports/ /app/bundle/reports/
