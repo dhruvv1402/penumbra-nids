@@ -103,6 +103,32 @@ def test_smoke_subsample_keeps_groups_and_unseen_aligned() -> None:
     assert abs(len(small.X_train) - 400) <= 5
 
 
+def test_tied_scores_are_shared_not_spent_in_row_order() -> None:
+    # The E9 run found it: UNSW's training CSV lists benign rows first, so a tree's tied block at
+    # p = 1.0 went entirely to benign under row-order tie-breaking and its recall read 0.0000.
+    from penumbra.eval.budget import flags_at_benign_budget
+
+    y = np.r_[np.zeros(2000, int), np.ones(2000, int)]  # sorted by class, benign first
+    s = np.r_[np.zeros(1000), np.ones(1000), np.ones(2000)]  # half the benign rows tie with every attack
+    budget = int(round(0.01 * 2000))
+    assert flags_at_benign_budget(s, y, budget)[y == 1].mean() == 0.0  # the artifact
+    flags = ens.at_budget(s, y)
+    assert flags[y == 0].sum() == budget  # the budget is still exact
+    # Fair share of the tied block: budget / tied benign = 2%, so about 2% of the attacks.
+    assert 0.01 < flags[y == 1].mean() < 0.03
+
+
+def test_untied_scores_match_the_row_order_rule() -> None:
+    from penumbra.eval.budget import flags_at_benign_budget
+
+    rng = np.random.default_rng(0)
+    y = (rng.random(3000) < 0.5).astype(int)
+    s = rng.random(3000) + y
+    assert np.array_equal(
+        ens.at_budget(s, y), flags_at_benign_budget(s, y, int(round(0.01 * (y == 0).sum())))
+    )
+
+
 def test_yules_q() -> None:
     a = np.array([1, 1, 0, 0, 1, 0], dtype=bool)
     assert ens.yules_q(a, a) == 1.0

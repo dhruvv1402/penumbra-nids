@@ -40,7 +40,6 @@ from sklearn.model_selection import StratifiedKFold
 
 from penumbra.data.loaders.base import Dataset
 from penumbra.eval.bootstrap import mcnemar, moving_block_bootstrap, stratified_bootstrap
-from penumbra.eval.budget import flags_at_benign_budget
 from penumbra.features.preprocess import supervised_pipeline
 from penumbra.models import ensemble as E
 from penumbra.models import supervised
@@ -150,9 +149,28 @@ class Checkpoint:
 # --- metrics -----------------------------------------------------------------------------------
 
 
-def at_budget(scores: np.ndarray, y: np.ndarray, fpr: float = FPR) -> np.ndarray:
+def at_budget(scores: np.ndarray, y: np.ndarray, fpr: float = FPR, *, seed: int = SEED) -> np.ndarray:
+    """Flag the highest-scoring rows until exactly the benign budget is spent; ties broken at random.
+
+    `eval.budget.flags_at_benign_budget` breaks ties by row order, and documents it as arbitrary.
+    It is not arbitrary when a file is sorted by class. UNSW's training CSV lists its benign rows
+    first, so a single decision tree's tied block at p = 1.0 was spent entirely on benign rows, and
+    its holdout recall read 0.0000 where a fair draw gives about 0.20. A seeded random order inside
+    each tied block gives every tied row the same chance; on scores without ties it is identical to
+    the row-order rule. E9 only - published experiments keep the rule they were measured with.
+    """
     y = np.asarray(y).astype(int)
-    return flags_at_benign_budget(scores, y, int(round(fpr * int((y == 0).sum()))))
+    scores = np.asarray(scores, dtype=float)
+    flagged = np.zeros(len(scores), dtype=bool)
+    budget = int(round(fpr * int((y == 0).sum())))
+    if budget <= 0:
+        return flagged
+    tiebreak = np.random.default_rng(seed).random(len(scores))
+    order = np.lexsort((tiebreak, -scores))
+    benign_seen = np.cumsum(y[order] == 0)
+    keep = int(np.searchsorted(benign_seen, budget, side="left")) + 1
+    flagged[order[:keep]] = True
+    return flagged
 
 
 def recall_at(scores: np.ndarray, y: np.ndarray, fpr: float = FPR) -> tuple[float, float]:
@@ -594,22 +612,36 @@ def run(
     groups: np.ndarray | None = None,
     unseen: np.ndarray | None = None,
     inherit: dict[str, Any] | None = None,
+    prior_fingerprint: dict[str, Any] | None = None,
     on_progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """The whole E9 protocol on one dataset. `groups` = day of each training row (CICIDS)."""
+    """The whole E9 protocol on one dataset. `groups` = day of each training row (CICIDS).
+
+    The report's `fingerprint` is the machine and commit that FITTED the models: it is stored with
+    the checkpoints on the first run and read back on every resume. A resume on another machine adds
+    `rescored_on`, so metrics recomputed elsewhere from checkpointed scores say so, and timings stay
+    attributed to the machine that produced them. `prior_fingerprint` seeds it for checkpoints
+    written before this was recorded (taken from that run's own report).
+    """
 
     def step(msg: str) -> None:
         if on_progress:
             on_progress(msg)
 
     ck = Checkpoint(checkpoint_dir, resume)
+    here = fingerprint(profile)
+    stored = ck.get("fingerprint")
+    if stored is None:
+        stored = prior_fingerprint or here
+        ck.put("fingerprint", {}, stored)
+    fitted_on = {k_: v for k_, v in stored.items() if not isinstance(v, np.ndarray)}
     large = len(ds.X_train) > supervised.LARGE_DATASET_ROWS
     k = profile.k_large if large else profile.k_small
     solver = "sgd" if large else "liblinear"
     report: dict[str, Any] = {
         "experiment": "E9",
         "dataset": ds.name,
-        "fingerprint": fingerprint(profile),
+        "fingerprint": fitted_on,
         "settings": {
             "nystroem_k": k,
             "svm_solver": solver,
@@ -750,6 +782,12 @@ def run(
             members[m] = row
         report["test"]["members"] = members
         report["test"]["diversity"] = diversity(member_test, y_test)
+    if (fitted_on.get("git_sha"), fitted_on.get("os"), fitted_on.get("cores")) != (
+        here.get("git_sha"),
+        here.get("os"),
+        here.get("cores"),
+    ):
+        report["rescored_on"] = here
     report["summary"] = summarise(report)
     return report
 

@@ -2370,6 +2370,17 @@ def refit_drill(
         console.print(f"[dim]written to {out}[/dim]")
 
 
+def _prior_fingerprint(key: str, smoke: bool) -> dict[str, Any] | None:
+    """The fitting machine's fingerprint from an existing report, for checkpoints that predate it."""
+    path = settings().report_dir / f"ensemble_{key}{'_smoke' if smoke else ''}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("fingerprint")
+    except (OSError, ValueError):
+        return None
+
+
 @app.command("ensemble")
 def ensemble_cmd(
     dataset: DatasetName = "unsw",
@@ -2430,6 +2441,7 @@ def ensemble_cmd(
         groups=None,
         unseen=unseen,
         inherit=inherit,
+        prior_fingerprint=_prior_fingerprint(key, smoke),
         on_progress=lambda m: console.print(f"[dim]  {m}[/dim]"),
     )
 
