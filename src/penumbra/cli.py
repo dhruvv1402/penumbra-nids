@@ -2482,6 +2482,45 @@ def ensemble_cmd(
         console.print(f"[dim]written to {out}[/dim]")
 
 
+@app.command("samples")
+def samples_cmd(
+    datasets: Annotated[str, typer.Option("--datasets", help="Comma-separated.")] = "unsw,nslkdd,cicids",
+    n: Annotated[int, typer.Option("--n", help="Benign rows and attack rows per pool.")] = 2_000,
+) -> None:
+    """Write the held-out sample pools the live scorer draws from (ADR-0006).
+
+    One gzipped CSV per dataset under artifacts/samples/: every column of the TEST split plus its
+    true label and family (and, for NSL-KDD, whether the attack type is absent from training).
+    The deployment bundles these instead of the datasets.
+    """
+    from penumbra.api import scoring
+
+    out_dir = settings().artifact_root / "samples"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for name in [d.strip() for d in datasets.split(",") if d.strip()]:
+        unseen = None
+        if name == "nslkdd":
+            from penumbra.data.loaders import nsl_kdd
+
+            ds, _, fine_test = nsl_kdd.load_with_fine_labels()
+            unseen = nsl_kdd.unseen_mask(fine_test).to_numpy()
+            families = fine_test.astype(str).reset_index(drop=True)
+        elif name == "cicids":
+            ds = _load_cicids()[0]
+            families = ds.fam_test
+        else:
+            ds = _load(name)
+            families = ds.fam_test
+        pool = scoring.build_pool(ds.X_test, ds.y_test, families, unseen=unseen, n_benign=n, n_attack=n)
+        path = out_dir / f"{name}_test_sample.csv.gz"
+        pool.to_csv(path, index=False, compression="gzip")
+        fams = pool.loc[pool["_label"] == 1, "_family"].nunique()
+        console.print(
+            f"  {name:<7} {len(pool):,} rows ({int(pool['_label'].sum()):,} attack across {fams} families) "
+            f"-> {path} ({path.stat().st_size / 2**20:.1f} MB)"
+        )
+
+
 @app.command("calibration-drill")
 def calibration_drill(
     attacker: Annotated[

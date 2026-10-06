@@ -55,8 +55,14 @@ class Permission(StrEnum):
     ROTATE_KEY = "key:rotate"
     READ_AUDIT = "audit:read"
 
+    # ADR-0006: run the deployed models on sampled, uploaded or captured traffic. Rate-limited and
+    # audited; results go back to the caller and are stored nowhere.
+    SCORE = "model:score"
 
-_GUEST: frozenset[Permission] = frozenset({Permission.READ_ALERTS, Permission.READ_INCIDENTS})
+
+_GUEST: frozenset[Permission] = frozenset(
+    {Permission.READ_ALERTS, Permission.READ_INCIDENTS, Permission.SCORE}
+)
 
 _ANALYST: frozenset[Permission] = _GUEST | frozenset(
     {

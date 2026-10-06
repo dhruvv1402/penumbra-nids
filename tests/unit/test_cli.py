@@ -86,6 +86,7 @@ DOCUMENTED = [
     ["calibration-drill", "--help"],
     ["registry", "challenge", "--help"],
     ["registry", "snapshot", "--help"],
+    ["samples", "--help"],
 ]
 
 

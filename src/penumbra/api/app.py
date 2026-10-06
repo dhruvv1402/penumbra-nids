@@ -34,7 +34,7 @@ from penumbra import __version__
 from penumbra.alerts import suppression
 from penumbra.alerts.models import Alert, Incident
 from penumbra.alerts.schemas import asim
-from penumbra.api import reports
+from penumbra.api import reports, scoring
 from penumbra.api.security import rbac
 from penumbra.api.security.audit import ACTION_SUPPRESS, AuditLog
 from penumbra.api.security.auth import (
@@ -45,6 +45,7 @@ from penumbra.api.security.auth import (
     guest_user,
     issue_token,
 )
+from penumbra.api.security.pii import pseudonymise_ip
 from penumbra.api.security.rbac import Permission, Principal, Role
 from penumbra.config import DEV_PII_KEY, settings
 from penumbra.feedback import active, integrity
@@ -186,6 +187,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     seed = os.environ.get("PENUMBRA_SEED_FIXTURES")
     if seed:
         seed_fixtures(Path(seed))
+    # Load the deployed champions in the background: UNSW takes ~6 s, and the first visitor to the
+    # scoring page should not be the one who waits for it. Health does not depend on it.
+    asyncio.get_running_loop().run_in_executor(None, _preload_models)
     yield
     state.repo.close()
 
@@ -876,6 +880,200 @@ async def pii_key_status(principal: CurrentUser) -> dict[str, Any]:
         detail={"previous_accepted": len(status_["previous"])},  # type: ignore[arg-type]
     )
     return {**status_, "overlap_open": bool(status_["previous"])}
+
+
+# --- live scoring (ADR-0006) ----------------------------------------------------------------------
+
+SCORER = scoring.ModelStore()
+SCORE_LIMITER = scoring.RateLimiter()
+
+
+def _preload_models() -> None:
+    for dataset in SCORER.available():
+        try:
+            SCORER.detector(dataset)
+        except Exception:  # noqa: BLE001, S112 - a model that fails to load is reported on use, not at boot
+            continue
+
+
+def _client_address(request: Request) -> str:
+    # Behind the Container Apps ingress the socket peer is the proxy; the caller is the first hop.
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _score_gate(principal: Principal, request: Request) -> scoring.Limits:
+    """Permission, then the rate limit. Guests share one identity, so the address separates them."""
+    require(principal, Permission.SCORE)
+    limits = scoring.GUEST_LIMITS if principal.role is Role.GUEST else scoring.USER_LIMITS
+    key = f"{principal.role.value}:{principal.username}:{_client_address(request)}"
+    allowed, recent = SCORE_LIMITER.allow(key, limits.calls_per_hour)
+    if not allowed:
+        state.audit.append(
+            actor=principal.username,
+            role=principal.role.value,
+            action="model.score.rate_limited",
+            detail={"recent": recent, "limit": limits.calls_per_hour},
+        )
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"{recent} scoring calls in the last hour; the limit for {principal.role.value} is "
+            f"{limits.calls_per_hour}. A public scorer is an oracle, so it is throttled (ADR-0006).",
+        )
+    return limits
+
+
+def _score_audit(
+    principal: Principal, request: Request, mode: str, dataset: str, result: dict[str, Any]
+) -> None:
+    summary = result["summary"]
+    state.audit.append(
+        actor=principal.username,
+        role=principal.role.value,
+        action="model.score",
+        detail={
+            "mode": mode,
+            "dataset": dataset,
+            "flows": summary["flows"],
+            "alerts": summary["alerts"],
+            "model": summary.get("model"),
+            "ip": _client_address(request),
+        },
+    )
+
+
+def _scoring_error(exc: scoring.ScoringError) -> HTTPException:
+    return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+
+
+class SampleRequest(BaseModel):
+    dataset: str = "unsw"
+    n: int = Field(default=200, ge=1, le=scoring.USER_LIMITS.max_rows)
+    attack_share: float = 0.10
+    seed: int | None = None
+
+
+@app.get("/score/models", tags=["scoring"])
+async def score_models(principal: CurrentUser) -> dict[str, Any]:
+    """The deployed champions this instance can score with, their schema, and the caller's limits."""
+    require(principal, Permission.SCORE)
+    limits = scoring.GUEST_LIMITS if principal.role is Role.GUEST else scoring.USER_LIMITS
+    models = []
+    for dataset in SCORER.available():
+        try:
+            models.append(await asyncio.to_thread(scoring.model_info, SCORER, dataset))
+        except scoring.ScoringError:
+            continue
+    return {
+        "models": models,
+        "limits": {"calls_per_hour": limits.calls_per_hour, "max_rows": limits.max_rows},
+        "pcap_dataset": scoring.PCAP_DATASET,
+        "attack_shares": list(scoring.ATTACK_SHARES),
+        "max_csv_mb": scoring.MAX_CSV_BYTES // 2**20,
+        "max_pcap_mb": scoring.MAX_PCAP_BYTES // 2**20,
+    }
+
+
+@app.post("/score/sample", tags=["scoring"])
+async def score_sample(body: SampleRequest, principal: CurrentUser, request: Request) -> dict[str, Any]:
+    """Score held-out test flows the model never trained on, with the true label beside each."""
+    limits = _score_gate(principal, request)
+    try:
+        det = await asyncio.to_thread(SCORER.detector, body.dataset)
+        drawn = await asyncio.to_thread(
+            scoring.sample, SCORER, body.dataset, min(body.n, limits.max_rows), body.attack_share, body.seed
+        )
+        X = scoring.coerce(det, drawn)
+        result = await asyncio.to_thread(
+            scoring.score, det, X, dataset=body.dataset, truth=drawn, max_rows=limits.max_rows
+        )
+    except scoring.ScoringError as exc:
+        raise _scoring_error(exc) from exc
+    _score_audit(principal, request, "sample", body.dataset, result)
+    return result
+
+
+async def _read_upload(request: Request, limit: int) -> bytes:
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"upload exceeds {limit // 2**20} MB")
+    content = await request.body()
+    if len(content) > limit:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"upload exceeds {limit // 2**20} MB")
+    if not content:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "empty upload")
+    return content
+
+
+@app.post("/score/csv", tags=["scoring"])
+async def score_csv(principal: CurrentUser, request: Request, dataset: str = Query("unsw")) -> dict[str, Any]:
+    """Score flows uploaded as CSV (the request body) in a deployed model's column schema."""
+    limits = _score_gate(principal, request)
+    content = await _read_upload(request, scoring.MAX_CSV_BYTES)
+    try:
+        det = await asyncio.to_thread(SCORER.detector, dataset)
+        frame = scoring.read_csv_upload(content)
+        X = scoring.coerce(det, frame)
+        result = await asyncio.to_thread(scoring.score, det, X, dataset=dataset, max_rows=limits.max_rows)
+    except scoring.ScoringError as exc:
+        raise _scoring_error(exc) from exc
+    _score_audit(principal, request, "csv", dataset, result)
+    return result
+
+
+@app.post("/score/pcap", tags=["scoring"])
+async def score_pcap(principal: CurrentUser, request: Request) -> dict[str, Any]:
+    """Score a capture (the request body): flows assembled server-side, scored by the UNSW model.
+
+    Addresses are pseudonymised before they leave the server, as everywhere else. Capture only
+    traffic you own (docs/ETHICS_SCOPE.md).
+    """
+    limits = _score_gate(principal, request)
+    content = await _read_upload(request, scoring.MAX_PCAP_BYTES)
+    dataset = scoring.PCAP_DATASET
+    try:
+        det = await asyncio.to_thread(SCORER.detector, dataset)
+        frame = await asyncio.to_thread(scoring.read_pcap_upload, content)
+        meta = frame.attrs.get("meta")
+        endpoints = None
+        if meta is not None and {"Src IP", "Dst IP"} <= set(meta.columns):
+            endpoints = [
+                (pseudonymise_ip(str(s)), pseudonymise_ip(str(d)))
+                for s, d in zip(meta["Src IP"], meta["Dst IP"], strict=True)
+            ]
+        frame = frame.copy()
+        frame.attrs = {}
+        X = scoring.coerce(det, frame)
+        result = await asyncio.to_thread(
+            scoring.score,
+            det,
+            X,
+            dataset=dataset,
+            endpoints=endpoints,
+            max_rows=scoring.MAX_PCAP_FLOWS,
+            max_returned=limits.max_rows,
+        )
+    except scoring.ScoringError as exc:
+        raise _scoring_error(exc) from exc
+    _score_audit(principal, request, "pcap", dataset, result)
+    return result
+
+
+@app.get("/score/template/{dataset}", tags=["scoring"])
+async def score_template(dataset: str, principal: CurrentUser) -> Response:
+    """A CSV with exactly the columns `/score/csv` needs, and a few real held-out rows (no labels)."""
+    require(principal, Permission.SCORE)
+    try:
+        text = await asyncio.to_thread(scoring.template_csv, SCORER, dataset)
+    except scoring.ScoringError as exc:
+        raise _scoring_error(exc) from exc
+    return Response(
+        text,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="penumbra_{dataset}_template.csv"'},
+    )
 
 
 @app.get("/reports", tags=["reports"])
