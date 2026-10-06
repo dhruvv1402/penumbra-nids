@@ -1448,7 +1448,9 @@ pre-registered.
   - Row-order tie-breaking on a class-sorted file read two single trees as 0.0000 recall. A fair
     draw gives 0.21 and 0.24.
   - E9's metric now shares ties at random. The test table is unaffected.
-  - One registered statistic (H9e) is left unjudged rather than read through the artifact.
+  - H9e (diversity) was judged with fair ties on refitted, verified-identical members. Mixing
+    tree and SVM members does lower error correlation: Yule's Q 0.85 against 0.98 on UNSW. On unseen
+    CICIDS days every member errs together anyway.
 
 *Reproduce: `penumbra ensemble -d unsw|nslkdd|cicids` (`artifacts/reports/ensemble_<dataset>.json`).
 `--smoke` checks a machine in minutes. Run on a 20-core machine; timings belong to it. Full

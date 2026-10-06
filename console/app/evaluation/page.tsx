@@ -1000,7 +1000,7 @@ function EnsemblePanel({
           ? ` Normalise-then-PCA kept ${pcaK} components; PCA on unscaled features kept ${p3a}.`
           : ""}{" "}
         Intervals are paired bootstraps of the difference. Profile {report.fingerprint.profile.name}. Pre-registered;
-        the verdict on each prediction, including one left unjudged after a tie artifact, is in EXPERIMENTS.md E9.
+        the verdict on each prediction, after correcting a tie-breaking artifact, is in EXPERIMENTS.md E9.
       </Caption>
     </Panel>
   );

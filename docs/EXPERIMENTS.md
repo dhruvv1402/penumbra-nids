@@ -1150,14 +1150,29 @@ amendment before any real CICIDS run (`d2bdfc6`), and none of them is edited her
 4. **H9d is refuted.** The RBF member's recall on NSL-KDD's 17 unseen attack types is **0.017** at
    1% FPR, below the forest's 0.053. A smooth margin did not extrapolate better. The whole ensemble
    reached 0.019.
-5. **H9e is not judged.** Its registered statistic is Yule's Q on each member's flags at a matched
-   budget. Those flags used row-order tie-breaking (see the note), which corrupts the tree members.
-   The as-computed values are recorded but not read:
-   - UNSW: tree–SVM 0.878 against tree–tree 0.838;
-   - NSL-KDD: 0.929 against 0.993;
-   - CICIDS: 0.986 against 1.000.
+5. **H9e holds on all three datasets, judged with ties shared fairly.** Its registered statistic
+   is Yule's Q on each member's flags at a matched budget. In the run those flags used row-order
+   tie-breaking (see the note), which corrupts the tree members.
+   - The run's checkpointed scores stayed on the fitting machine, so the six final members were
+     refitted here: same rows (F + H), same configuration and C values, same seeds and versions.
+     Test was scored once, with fair ties (`scripts/e9_members.py`,
+     `artifacts/reports/ensemble_members.json`).
+   - **These are the same models.** The SVM members reproduce the run's test recalls to four
+     decimals (UNSW S1/S2/S3 0.7439/0.8119/0.7977 against 0.7440/0.8121/0.7978).
 
-   Re-scoring from the run's checkpointed scores settles it, and nothing needs refitting.
+   | mean Yule's Q, test | tree–SVM | tree–tree | as computed in the run (row-order ties) |
+   |---|---:|---:|---|
+   | UNSW | **0.846** | 0.982 | 0.878 vs 0.838, which read as refuted |
+   | NSL-KDD | **0.932** | 0.994 | 0.929 vs 0.993 |
+   | CICIDS | **0.984** | 0.999 | 0.986 vs 1.000 |
+
+   - **Mixing model families does buy diversity**, so the ensemble's loss is not a lack of
+     disagreement. On CICIDS's unseen days, though, every member errs together almost completely
+     (Q ≈ 1), and no combiner can average that away.
+   - **Row-order ties did not always deflate.** UNSW's *test* file lists attacks first, so there they
+     inflated the single trees. The run reported T1/T2/T3 test recall at 0.49/0.48/0.72; shared
+     fairly it is 0.06/0.10/0.35. On CICIDS the trees are genuinely near zero either way
+     (0.02–0.03).
 6. **Prediction 7 (exact SVC against Nystroem) is refuted on UNSW in the direction that matters
    least.**
    - On the same 30,000 rows, the Nystroem twin beats the exact `SVC(rbf)`: holdout recall 0.828
@@ -1190,7 +1205,7 @@ UNSW's training CSV lists its benign rows first, so when a single unpruned tree 
   - the hard-vote rows;
   - the tree half of H9c, re-measured on the same trees with fair ties
     (`artifacts/reports/ensemble_h9c_trees.json`);
-  - H9e, left unjudged.
+  - H9e, judged afterwards with fair ties on refitted members (item 5).
 
 **What changes because of E9.**
 - Nothing ships. The registered plan was to put the ensemble through the gate, and **that step was
