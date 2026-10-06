@@ -1453,11 +1453,12 @@ pre-registered.
     CICIDS days every member errs together anyway.
 
 - **The gate agrees.** Registered as a challenger with a full detector fit, the ensemble is refused
-  on NSL-KDD and CICIDS.
+  on all three datasets.
+  - UNSW fails G1 and G2: recall is 0.843 against 0.881 at the champion's per-head rate, and
+    `Backdoor` falls from 0.971 to 0.851.
   - NSL-KDD fails G2: at the champion's per-head rate its overall recall holds (0.836 against
     0.829), but `processtable` and `warezmaster` each lose more than 0.2.
   - CICIDS fails G1 and G2: recall is 0.311 against 0.852, and `Portscan` falls to 0.009.
-  - The UNSW gate run was interrupted by low memory on the laptop and is recorded as not run.
 
 *Reproduce: `penumbra ensemble -d unsw|nslkdd|cicids` (`artifacts/reports/ensemble_<dataset>.json`);
 gate: `penumbra registry challenge -d <dataset> -m ens`.
