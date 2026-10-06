@@ -16,7 +16,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { Badge, Binoculars, Eclipse, GitHubMark, LogoMark, Packet, QuestionEye, Sparkle, Target } from "./Art";
+import { Binoculars, Eclipse, GitHubMark, LogoMark, Packet, QuestionEye, Sparkle, Target } from "./Art";
 
 const REPO = "https://github.com/dhruvv1402/penumbra-nids";
 const PANELS = ["hero", "heads", "proof", "how", "misses", "never", "come"] as const;
@@ -213,9 +213,14 @@ function Hero({ next }: { next: () => void }) {
         />
       </div>
 
-      <div className="lx-cell lx-blue lx-center lx-badge-cell">
-        <Badge text="#ALERTNEVERBLOCK • #HUMANDECIDES • " className="lx-badge" />
-        <Packet className="lx-packet" />
+      <div className="lx-cell lx-blue lx-what">
+        <p className="lx-what-kicker">What it is</p>
+        <p className="lx-what-line">
+          An <b>AI network intrusion detector</b>. It watches traffic flow by flow, names the attacks it knows, flags the
+          ones it has <b>never seen</b>, and <b>alerts</b> your security team.
+        </p>
+        <p className="lx-what-never">It never blocks: a human decides.</p>
+        <Packet className="lx-what-mascot" />
       </div>
 
       <div className="lx-cell lx-yellow lx-headline-bottom">
@@ -264,17 +269,12 @@ function Wire() {
   const step = WIRE_SECONDS / PACKETS.length;
   return (
     <div className="lx-cell lx-wire">
-      <div className="lx-wire-say lx-black">
-        <p className="lx-wire-kicker">What it is</p>
-        <p className="lx-wire-line">
-          An <b>AI network intrusion detector</b>. It watches traffic flow by flow, names the attacks it knows, flags the
-          ones it has <b>never seen</b>, and <b>alerts</b> your security team.
-        </p>
-        <p className="lx-wire-never">It never blocks: a human decides.</p>
-      </div>
 
       <div className="lx-lane" aria-label="Animation: network traffic passing through Penumbra, which alerts an analyst">
-        <span className="lx-lane-src">network traffic →</span>
+        <span className="lx-lane-src">
+          <span className="lx-live">LIVE</span>
+          <span className="lx-lane-src-text">network traffic →</span>
+        </span>
         <span className="lx-cable" aria-hidden />
         <div className="lx-scanner" aria-hidden>
           <span className="lx-scan-beam" />
@@ -310,6 +310,7 @@ function Wire() {
             />
             <path d="M15.5 31.5a4.5 4.5 0 0 0 9 0" fill="none" stroke="#0b0b0b" strokeWidth="3" strokeLinecap="round" />
           </svg>
+          <span className="lx-soc-plus">+1 alert</span>
           <span className="lx-soc-title">SOC analyst</span>
           <span className="lx-soc-sub">alerts arrive here</span>
         </div>
