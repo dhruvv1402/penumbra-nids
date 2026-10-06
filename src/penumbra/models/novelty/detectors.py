@@ -41,6 +41,13 @@ class NoveltyDetector(Protocol):
         ...
 
 
+def _f64(X: np.ndarray) -> np.ndarray:
+    """Float64, whatever arrives. CICIDS loads as float32 to halve its memory, and its byte-rate
+    columns are large enough that squares and covariances overflow float32: Ledoit-Wolf returned NaN
+    and the fit failed. A no-op for data that is already float64."""
+    return np.asarray(X, dtype=np.float64)
+
+
 class Autoencoder:
     """Undercomplete autoencoder; novelty = reconstruction error.
 
@@ -78,10 +85,12 @@ class Autoencoder:
         )
 
     def fit(self, X_benign: np.ndarray) -> Autoencoder:
+        X_benign = _f64(X_benign)
         self.model.fit(X_benign, X_benign)
         return self
 
     def score(self, X: np.ndarray) -> np.ndarray:
+        X = _f64(X)
         recon = self.model.predict(X)
         return np.asarray(np.mean((X - recon) ** 2, axis=1), dtype=float)
 
@@ -133,6 +142,7 @@ class MahalanobisDetector:
         self.mean_: np.ndarray | None = None
 
     def fit(self, X_benign: np.ndarray) -> MahalanobisDetector:
+        X_benign = _f64(X_benign)
         n_comp = min(self.n_components, X_benign.shape[1], max(X_benign.shape[0] - 1, 1))
         self.pca = PCA(n_components=n_comp, random_state=SEED)
         Z = self.pca.fit_transform(X_benign)
@@ -143,7 +153,7 @@ class MahalanobisDetector:
     def score(self, X: np.ndarray) -> np.ndarray:
         if self.mean_ is None:
             raise RuntimeError("MahalanobisDetector.score called before fit")
-        Z = self.pca.transform(X)
+        Z = self.pca.transform(_f64(X))
         delta = Z - self.mean_
         precision = self.cov.get_precision()
         # Row-wise quadratic form without materialising an n x n matrix.
