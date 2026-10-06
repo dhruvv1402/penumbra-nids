@@ -10,6 +10,7 @@ honestly how much it actually catches.
 | | |
 |---|---|
 | **The thesis, measured** | On 17 attack types never seen in training, a supervised classifier recalls **5%** at 1% FPR; adding a benign-only novelty head: **35%**. At 10% FPR the same head *costs* 9 points. Both reported. |
+| **Unseen days** | Trained on CICIDS2017 Monday–Wednesday, the full detector catches **85%** of Thursday–Friday attacks at a realised **1.5%** FPR. Not one of those families is in training, though several behave like ones that are. The new one, Infiltration's internal scan, is caught at 0.32. |
 | **Alert fatigue** | Real CICIDS2017 source IPs: **94,115 alerts → 203 incidents**; 99.93% of attack flows reach an analyst. |
 | **Real traffic** | nmap between two of our laptops: out of the box everything alerts. `penumbra rebaseline` learns the network's normal with no labels: ordinary flows alerting **100% → 4.9%**, scan flows detected **92.9%**, gated and registered as a candidate. |
 | **Drift, measured** | A 1% FPR target realises **10.2%** on NSL-KDD's shifted test split. Re-fitting the thresholds on recent benign traffic restores **1.06%**, and unseen-attack recall falls 0.77 → 0.43: the headline had been bought with false positives. Pre-registered (E8), two predictions refuted. |

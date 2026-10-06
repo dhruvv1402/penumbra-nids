@@ -1456,6 +1456,44 @@ pre-registered.
 `--smoke` checks a machine in minutes. Run on a 20-core machine; timings belong to it. Full
 pre-registration and results: EXPERIMENTS.md E9.*
 
+### 10.7l CICIDS2017 as a third deployed detector
+
+**The detector.**
+- The full two-head detector (RF-100 with 5-row leaves, family model, novelty head), trained on
+  Monday to Wednesday: 1,190,343 flows.
+- Held-out calibration as in §10.7j. The novelty head is fitted on a seeded 200,000-row sample of
+  the benign training flows.
+- Registered as the CICIDS champion v001. As the first version it is ungated, and the manifest says
+  so.
+- Scored once on **Thursday and Friday**, whose attack families are all absent from training.
+
+| Thursday–Friday, 1% target | |
+|---|---|
+| realised FPR [95% CI] | **1.51%** [1.48, 1.54] |
+| attack recall | **0.852** |
+| benign flows reaching an analyst (fired or abstained) | 4.8% |
+
+| family (none of them in training) | recall |
+|---|---:|
+| DDoS, Portscan, Web Brute Force, Web XSS | 1.00 |
+| Infiltration | 0.98 |
+| Web SQL Injection | 0.89 |
+| Botnet | 0.86 |
+| Infiltration – Portscan | **0.32** |
+
+**How to read it.**
+- Of the three detectors this one lands closest to its target FPR. Monday to Wednesday benign traffic
+  resembles Thursday and Friday's more than NSL-KDD's two splits resemble each other.
+- "Unseen family" is a statement about labels, not about behaviour. DDoS looks like Wednesday's
+  DoS, and port scans are what the scan-like DoS and brute-force traffic already exercised.
+- The genuinely new behaviour is Infiltration's internal port scan, and that is where recall falls
+  to 0.32.
+- This is a temporal holdout from one testbed, not evidence about another network. §10.7h's lab
+  capture is that evidence.
+
+*Reproduce: `penumbra fit -d cicids` then `penumbra registry init -d cicids`. Measured with
+`calibration_drill.arm` on the test split (`artifacts/reports/detector_cicids.json`).*
+
 ### 10.8 Reproduction
 
 ```bash

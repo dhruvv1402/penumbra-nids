@@ -50,6 +50,14 @@ CATALOGUE: tuple[ReportSpec, ...] = (
         "wrote it. What a deployment without model artifacts shows on the governance page.",
     ),
     ReportSpec(
+        "detector-cicids",
+        "detector_cicids.json",
+        "CICIDS2017 detector on unseen days",
+        "penumbra fit -d cicids",
+        "The deployed CICIDS detector, trained Monday-Wednesday, scored once on Thursday-Friday: "
+        "realised FPR, recall and per-family recall on families absent from training.",
+    ),
+    ReportSpec(
         "calibration-drill",
         "calibration_drill.json",
         "Calibration drill (E9a)",
