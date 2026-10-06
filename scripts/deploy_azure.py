@@ -125,7 +125,42 @@ def stage_context() -> Path:
         shutil.copy2(corpus, corpus_dir / CORPUS_FILENAME)
     else:
         print("  no ATT&CK corpus found; triage notes will say so (penumbra copilot build)")
+    stage_models(stage)
     return stage
+
+
+def stage_models(stage: Path) -> None:
+    """The registry champions and the held-out sample pools, for live scoring (ADR-0006).
+
+    Each champion is copied out of the registry only after its manifest verifies: the hashes of
+    the bytes being shipped are the hashes the gate report was recorded against. A champion that
+    fails verification is not shipped, and the deploy stops.
+    """
+    from penumbra.config import settings
+    from penumbra.models.registry import ModelRegistry
+
+    models_dir = stage / "deploy" / "models"
+    samples_dir = stage / "deploy" / "samples"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    samples_dir.mkdir(parents=True, exist_ok=True)
+    for dataset in ("unsw", "nslkdd", "cicids"):
+        reg = ModelRegistry(settings().artifact_root / "registry", dataset)
+        version = reg.champion()
+        if version is None:
+            print(f"  {dataset}: no champion; not shipped")
+            continue
+        problems = reg.verify(version)
+        if problems:
+            sys.exit(f"{dataset} champion {version} failed verification, not shipping it: {problems}")
+        dest = models_dir / dataset
+        dest.mkdir(parents=True, exist_ok=True)
+        for name in ("detector.joblib", "metadata.json"):
+            shutil.copy2(reg.path(version) / name, dest / name)
+        pool = settings().artifact_root / "samples" / f"{dataset}_test_sample.csv.gz"
+        if pool.exists():
+            shutil.copy2(pool, samples_dir / pool.name)
+        size = (dest / "detector.joblib").stat().st_size / 2**20
+        print(f"  {dataset}: champion {version} verified, {size:.0f} MB{'' if pool.exists() else ' (no sample pool)'}")
 
 
 SECRET_NAMES = {
@@ -246,7 +281,7 @@ def deploy_api(rg: str, env_name: str, image: str, registry_args: list[str]) -> 
            "--image", image, *registry_args, "--ingress", "internal", "--target-port", "8000",
            # One replica: the demo store is SQLite on the container's disk. Two replicas would be two
            # different stores behind one name.
-           "--min-replicas", "1", "--max-replicas", "1", "--cpu", "1.0", "--memory", "2Gi",
+           "--min-replicas", "1", "--max-replicas", "1", "--cpu", "2.0", "--memory", "4Gi",
            "--secrets", *secret_args, "--env-vars", *env_args, "-o", "none")  # fmt: skip
     else:
         az(
@@ -262,8 +297,9 @@ def deploy_api(rg: str, env_name: str, image: str, registry_args: list[str]) -> 
             "-o",
             "none",
         )
+        # Resources on update too: live scoring (ADR-0006) holds the champions in memory, ~0.9 GB.
         az("containerapp", "update", "-g", rg, "-n", "penumbra-api", "--image", image,
-           "--set-env-vars", *env_args, "-o", "none")  # fmt: skip
+           "--cpu", "2.0", "--memory", "4Gi", "--set-env-vars", *env_args, "-o", "none")  # fmt: skip
     fqdn = az("containerapp", "show", "-g", rg, "-n", "penumbra-api",
               "--query", "properties.configuration.ingress.fqdn", "-o", "tsv")  # fmt: skip
     print(f"app penumbra-api ({fqdn})")

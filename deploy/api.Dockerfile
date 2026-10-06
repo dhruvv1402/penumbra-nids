@@ -19,7 +19,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv
 COPY --chown=penumbra:penumbra pyproject.toml uv.lock README.md /tmp/lock/
 RUN cd /tmp/lock \
     && UV_PROJECT_ENVIRONMENT=/app/.venv UV_CACHE_DIR=/tmp/uv-cache UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never \
-       uv sync --frozen --inexact --no-install-project --extra eval --extra api --extra rag --extra drift \
+       uv sync --frozen --inexact --no-install-project --extra eval --extra api --extra rag --extra drift --extra pcap \
     && rm -rf /tmp/uv-cache /tmp/lock
 
 # Not /app/artifacts: the base image declares that a VOLUME, and content added under a volume path
@@ -29,6 +29,11 @@ COPY --chown=penumbra:penumbra tests/fixtures/demo_alerts.json tests/fixtures/in
 
 # The copilot's ATT&CK corpus, staged by scripts/deploy_azure.py (may be an empty directory).
 COPY --chown=penumbra:penumbra deploy/data/ /app/data/
+
+# Live scoring (ADR-0006): the registry champions, verified against their manifests when staged,
+# and the held-out sample pools the scorer draws from.
+COPY --chown=penumbra:penumbra deploy/models/ /app/bundle/models/
+COPY --chown=penumbra:penumbra deploy/samples/ /app/bundle/samples/
 
 ENV PENUMBRA_ARTIFACT_ROOT=/app/bundle \
     PENUMBRA_SEED_FIXTURES=/app/seed

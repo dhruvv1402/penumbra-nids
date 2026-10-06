@@ -167,7 +167,11 @@ export default function TryTheModel() {
             {model && (
               <p className="text-[11px] leading-relaxed text-[var(--color-ink-dim)]">
                 {model.title} champion <code>{model.registry_version ?? "v001"}</code>: a random forest plus a benign-only
-                novelty head, trained on {model.trained_rows?.toLocaleString()} flows, calibrated on held-out rows, target{" "}
+                novelty head, trained on {model.trained_rows?.toLocaleString()} flows,{" "}
+                {model.calibration === "held_out"
+                  ? "thresholds fitted on held-out rows"
+                  : "thresholds fitted in-sample (the original fit; its held-out challenger was refused by the gate)"}
+                , target{" "}
                 {(model.target_fpr * 100).toFixed(0)}% false alarms.
                 {mode === "sample" && <> Draws from: {model.test_pool}.</>}
               </p>

@@ -26,3 +26,9 @@ requirements-audit.txt
 !artifacts/reports/
 !tests/fixtures/demo_alerts.json
 !tests/fixtures/incidents_cicids.json
+
+# Live scoring (ADR-0006): the staged registry champions must survive the *.joblib rule above.
+!deploy/models/
+!deploy/models/**
+!deploy/samples/
+!deploy/samples/**
