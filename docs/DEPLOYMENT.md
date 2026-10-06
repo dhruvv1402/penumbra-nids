@@ -28,6 +28,7 @@ apps, and prints the URL. Re-running updates in place and keeps existing secrets
 | JWT secret, PII key | per-process / development key | generated, stored as secrets; the API refuses to start on the public development PII key |
 | data | fixtures pushed by `penumbra demo` | the same fixtures, seeded on start **only into an empty store** (`PENUMBRA_SEED_FIXTURES`) - a restart comes back with the demo data, and a populated store is never touched |
 | SIEM | local mock | local mock (switch to Sentinel below) |
+| live scoring (ADR-0006) | `/score/*` against `artifacts/models/` and `artifacts/samples/` | the **registry champions**, copied out of the registry only after their manifests verify, plus the held-out sample pools (`penumbra samples`). Guests: 30 calls/hour, 500 flows a call. API container 2 CPU / 4 GiB (UNSW alone is ~750 MB loaded). Nothing scored is stored |
 
 ## Things measured, not assumed
 

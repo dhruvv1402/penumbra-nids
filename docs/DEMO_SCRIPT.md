@@ -63,6 +63,26 @@ the test set. The dataset's authors built the experiment; we just ran it.
 
 ---
 
+## 1b — Run it, live (60s) — **do this if the room has a connection**
+
+Open **Try the model** (top of the queue page, or *Try it* on the landing page; guests can use it).
+
+1. **Held-out flows, NSL-KDD, 200, 10% attacks → score.**
+   - Point at the tile: *attack types never seen in training*.
+   - Then at a row marked *never in training* that came back SUSPECTED NOVEL.
+   - "These are real test connections the model never saw, scored now, by the registered champion,
+     with the truth beside each verdict. Including the ✗ rows."
+2. **Switch to CICIDS2017.** "Trained Monday to Wednesday. These are Thursday and Friday: every
+   family here is absent from training."
+3. **Upload pcap** with `lab.pcap`.
+   - About 7 s on a normal connection.
+   - "Out of the box it flags almost everything on a network it has never seen. That is the
+     honest result, and it is why `rebaseline` exists: 100% to 4.9% on this same capture."
+4. One line on the guard: "A public scorer is an oracle. It is rate-limited, rounded, audited, and
+   stores nothing. ADR-0006 says what we gave up to show you this."
+
+**If the connection fails:** skip 1b. The queue below is the recorded demo, and it needs no model.
+
 ## 2 — The two-lane architecture (60s)
 
 Show the console. Two lanes, one tab each: *known* and *hunting* (plus *review*, the abstention lane).
