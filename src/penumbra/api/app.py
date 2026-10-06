@@ -7,9 +7,10 @@ something is permission-gated and audit-logged.
 a verdict and a suggested action as text; nothing consumes either as an instruction. ADR-0001, and
 CI greps the tree to keep it true.
 
-There is also no scoring endpoint: scoring happens sensor-side (replay, pcap) and the API receives
-scored alerts. An API that scores arbitrary input on request is a threshold-discovery oracle
-(THREAT_MODEL T3).
+Live scoring (`/score/*`, ADR-0006) runs the deployed champions on sampled, uploaded or captured
+traffic. An API that scores input on request is a threshold-discovery oracle (THREAT_MODEL T3), so
+these routes are rate-limited per caller, capped in rows, return rounded scores, are audited, and
+store nothing: the alert queue is fed only by `/ingest`, as before.
 """
 
 from __future__ import annotations

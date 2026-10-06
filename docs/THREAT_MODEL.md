@@ -101,11 +101,29 @@ ATLAS: `AML.T0043` Craft Adversarial Data.
 Feature attributions describe what makes traffic detectable, which doubles as a map of what an evader
 must change. Repeated querying of a scoring endpoint allows threshold discovery.
 
-**Mitigations:** attributions only inside authenticated, role-gated, audited interfaces; **no scoring
-endpoint at all**. The API receives already-scored alerts (`/ingest`, senior-only), so there is no
-oracle to query for threshold discovery; scoring runs in the sensor-side replay and pcap paths.
-Attributions are never returned to an unauthenticated caller. If a scoring endpoint is ever added it
-needs per-account rate limiting, like the verdict routes already have.
+**Mitigations, since ADR-0006.**
+
+There is now a scoring endpoint, so the oracle exists, but bounded:
+
+- `/score/*` needs a session and the `model:score` permission.
+- Calls are rate-limited per role, user and client address: 30 an hour for guests, 120 for
+  signed-in users.
+- A guest is capped at 500 rows per call.
+- Scores come back rounded to two decimals, so a threshold cannot be bisected to the last digit.
+- Every call, and every refusal, is in the hash-chained audit log.
+- Results are stored nowhere, so they never reach the queue or the training pool (T1).
+- Guest scoring is switched off by unsetting `PENUMBRA_GUEST_ACCESS`, with no code change.
+
+What remains:
+
+- An attacker with many addresses can still map the boundary slowly.
+- The audit log is where that shows: many `model.score` entries from near-identical inputs.
+- `/score/pcap` adds a packet parser (`dpkt`) to the public surface. It runs on bounded input
+  (≤ 8 MB) in a worker thread, and a parse failure is a 422 that reveals nothing about the parser.
+
+Before ADR-0006 there was no scoring endpoint at all. Alerts arrived already scored (`/ingest`,
+senior-only), which removed the oracle entirely. That was the stronger position, given up so that a
+visitor can run the deployed models.
 
 ATLAS: `AML.T0024` Exfiltration via ML Inference API · `AML.T0002` Acquire Public ML Artifacts.
 

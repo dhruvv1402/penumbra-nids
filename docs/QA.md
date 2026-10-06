@@ -98,6 +98,15 @@ Each answer points at the measurement behind it. If a question is not here and t
   registered before its re-run.
 - Promotion is a separate human step by a different account, recorded in a hash-chained audit log.
 
+**Can I run the models myself?**
+- Yes, on the live site, even as a guest. The **Try the model** page scores three kinds of input
+  with the deployed champions:
+  - held-out test flows, with the true label beside each;
+  - a CSV in a model's schema (a template is downloadable);
+  - your own pcap.
+- It is rate-limited, capped, rounded, audited and stores nothing (ADR-0006). A public scorer is an
+  oracle, and we say how we bounded it.
+
 **What happens on a network it was not trained on?**
 - Out of the box it does not work. On our lab capture, even after the calibration fix, 91% of
   ordinary flows reached an analyst.
