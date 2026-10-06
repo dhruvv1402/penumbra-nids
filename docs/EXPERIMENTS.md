@@ -1208,11 +1208,26 @@ UNSW's training CSV lists its benign rows first, so when a single unpruned tree 
   - H9e, judged afterwards with fair ties on refitted members (item 5).
 
 **What changes because of E9.**
-- Nothing ships. The registered plan was to put the ensemble through the gate, and **that step was
-  not run**. A gate run needs a full detector fit, and the gate's G1 allows a 0.02 recall drop where
-  the ensemble is 0.033 below the forest at a matched budget on UNSW (0.27 on NSL-KDD, 0.54 on
-  CICIDS). We record it as not run rather than claim a refusal we did not measure.
-  `penumbra registry challenge -d unsw -m ens --drop-artifacts` runs it.
+- Nothing ships. As registered, the ensemble went to ADR-0005's gate as a challenger, with
+  held-out calibration and a full detector fit
+  (`penumbra registry challenge -d <dataset> -m ens --by senior`):
+
+  | dataset | challenger | champion recall, canary FPR | ensemble, each head at the champion's rate | verdict |
+  |---|---|---:|---:|---|
+  | NSL-KDD | v003-20261006T210019 | 0.829 at 9.17% | 0.836 at 9.17% | **refused** (G2) |
+  | CICIDS | v002-20261006T211555 | 0.852 at 1.53% | 0.311 at 1.55% | **refused** (G1, G2) |
+  | UNSW | — | — | — | **not run** |
+
+  - **NSL-KDD.** Overall recall holds at the matched rate, but two families drop beyond G2's 0.10:
+    `processtable` from 0.791 to 0.578 and `warezmaster` from 0.802 to 0.541. This is the per-family
+    check doing its job: an overall number can hide a family going dark.
+  - **CICIDS.** Recall falls by 0.54. `Portscan` drops from 0.9999 to 0.009 on 47,720 canary rows,
+    as in E9's test.
+  - **UNSW.** The run was stopped part-way through the fit when the laptop ran low on memory, and
+    nothing was registered. The E9 test gap (−0.033 at a matched budget) is past G1's 0.02 allowance,
+    but we record the gate as not run rather than claim a refusal we did not measure.
+    `penumbra registry challenge -d unsw -m ens --drop-artifacts --by senior` runs it.
+  - Both refused challengers stay in the registry with their gate reports, unpromoted.
 - The forest stays the supervised head on all three datasets.
 - The answer to "did you try an ensemble of different model families?" is now a measurement.
 

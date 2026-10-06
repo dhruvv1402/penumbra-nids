@@ -1452,7 +1452,15 @@ pre-registered.
     tree and SVM members does lower error correlation: Yule's Q 0.85 against 0.98 on UNSW. On unseen
     CICIDS days every member errs together anyway.
 
-*Reproduce: `penumbra ensemble -d unsw|nslkdd|cicids` (`artifacts/reports/ensemble_<dataset>.json`).
+- **The gate agrees.** Registered as a challenger with a full detector fit, the ensemble is refused
+  on NSL-KDD and CICIDS.
+  - NSL-KDD fails G2: at the champion's per-head rate its overall recall holds (0.836 against
+    0.829), but `processtable` and `warezmaster` each lose more than 0.2.
+  - CICIDS fails G1 and G2: recall is 0.311 against 0.852, and `Portscan` falls to 0.009.
+  - The UNSW gate run was interrupted by low memory on the laptop and is recorded as not run.
+
+*Reproduce: `penumbra ensemble -d unsw|nslkdd|cicids` (`artifacts/reports/ensemble_<dataset>.json`);
+gate: `penumbra registry challenge -d <dataset> -m ens`.
 `--smoke` checks a machine in minutes. Run on a 20-core machine; timings belong to it. Full
 pre-registration and results: EXPERIMENTS.md E9.*
 
