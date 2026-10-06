@@ -1405,9 +1405,54 @@ threshold and so rewarded an over-alerting champion.
   `processtable` fell from 0.79 to 0.63 recall at the matched operating point, so NSL-KDD's
   champion is unchanged. Gating an honest model is the gate's job either way.
 
-*Reproduce: `penumbra calibration-drill --attacker <ip> --target <ip>`
+*Reproduce (E9a): `penumbra calibration-drill --attacker <ip> --target <ip>`
 (`artifacts/reports/calibration_drill.json`), then
 `penumbra registry challenge -d unsw -m rf --drop-artifacts` and `-d nslkdd -m rf`.*
+
+### 10.7k Three decision trees and three SVMs against the forest (E9)
+
+The question every tree-based detector gets: would a different family of model do better? E9 built
+the smallest honest version and tested it on the full training data of all three datasets,
+pre-registered.
+
+- **Members:** three decision trees and three SVMs (linear, RBF and polynomial, the kernels
+  Nystroem-approximated).
+- **Preprocessing:** raw features, normalised (signed log + z-score), normalise → PCA, and
+  PCA → normalise.
+- **Combiners:** stacked, soft-voted or hard-voted, fitted only on out-of-fold scores.
+- **Selection:** made on a holdout. Test was scored once.
+
+| test, exact 1% benign budget | UNSW recall | NSL-KDD recall | NSL-KDD unseen-17 | CICIDS Thu–Fri recall | CICIDS ROC-AUC |
+|---|---:|---:|---:|---:|---:|
+| **3 trees + 3 SVMs** (selected: trees raw, SVMs normalised, stacked) | 0.826 | 0.191 | 0.019 | 0.311 | **0.499** |
+| **RF-300** (deployed) | **0.859** | **0.461** | **0.053** | **0.852** | **0.993** |
+| XGBoost | 0.857 | 0.287 | 0.016 | 0.549 | 0.983 |
+| LogReg | 0.735 | 0.359 | 0.051 | 0.588 | 0.923 |
+| 3 + 3 with PCA before normalisation | 0.537 | 0.027 | 0.001 | — | — |
+
+- **The forest wins everywhere, and the gap grows with distance from the training data.**
+  - In distribution (UNSW) the ensemble is 0.033 behind, paired 95% CI [−0.039, −0.029].
+  - On NSL-KDD's shifted test it is 0.270 behind.
+  - On CICIDS's unseen days it ranks at chance and misses Portscan entirely.
+  - Every member was near-perfect on the in-distribution holdout, so the stacker trusted them. 300
+    decorrelated trees degrade gracefully, and six models do not.
+- **Normalisation is necessary for the SVMs.** Unscaled, they lose 0.67–0.82 of their UNSW recall.
+  **PCA is not necessary for anything.**
+  - After normalisation, PCA costs the trees 0.06 and the linear SVM 0.34.
+  - Before normalisation it is worse still. It keeps two components, and on UNSW the first (82% of
+    the variance) is `stcpb` and `dtcpb`, the TCP initial sequence numbers. These are random 32-bit
+    integers. PCA on unscaled data finds the units, not the structure.
+- **The kernel approximation is not the bottleneck.** On 30,000 UNSW rows the Nystroem SVM beats an
+  exact `SVC(rbf)` (holdout recall 0.828 against 0.733). On NSL-KDD they agree within 0.001.
+- **A measurement artifact found along the way.**
+  - Row-order tie-breaking on a class-sorted file read two single trees as 0.0000 recall. A fair
+    draw gives 0.21 and 0.24.
+  - E9's metric now shares ties at random. The test table is unaffected.
+  - One registered statistic (H9e) is left unjudged rather than read through the artifact.
+
+*Reproduce: `penumbra ensemble -d unsw|nslkdd|cicids` (`artifacts/reports/ensemble_<dataset>.json`).
+`--smoke` checks a machine in minutes. Run on a 20-core machine; timings belong to it. Full
+pre-registration and results: EXPERIMENTS.md E9.*
 
 ### 10.8 Reproduction
 

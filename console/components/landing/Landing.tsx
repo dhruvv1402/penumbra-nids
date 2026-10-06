@@ -389,7 +389,7 @@ const MISSES = [
   "A deep sequence model lost to nine cheap features",
   "Our shipped detector fired on 18.8% of benign traffic - our bug, measured and fixed (E9a)",
   "Weakest families? ~90% of Analysis and Backdoor rows duplicate another family exactly",
-  "13 bugs found by review, all fixed with tests",
+  "3 trees + 3 SVMs lost to the forest on all three datasets (E9)",
   "Our own Sentinel claim was wrong - measured, corrected",
 ];
 

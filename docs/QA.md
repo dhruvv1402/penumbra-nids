@@ -18,8 +18,14 @@ Each answer points at the measurement behind it. If a question is not here and t
 - Logistic regression (the floor), XGBoost, and E9: three decision trees plus three SVMs, stacked.
   We ran it with every preprocessing arm (raw, z-score, z-score then PCA, PCA then z-score) on all
   three datasets.
-- It was compared against the forest with a paired bootstrap, and it ships only if the promotion
-  gate passes it.
+- The forest won on every dataset, with paired bootstrap intervals:
+  - UNSW: 0.859 against 0.826 recall at 1% FPR;
+  - NSL-KDD's shifted test: 0.461 against 0.191;
+  - CICIDS's unseen Thursday–Friday: 0.852 against 0.311, where the ensemble's ranking was at chance
+    (AUC 0.50).
+- The further from the training data, the wider the gap. Six models that memorise their training
+  distribution do not degrade as gracefully as 300 averaged trees.
+- XGBoost tied the forest on UNSW.
 - See EXPERIMENTS.md E9 and EVALUATION §10.7k.
 
 **Are those really SVMs?**
@@ -28,13 +34,18 @@ Each answer points at the measurement behind it. If a question is not here and t
 - An exact kernel SVM needs O(n²) memory. On 140,000 to 1.2 million flows and 16 GB of RAM it is not
   a slow run; it is no run.
 - We measured what the approximation costs by fitting an exact `SVC(rbf)` beside its Nystroem twin
-  on a 30,000-row subsample (E9, prediction 7). With a GPU, cuML fits the exact one on the full data.
+  on the same 30,000 rows. On UNSW the approximation was *better* (holdout recall 0.828 against
+  0.733), and on NSL-KDD they agreed within 0.001. The approximation is not what holds the SVMs back.
 
 **PCA before or after normalisation?**
 - After. We ran both because both were asked for. PCA on unscaled flow data finds the units, not
   the structure: byte counts span seven orders of magnitude, so the first component is just
   "bytes".
-- E9 reports how many components each order keeps and what the first one loads on.
+- Measured: PCA on unscaled UNSW keeps 2 components. The first (82% of the variance) is the two TCP
+  initial sequence numbers, random 32-bit integers. The PCA-then-normalise ensemble drops to 0.537
+  recall.
+- Even after normalisation, PCA cost the trees 0.06 and the linear SVM 0.34. Normalisation alone
+  was the right preprocessing for the SVMs.
 - Trees gain nothing from either. Scaling is monotone, so they ignore it, and PCA rotates away the
   axes they split on.
 

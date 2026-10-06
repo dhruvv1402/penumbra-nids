@@ -1083,6 +1083,126 @@ RF-300 stays the champion, and the reason is a measured one. **Every refutation 
 
 ---
 
+### RESULT — the ensemble loses to the forest on all three datasets (H9a holds). PCA belongs after normalisation, and even there it costs. H9d is refuted.
+
+Recorded after the run. The predictions were committed first (`751b5aa`), the CICIDS fold
+amendment before any real CICIDS run (`d2bdfc6`), and none of them is edited here.
+
+**How it was run.**
+- Commit `50e1eb6`, `laptop` profile (Nystroem k = 1,000 on UNSW and NSL-KDD, 256 with SGD on
+  CICIDS).
+- On a teammate's machine: 20 cores, 32 GB, Python 3.12.15, scikit-learn 1.9.1, NumPy 2.5.3.
+- Wall time: UNSW 1 h 6 m, NSL-KDD 22 m, CICIDS 16 m.
+- CICIDS ran the configuration UNSW selected, as registered for this profile.
+- `penumbra ensemble -d <dataset>` reproduces each report (`artifacts/reports/ensemble_<dataset>.json`).
+
+**Selected on the holdout, never on test.**
+- UNSW chose `hetero / stack`: trees on raw features, SVMs on signed log + z-score, stacked.
+  Holdout recall 0.866.
+- NSL-KDD chose `P1 / stack` (holdout 0.999).
+- CICIDS inherited UNSW's choice.
+- Hard voting would not have won anywhere.
+
+**Test, at an exact 1% benign budget.** The interval is the paired bootstrap of (model − RF-300):
+
+| | UNSW recall | Δ vs RF [95% CI] | NSL-KDD recall | Δ vs RF | CICIDS (Thu–Fri) recall | Δ vs RF | CICIDS ROC-AUC |
+|---|---:|---|---:|---|---:|---|---:|
+| **3 trees + 3 SVMs** | 0.826 | **−0.033** [−0.039, −0.029] | 0.191 | **−0.270** [−0.348, −0.215] | 0.311 | **−0.540** [−0.551, −0.527] | **0.499** |
+| RF-300 | **0.859** | — | **0.461** | — | **0.852** | — | 0.993 |
+| XGBoost | 0.857 | −0.002 [−0.007, +0.002] | 0.287 | −0.174 | 0.549 | −0.303 | 0.983 |
+| LogReg | 0.735 | −0.124 | 0.359 | −0.102 | 0.588 | −0.264 | 0.923 |
+| 3 + 3, PCA → normalise (P3a) | 0.537 | −0.322 | 0.027 | −0.435 | — | — | — |
+
+1. **H9a holds, and by far more than predicted.**
+   - The ensemble is worse than the forest on every dataset. The paired upper bounds are −0.029
+     (UNSW) and −0.527 (CICIDS), against a registered threshold of +0.005. McNemar's test agrees:
+     on UNSW the forest is right where the ensemble is wrong on 2,473 rows, and the reverse holds on
+     961.
+   - The pattern is the finding. **The further test drifts from training, the worse the ensemble
+     does**: −0.03 in distribution (UNSW), −0.27 on NSL-KDD's shifted test, and **chance-level
+     ranking** (ROC-AUC 0.50) on CICIDS's unseen Thursday–Friday days. There it misses Portscan
+     (0.01 against the forest's 1.00).
+   - On the holdout every member was near-perfect (NSL-KDD 0.999, CICIDS 1.000), so the stacking
+     combiner learned to trust members that had memorised the training distribution. Three
+     unbagged trees and three margin models carry none of the averaging that lets 300 decorrelated
+     trees degrade gracefully.
+   - XGBoost ties the forest on UNSW (−0.002, interval spanning 0). The forest stays the champion.
+2. **H9b holds on UNSW and NSL-KDD, and is refuted on CICIDS for one member.**
+   - Without normalisation, the SVMs are 0.67–0.82 (UNSW) and 0.24–0.98 (NSL-KDD) worse in holdout
+     recall.
+   - On CICIDS, S2 (RBF) reached 0.93 unscaled, only 0.07 below its scaled self. S1 and S3 lost
+     0.83 and 0.97.
+3. **H9c is mixed.** PCA hurts the trees and does not help the SVMs.
+   - *Trees, UNSW:* −0.062 mean holdout recall under P2, so this half holds. It is measured with
+     ties shared fairly; see the note below. The registered row-order metric read −0.014. On NSL-KDD
+     the drop is 0.003.
+   - *SVMs:* refuted. P2 moved them by −0.344, −0.023 and −0.030 on UNSW (S1 to S3), and by −0.024,
+     −0.000 and −0.002 on NSL-KDD. The prediction was within ±0.01 of P1. On UNSW, PCA after
+     normalisation costs the linear SVM a third of its recall.
+   - *P3a (PCA on unscaled features):* holds, and the reason is the clearest single result in E9.
+     It kept **2 components** on both datasets.
+     - On UNSW, the first component (82% of the variance) loads 0.707/0.706 on **`stcpb` and
+       `dtcpb`, the TCP initial sequence numbers**. These are random 32-bit integers, the largest
+       numbers in the file and pure noise.
+     - On NSL-KDD it is `dst_bytes` alone (65%).
+     - **PCA before normalisation finds the units, not the structure.** The user-requested
+       PCA-then-normalise ensemble scores 0.537 on UNSW and 0.027 on NSL-KDD.
+4. **H9d is refuted.** The RBF member's recall on NSL-KDD's 17 unseen attack types is **0.017** at
+   1% FPR, below the forest's 0.053. A smooth margin did not extrapolate better. The whole ensemble
+   reached 0.019.
+5. **H9e is not judged.** Its registered statistic is Yule's Q on each member's flags at a matched
+   budget. Those flags used row-order tie-breaking (see the note), which corrupts the tree members.
+   The as-computed values are recorded but not read:
+   - UNSW: tree–SVM 0.878 against tree–tree 0.838;
+   - NSL-KDD: 0.929 against 0.993;
+   - CICIDS: 0.986 against 1.000.
+
+   Re-scoring from the run's checkpointed scores settles it, and nothing needs refitting.
+6. **Prediction 7 (exact SVC against Nystroem) is refuted on UNSW in the direction that matters
+   least.**
+   - On the same 30,000 rows, the Nystroem twin beats the exact `SVC(rbf)`: holdout recall 0.828
+     against 0.733, AUC 0.988 against 0.982.
+   - On NSL-KDD the two agree within 0.001.
+   - **The kernel approximation is not what holds the SVMs back.** The GPU arm (H9i) was not run.
+7. **Prediction 8 holds.** SGD matches liblinear within 0.0014 AUC (UNSW) and 0.0008 (NSL-KDD), so
+   CICIDS's SGD-trained SVMs are the same objective.
+8. **Prediction 9 holds on UNSW,** where it was registered. No hard-vote level realised an FPR
+   within 0.75–1.25%; the levels jump, for example from 3.7% to 1.3%. On NSL-KDD and CICIDS
+   some level happens to land inside the band.
+9. **Costs, on the fitting machine.**
+   - The ensemble took 698 s to fit on UNSW against the forest's 6 s.
+   - Pickled, it is 18.6 MB against the forest's 37.8 MB.
+   - Per flow at batch 2,048 it costs 0.044 ms against 0.039 ms.
+
+#### A measurement artifact, found and corrected after the run
+
+`eval.budget.flags_at_benign_budget` breaks ties by row order, a documented and deliberate rule.
+UNSW's training CSV lists its benign rows first, so when a single unpruned tree put 420 benign and
+17,586 attack holdout rows at exactly p = 1.0, the whole budget went to benign rows. T1 and T2
+"scored" 0.0000, and so did most hard-vote rows.
+
+- With the tied block shared fairly by a seeded random draw, T1 and T2 score 0.207 and 0.244 under
+  P0. This is `a9522e8`, applied to E9's metric only; published experiments keep their rule.
+- **Nothing in the test table above moves.** The forest has one benign row tied at the boundary and
+  the stacked ensemble's scores are continuous.
+- Affected:
+  - the tree members' recalls;
+  - the hard-vote rows;
+  - the tree half of H9c, re-measured on the same trees with fair ties
+    (`artifacts/reports/ensemble_h9c_trees.json`);
+  - H9e, left unjudged.
+
+**What changes because of E9.**
+- Nothing ships. The registered plan was to put the ensemble through the gate, and **that step was
+  not run**. A gate run needs a full detector fit, and the gate's G1 allows a 0.02 recall drop where
+  the ensemble is 0.033 below the forest at a matched budget on UNSW (0.27 on NSL-KDD, 0.54 on
+  CICIDS). We record it as not run rather than claim a refusal we did not measure.
+  `penumbra registry challenge -d unsw -m ens --drop-artifacts` runs it.
+- The forest stays the supervised head on all three datasets.
+- The answer to "did you try an ensemble of different model families?" is now a measurement.
+
+---
+
 ## Standing rules for all experiments
 
 - **Prevalence is stated with every precision-family number.** UNSW-NB15's test set is ~55% attack;
