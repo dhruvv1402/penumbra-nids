@@ -152,6 +152,9 @@ function Nav({ go }: { go: (id: PanelId) => void }) {
         <button className="lx-pill" onClick={() => go("proof")}>
           PROOF
         </button>
+        <Link className="lx-pill" href="/score">
+          TRY IT
+        </Link>
         <Link className="lx-pill lx-pill-hot" href="/console">
           CONSOLE
         </Link>
@@ -462,6 +465,9 @@ function Come() {
         <div className="lx-come-side">
           <Eclipse className="lx-come-eclipse" />
           <div className="lx-cta-row">
+            <Link className="lx-cta" href="/score">
+              RUN THE MODELS ON REAL TRAFFIC →
+            </Link>
             <Link className="lx-cta lx-cta-hot" href="/console">
               OPEN THE CONSOLE →
             </Link>

@@ -269,6 +269,12 @@ function Header({
         </span>
         <nav className="flex items-center gap-3 ml-3">
           <Link
+            href="/score"
+            className="text-[11px] tracking-[0.14em] uppercase text-[var(--color-ok)] hover:text-[var(--color-ink)]"
+          >
+            try the model
+          </Link>
+          <Link
             href="/evaluation"
             className="text-[11px] tracking-[0.14em] uppercase text-[var(--color-ink-dim)] hover:text-[var(--color-ink)]"
           >

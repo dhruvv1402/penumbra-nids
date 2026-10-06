@@ -475,3 +475,108 @@ export type StreamMessage =
   | { type: "verdict"; incident_id?: string; alert_id?: string; verdict: string }
   | { type: "suppression"; rule_id: string }
   | { type: "incidents"; count: number };
+
+/**
+ * Live scoring (ADR-0006): the deployed champions on held-out flows, an uploaded CSV, or a pcap.
+ * Results come back to the caller and are stored nowhere.
+ */
+export interface ScoreModel {
+  dataset: string;
+  title: string;
+  test_pool: string;
+  registry_version: string | null;
+  calibration: string | null;
+  trained_rows: number | null;
+  target_fpr: number;
+  features: string[];
+  categorical: string[];
+  quarantined: string[];
+}
+
+export interface ScoreCatalogue {
+  models: ScoreModel[];
+  limits: { calls_per_hour: number; max_rows: number };
+  pcap_dataset: string;
+  attack_shares: number[];
+  max_csv_mb: number;
+  max_pcap_mb: number;
+}
+
+export interface ScoredRow {
+  row: number;
+  verdict: Verdict;
+  p_attack: number;
+  novelty_percentile: number;
+  family: string | null;
+  head: "none" | "supervised" | "novelty" | "both";
+  conformal_set: string[];
+  why: { feature: string; narrative: string; direction: string }[];
+  attack_technique: string | null;
+  truth?: { label: number; family: string; unseen_in_training: boolean | null };
+  src?: string;
+  dst?: string;
+}
+
+export interface ScoreResult {
+  summary: {
+    flows: number;
+    alerts: number;
+    by_verdict: Record<string, number>;
+    truncated_to: number | null;
+    rows_returned: number;
+    model: string | null;
+    truth?: {
+      attacks: number;
+      attacks_reaching_an_analyst: number;
+      benign: number;
+      benign_reaching_an_analyst: number;
+      unseen_attacks?: number;
+      unseen_reaching_an_analyst?: number;
+    };
+  };
+  rows: ScoredRow[];
+}
+
+export const getScoreModels = (token: string) => request<ScoreCatalogue>("/score/models", token);
+
+export const scoreSample = (token: string, dataset: string, n: number, attackShare: number) =>
+  request<ScoreResult>("/score/sample", token, {
+    method: "POST",
+    body: JSON.stringify({ dataset, n, attack_share: attackShare }),
+  });
+
+/** Uploads go as the raw request body: no multipart parser on the public server. */
+export async function scoreUpload(
+  token: string,
+  kind: "csv" | "pcap",
+  file: File,
+  dataset?: string,
+): Promise<ScoreResult> {
+  const path = kind === "csv" ? `/score/csv?dataset=${encodeURIComponent(dataset ?? "unsw")}` : "/score/pcap";
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": kind === "csv" ? "text/csv" : "application/octet-stream",
+      Authorization: `Bearer ${token}`,
+    },
+    body: file,
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => res.statusText);
+    throw new ApiError(res.status, detail);
+  }
+  return (await res.json()) as ScoreResult;
+}
+
+export async function downloadTemplate(token: string, dataset: string): Promise<void> {
+  const res = await fetch(`${BASE}/score/template/${encodeURIComponent(dataset)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => res.statusText));
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `penumbra_${dataset}_template.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
