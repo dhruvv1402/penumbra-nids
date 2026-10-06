@@ -995,10 +995,12 @@ function EnsemblePanel({
       <Caption>
         Selected on a holdout, never on test: trees on {sel.tree_arm}, SVMs on {sel.svm_arm}, {sel.combiner} combiner. SVMs
         are linear SVMs on a {report.settings.nystroem_k}-landmark Nystroem kernel map ({report.settings.svm_solver}); an
-        exact kernel SVM does not fit on this data. Normalise-then-PCA kept {pcaK ?? "—"} components; PCA on unscaled
-        features kept {p3a ?? "—"}. Intervals are paired bootstraps of the difference. Profile{" "}
-        {report.fingerprint.profile.name}. {Object.values(report.summary).filter((v) => v.held).length} of{" "}
-        {Object.keys(report.summary).length} pre-registered predictions held.
+        exact kernel SVM does not fit on this data.
+        {pcaK != null && p3a != null
+          ? ` Normalise-then-PCA kept ${pcaK} components; PCA on unscaled features kept ${p3a}.`
+          : ""}{" "}
+        Intervals are paired bootstraps of the difference. Profile {report.fingerprint.profile.name}. Pre-registered;
+        the verdict on each prediction, including one left unjudged after a tie artifact, is in EXPERIMENTS.md E9.
       </Caption>
     </Panel>
   );

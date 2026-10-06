@@ -137,9 +137,12 @@ export default function Governance() {
         <NoBlockPanel />
         <RbacPanel roles={rbac?.roles ?? null} role={session.role} />
         <AuditPanel audit={audit} denied={denied} role={session.role} />
-        {(["unsw", "nslkdd", "cicids"] as const).map((ds) => (
-          <ModelsPanel key={ds} dataset={ds} registry={models[ds] ?? null} />
-        ))}
+        {(["unsw", "nslkdd", "cicids"] as const)
+          // CICIDS has a registry only once its product detector is fitted; until then, no empty panel.
+          .filter((ds) => ds !== "cicids" || (models[ds]?.versions.length ?? 0) > 0)
+          .map((ds) => (
+            <ModelsPanel key={ds} dataset={ds} registry={models[ds] ?? null} />
+          ))}
       </div>
     </main>
   );
