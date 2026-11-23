@@ -7,8 +7,9 @@ const API = process.env.PENUMBRA_API_URL ?? "http://127.0.0.1:8000";
 const config: NextConfig = {
   reactStrictMode: true,
   // Traced output: the runtime image carries the server plus the files it actually imports, rather
-  // than the whole of node_modules.
-  output: "standalone",
+  // than the whole of node_modules. Not on Vercel, which packages the build itself: there the
+  // standalone copy runs after Vercel's adapter and fails on a server trace Turbopack never wrote.
+  output: process.env.VERCEL ? undefined : "standalone",
   // No route badge on screen during the live demo or the recorded walkthrough. Compile and runtime
   // errors are still surfaced.
   devIndicators: false,
