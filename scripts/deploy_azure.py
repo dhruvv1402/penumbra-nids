@@ -49,11 +49,10 @@ def az_binary() -> str:
     sys.exit("Azure CLI not found. Install it and run `az login` first.")
 
 
-AZ = az_binary()
-
-
 def az(*args: str, quiet: bool = False, cwd: Path = ROOT) -> str:
-    done = subprocess.run([AZ, *args], capture_output=True, text=True, cwd=cwd)  # noqa: S603 - fixed binary
+    # Resolved per call, not at import: scripts/deploy_oracle.py imports the staging helpers from
+    # here and must not need the Azure CLI installed.
+    done = subprocess.run([az_binary(), *args], capture_output=True, text=True, cwd=cwd)  # noqa: S603 - fixed binary
     if done.returncode != 0:
         # Never echo the arguments: some carry secrets.
         sys.exit(f"az {args[0]} {args[1] if len(args) > 1 else ''} failed:\n{done.stderr.strip()[-2000:]}")
@@ -160,7 +159,9 @@ def stage_models(stage: Path) -> None:
         if pool.exists():
             shutil.copy2(pool, samples_dir / pool.name)
         size = (dest / "detector.joblib").stat().st_size / 2**20
-        print(f"  {dataset}: champion {version} verified, {size:.0f} MB{'' if pool.exists() else ' (no sample pool)'}")
+        print(
+            f"  {dataset}: champion {version} verified, {size:.0f} MB{'' if pool.exists() else ' (no sample pool)'}"
+        )
 
 
 SECRET_NAMES = {

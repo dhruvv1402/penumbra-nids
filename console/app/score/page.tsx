@@ -64,10 +64,18 @@ export default function TryTheModel() {
 
   useEffect(() => {
     if (!session) return;
-    getScoreModels(session.token).then(setCatalogue).catch(fail);
+    getScoreModels(session.token)
+      .then((c) => {
+        setCatalogue(c);
+        // A deployment may carry only some champions (the free host has no room for UNSW).
+        setDataset((d) => (c.models.some((m) => m.dataset === d) ? d : (c.models[0]?.dataset ?? d)));
+      })
+      .catch(fail);
   }, [session, fail]);
 
   const model = catalogue?.models.find((m) => m.dataset === (mode === "pcap" ? catalogue.pcap_dataset : dataset));
+  // pcap assembles flows in one model's schema; offer it only where that model is deployed.
+  const pcapAvailable = catalogue ? catalogue.models.some((m) => m.dataset === catalogue.pcap_dataset) : true;
 
   const run = async () => {
     if (!session) return;
@@ -147,7 +155,7 @@ export default function TryTheModel() {
               options={[
                 ["sample", "held-out flows"],
                 ["csv", "upload CSV"],
-                ["pcap", "upload pcap"],
+                ...(pcapAvailable ? [["pcap", "upload pcap"] as [string, string]] : []),
               ]}
             />
 
