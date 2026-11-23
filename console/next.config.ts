@@ -2,7 +2,8 @@ import type { NextConfig } from "next";
 
 // Where the API lives. Localhost for `npm run dev`; the compose service name inside a container,
 // where 127.0.0.1 is the console's own loopback and nothing answers on it.
-const API = process.env.PENUMBRA_API_URL ?? "http://127.0.0.1:8000";
+// Trailing slashes stripped: "https://host/" would proxy /api/health to //health, which 404s.
+const API = (process.env.PENUMBRA_API_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "");
 
 const config: NextConfig = {
   reactStrictMode: true,
