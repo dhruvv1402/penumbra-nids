@@ -50,7 +50,7 @@ def az_binary() -> str:
 
 
 def az(*args: str, quiet: bool = False, cwd: Path = ROOT) -> str:
-    # Resolved per call, not at import: scripts/deploy_oracle.py imports the staging helpers from
+    # Resolved per call, not at import: scripts/publish_hf.py imports the staging helpers from
     # here and must not need the Azure CLI installed.
     done = subprocess.run([az_binary(), *args], capture_output=True, text=True, cwd=cwd)  # noqa: S603 - fixed binary
     if done.returncode != 0:
