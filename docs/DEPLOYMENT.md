@@ -12,7 +12,7 @@ browser ──HTTPS──> Vercel: console (Next.js, root directory console/)
                                          └── Hugging Face model repo dhruvv1402/penumbra-nids
 ```
 
-- Console: https://penumbra-nids-mauve.vercel.app. API: https://penumbra-api-koh3.onrender.com.
+- Console: https://penumbra-nids.vercel.app. API: https://penumbra-api-koh3.onrender.com.
 - Render free gives 512 MB. Measured, the API holds ~300 MB with NSL-KDD and CICIDS loaded, and UNSW
   alone is ~750 MB, so only those two are fetched. pcap upload needs the UNSW schema and is hidden.
 - Render sleeps the service after 15 idle minutes; the next request waits about a minute.
